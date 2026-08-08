@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Models — Weight Atlas{% endblock %}
+{% block content %}
+<h2>Models</h2>
+
+<section class="submit-job">
+    <h3>Scan a Model</h3>
+    <form hx-post="/api/jobs" hx-target="#job-result" hx-swap="innerHTML">
+        <label for="model_path">Model path:</label>
+        <input type="text" id="model_path" name="model_path"
+               placeholder="/path/to/model.safetensors or /path/to/model/dir"
+               required>
+        <button type="submit">Start Scan</button>
+    </form>
+    <div id="job-result"></div>
+</section>
+
+<section class="model-list">
+    <h3>Completed Models</h3>
+    {% if models %}
+    <table>
+        <thead>
+            <tr>
+                <th>Model</th>
+                <th>Artefacts</th>
+                <th>Completed</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for model in models %}
+            <tr>
+                <td>
+                    {{ model.model_path }}
+                    {% if model.message == 'activity' %}
+                    <span class="badge badge--info">activity</span>
+                    {% endif %}
+                </td>
+                <td>{{ model.artefacts | length }}</td>
+                <td>{{ model.updated_at }}</td>
+                <td>
+                    <a href="/models/{{ model.job_id }}">View</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No completed scans yet. Submit a model above to get started.</p>
+    {% endif %}
+</section>
+{% endblock %}

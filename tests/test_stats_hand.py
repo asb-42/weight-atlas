@@ -1,0 +1,69 @@
+"""Hand-computed statistic tests against known matrices."""
+
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from weight_atlas.core.types import TensorHandle
+from weight_atlas.stats.norms import EffectiveRank, FrobeniusNorm, SpectralNorm
+from weight_atlas.stats.shape_moments import Kurtosis, Sparsity
+
+
+def _handle(arr: np.ndarray) -> TensorHandle:
+    return TensorHandle(name="t", shape=arr.shape, dtype=str(arr.dtype), loader=lambda: arr)
+
+
+def test_spectral_diag_3_4():
+    """diag(3, 4) → spectral norm = 4 (largest singular value)."""
+    h = _handle(np.diag([3.0, 4.0]).astype(np.float32))
+    assert pytest.approx(SpectralNorm().compute(h), rel=1e-5) == 4.0
+
+
+def test_effective_rank_identity_8():
+    """I₈ → effective rank = 8 (all singular values equal)."""
+    h = _handle(np.eye(8, dtype=np.float32))
+    assert pytest.approx(EffectiveRank().compute(h), rel=1e-5) == 8.0
+
+
+def test_frobenius_known():
+    """diag(3,4) → frobenius = 5."""
+    h = _handle(np.diag([3.0, 4.0]).astype(np.float32))
+    assert pytest.approx(FrobeniusNorm().compute(h), rel=1e-5) == 5.0
+
+
+def test_kurtosis_normal():
+    """Normal-distributed values have excess kurtosis ≈ 0."""
+    rng = np.random.default_rng(0)
+    arr = rng.normal(0, 1, 10000).astype(np.float32)
+    h = _handle(arr)
+    assert pytest.approx(Kurtosis().compute(h), abs=0.3) == 0.0
+
+
+def test_sparsity_known():
+    """3 of 6 values below eps (0.0, 0.0005, 0.0001)."""
+    arr = np.array([0.0, 0.0005, 1.0, 2.0, 0.0001, 3.0], dtype=np.float32)
+    h = _handle(arr)
+    assert pytest.approx(Sparsity().compute(h), rel=1e-6) == 3 / 6
+
+
+def test_1d_spectral_is_l2():
+    arr = np.array([3.0, 4.0], dtype=np.float32)
+    h = _handle(arr)
+    assert pytest.approx(SpectralNorm().compute(h), rel=1e-5) == 5.0
+
+
+def test_1d_effective_rank_is_one():
+    arr = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+    h = _handle(arr)
+    assert pytest.approx(EffectiveRank().compute(h), rel=1e-5) == 1.0
+
+
+def test_frobenius_chunked_matches_naive():
+    """Chunked accumulation must match a naive float64 computation."""
+    rng = np.random.default_rng(123)
+    arr = rng.normal(0, 1, 5_000_000).astype(np.float32)
+    h = _handle(arr)
+    got = FrobeniusNorm().compute(h)
+    expected = float(np.sqrt(np.astype(arr, np.float64).dot(np.astype(arr, np.float64))))
+    assert pytest.approx(got, rel=1e-10) == expected

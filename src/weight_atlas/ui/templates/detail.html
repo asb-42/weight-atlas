@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+{% block title %}Model Detail — Weight Atlas<section class="detail-section">
+    <h3>Quantization (GGUF)</h3>
+    {% if fingerprint.quantization %}
+    <table>
+        <thead>
+            <tr>
+                <th>Type</th>
+                <th>Count</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for type, count in fingerprint.quantization.items() %}
+            <tr>
+                <td>{{ type }}</td>
+                <td>{{ count }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>Not a GGUF model or no quantization data.</p>
+    {% endif %}
+</section>
+
+{% if fingerprint and fingerprint.get('model', {}).get('moe') %}
+<section class="detail-section">
+    <h3>MoE Architecture</h3>
+    <div class="moe-badge">
+        <span class="badge badge--info">MoE</span>
+        <span>{{ fingerprint.model.moe.num_experts }} experts</span>
+        {% if fingerprint.model.moe.shared_expert %}
+        <span class="badge badge--success">+ Shared Expert</span>
+        {% endif %}
+        <span>{{ fingerprint.model.moe.num_layers }} layers</span>
+    </div>
+</section>
+{% endif %}
+
+{% if fingerprint and fingerprint.get('embedding_meta') %}
+<section class="detail-section">
+    <h3>Embedding Projection</h3>
+    <div class="embedding-info">
+        <p><strong>Method:</strong> {{ fingerprint.embedding_meta.method }}</p>
+        {% if fingerprint.embedding_meta.explained_variance %}
+        <p><strong>Explained Variance:</strong> {{ fingerprint.embedding_meta.explained_variance | join(', ') }}</p>
+        {% endif %}
+        {% if fingerprint.embedding_meta.version %}
+        <p><strong>Version:</strong> {{ fingerprint.embedding_meta.version }}</p>
+        {% endif %}
+    </div>
+    {% for tif in tif_files %}
+    {% if 'embed_density' in tif %}
+    <figure>
+        <img src="/static/outputs/{{ out_dir }}/{{ tif }}" alt="{{ tif }}">
+        <figcaption>{{ tif }}</figcaption>
+    </figure>
+    {% endif %}
+    {% endfor %}
+</section>
+{% endif %}
+
+{% endblock %}
+{% block content %}
+<h2>{{ job.model_path }}</h2>
+<p><a href="/">← Back to models</a></p>
+
+<section class="detail-section">
+    <h3>Sheet</h3>
+    {% if sheet_pngs %}
+    <div class="image-grid">
+        {% for png in sheet_pngs %}
+        <figure>
+            <img src="/static/outputs/{{ out_dir }}/{{ png }}" alt="{{ png }}">
+            <figcaption>{{ png }}</figcaption>
+        </figure>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p>No sheet images available. Run the sheet renderer first.</p>
+    {% endif %}
+</section>
+
+<section class="detail-section">
+    <h3>Terrain (Blender)</h3>
+    {% if terrain_pngs %}
+    <div class="image-grid">
+        {% for png in terrain_pngs %}
+        <figure>
+            <img src="/static/outputs/{{ out_dir }}/{{ png }}" alt="{{ png }}">
+            <figcaption>{{ png }}</figcaption>
+        </figure>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p>No terrain renders available. Run Blender renderer first.</p>
+    {% endif %}
+
+    {% if obj_meshes %}
+    <h4>Mesh</h4>
+    <ul>
+        {% for obj in obj_meshes %}
+        <li>{{ obj }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+</section>
+
+<section class="detail-section">
+    <h3>Statistics</h3>
+    {% if fingerprint and fingerprint.get("tensors") %}
+    <div class="stats-table-wrapper">
+        <table class="stats-table">
+            <thead>
+                <tr>
+                    <th>Tensor</th>
+                    <th>Shape</th>
+                    <th>Frobenius</th>
+                    <th>Spectral Norm</th>
+                    <th>Effective Rank</th>
+                    <th>Kurtosis</th>
+                    <th>Sparsity</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for name, stats in fingerprint.get("tensors", {}).items() %}
+                <tr>
+                    <td>{{ name }}</td>
+                    <td>{{ stats.shape | join('×') }}</td>
+                    <td>{{ "%.4f" | format(stats.frobenius) }}</td>
+                    <td>{{ "%.4f" | format(stats.spectral_norm) }}</td>
+                    <td>{{ "%.4f" | format(stats.effective_rank) }}</td>
+                    <td>{{ "%.4f" | format(stats.kurtosis) }}</td>
+                    <td>{{ "%.4f" | format(stats.sparsity) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p>No statistics available.</p>
+    {% endif %}
+</section>
+
+<section class="detail-section">
+    <h3>Spec</h3>
+    <dl>
+        <dt>Spec Version</dt>
+        <dd>{{ spec.spec_version }}</dd>
+        <dt>Slots</dt>
+        <dd>{{ spec.slots | join(', ') }}</dd>
+        <dt>Channels</dt>
+        <dd>{{ spec.channels | tojson }}</dd>
+        <dt>Grid</dt>
+        <dd>{{ spec.grid | tojson }}</dd>
+    </dl>
+</section>
+
+<section class="detail-section">
+    <h3>Artefacts</h3>
+    <ul>
+        {% for tif in tif_files %}
+        <li>{{ tif }}</li>
+        {% endfor %}
+    </ul>
+</section>
+<section class="detail-section">
+    <h3>Quantization (GGUF)</h3>
+    {% if fingerprint.quantization %}
+    <table>
+        <thead>
+            <tr>
+                <th>Type</th>
+                <th>Count</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for type, count in fingerprint.quantization.items() %}
+            <tr>
+                <td>{{ type }}</td>
+                <td>{{ count }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>Not a GGUF model or no quantization data.</p>
+    {% endif %}
+</section>
+
+{% if fingerprint and fingerprint.get('model', {}).get('moe') %}
+<section class="detail-section">
+    <h3>MoE Architecture</h3>
+    <div class="moe-badge">
+        <span class="badge badge--info">MoE</span>
+        <span>{{ fingerprint.model.moe.num_experts }} experts</span>
+        {% if fingerprint.model.moe.shared_expert %}
+        <span class="badge badge--success">+ Shared Expert</span>
+        {% endif %}
+        <span>{{ fingerprint.model.moe.num_layers }} layers</span>
+    </div>
+</section>
+{% endif %}
+
+{% if fingerprint and fingerprint.get('embedding_meta') %}
+<section class="detail-section">
+    <h3>Embedding Projection</h3>
+    <div class="embedding-info">
+        <p><strong>Method:</strong> {{ fingerprint.embedding_meta.method }}</p>
+        {% if fingerprint.embedding_meta.explained_variance %}
+        <p><strong>Explained Variance:</strong> {{ fingerprint.embedding_meta.explained_variance | join(', ') }}</p>
+        {% endif %}
+        {% if fingerprint.embedding_meta.version %}
+        <p><strong>Version:</strong> {{ fingerprint.embedding_meta.version }}</p>
+        {% endif %}
+    </div>
+    {% for tif in tif_files %}
+    {% if 'embed_density' in tif %}
+    <figure>
+        <img src="/static/outputs/{{ out_dir }}/{{ tif }}" alt="{{ tif }}">
+        <figcaption>{{ tif }}</figcaption>
+    </figure>
+    {% endif %}
+    {% endfor %}
+</section>
+{% endif %}
+
+{% endblock %}

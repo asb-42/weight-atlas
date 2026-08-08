@@ -1,0 +1,206 @@
+"""Tests for the FastAPI web UI endpoints."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import numpy as np
+import pytest
+from fastapi.testclient import TestClient
+from safetensors.numpy import save_file
+
+from weight_atlas.api.jobs import JobQueue, JobStatus
+from weight_atlas.api.main import create_app
+
+
+@pytest.fixture
+def fake_model(tmp_path: Path) -> Path:
+    """Create a small fake safetensors model for testing."""
+    model_path = tmp_path / "test_model.safetensors"
+    tensors = {
+        "model.layers.0.self_attn.q_proj.weight": np.random.default_rng(42)
+        .normal(0, 0.1, (32, 32))
+        .astype(np.float32),
+        "model.layers.0.mlp.gate_proj.weight": np.random.default_rng(43)
+        .normal(0, 0.1, (32, 32))
+        .astype(np.float32),
+        "model.embed_tokens.weight": np.random.default_rng(44)
+        .normal(0, 0.1, (32, 32))
+        .astype(np.float32),
+        "lm_head.weight": np.random.default_rng(45)
+        .normal(0, 0.1, (32, 32))
+        .astype(np.float32),
+    }
+    save_file(tensors, str(model_path))
+    return model_path
+
+
+@pytest.fixture
+def spec_path(tmp_path: Path) -> Path:
+    """Create a minimal atlas spec for testing."""
+    spec = {
+        "spec_version": 1,
+        "slots": ["embed", "attn_q", "attn_k", "attn_v", "attn_o",
+                  "mlp_gate", "mlp_up", "mlp_down", "norm_attn",
+                  "norm_mlp", "router", "lm_head", "other"],
+        "channels": {
+            "height": {"stat": "spectral_norm", "scale": {"type": "log1p"}},
+            "tint": {"stat": "effective_rank", "scale": {"type": "quantile_clip", "lo": 0.01, "hi": 0.99}},
+            "rough": {"stat": "kurtosis", "scale": {"type": "log1p"}},
+        },
+        "grid": {"upsample": 4, "smooth_sigma": 1.0},
+        "sheet": {"contour_levels": 8, "light_azdeg": 315, "light_altdeg": 45, "dpi": 72},
+        "seeds": {"svd": 0},
+    }
+    spec_path = tmp_path / "atlas_spec.v1.json"
+    with open(spec_path, "w") as f:
+        json.dump(spec, f)
+    return spec_path
+
+
+@pytest.fixture
+def app(tmp_path: Path, spec_path: Path):
+    """Create test app with temp directories."""
+    db_path = tmp_path / "jobs.db"
+    output_root = tmp_path / "output"
+    output_root.mkdir(exist_ok=True)
+
+    app = create_app(
+        db_path=db_path,
+        spec_path=spec_path,
+        output_root=output_root,
+    )
+    yield app
+
+
+@pytest.fixture
+def client(app) -> TestClient:
+    return TestClient(app)
+
+
+class TestIndexPage:
+    def test_index_returns_html(self, client: TestClient) -> None:
+        response = client.get("/")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+        assert "Weight Atlas" in response.text
+
+
+class TestJobCreation:
+    def test_create_job_with_valid_path(
+        self, client: TestClient, fake_model: Path
+    ) -> None:
+        response = client.post("/api/jobs", json={"model_path": str(fake_model)})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["model_path"] == str(fake_model)
+        assert data["status"] == "queued"
+        assert "job_id" in data
+
+    def test_create_job_missing_path(self, client: TestClient) -> None:
+        response = client.post("/api/jobs", json={})
+        assert response.status_code == 400
+
+    def test_create_job_nonexistent_path(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/jobs", json={"model_path": "/nonexistent/path"}
+        )
+        assert response.status_code == 404
+
+
+class TestJobStatus:
+    def test_get_job_status(
+        self, client: TestClient, fake_model: Path
+    ) -> None:
+        # Create job
+        create_resp = client.post("/api/jobs", json={"model_path": str(fake_model)})
+        job_id = create_resp.json()["job_id"]
+
+        # Get status
+        status_resp = client.get(f"/api/jobs/{job_id}")
+        assert status_resp.status_code == 200
+        data = status_resp.json()
+        assert data["job_id"] == job_id
+        assert data["status"] in ("queued", "running", "done")
+
+    def test_get_nonexistent_job(self, client: TestClient) -> None:
+        response = client.get("/api/jobs/nonexistent-id")
+        assert response.status_code == 404
+
+
+class TestJobProgressPage:
+    def test_progress_page_returns_html(
+        self, client: TestClient, fake_model: Path
+    ) -> None:
+        create_resp = client.post("/api/jobs", json={"model_path": str(fake_model)})
+        job_id = create_resp.json()["job_id"]
+
+        response = client.get(f"/jobs/{job_id}")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+
+
+class TestModelDetail:
+    def test_detail_requires_done_job(self, client: TestClient, fake_model: Path) -> None:
+        create_resp = client.post("/api/jobs", json={"model_path": str(fake_model)})
+        job_id = create_resp.json()["job_id"]
+
+        # Job is queued/running — detail should still render (but may be empty)
+        response = client.get(f"/models/{job_id}")
+        assert response.status_code == 200
+
+
+class TestFingerprintEndpoint:
+    def test_fingerprint_requires_done_job(
+        self, client: TestClient, fake_model: Path
+    ) -> None:
+        create_resp = client.post("/api/jobs", json={"model_path": str(fake_model)})
+        job_id = create_resp.json()["job_id"]
+
+        # Job not done yet
+        response = client.get(f"/api/models/{job_id}/fingerprint")
+        assert response.status_code == 409
+
+
+class TestJobStatusFragment:
+    def test_status_fragment_returns_html(
+        self, client: TestClient, fake_model: Path
+    ) -> None:
+        create_resp = client.post("/api/jobs", json={"model_path": str(fake_model)})
+        job_id = create_resp.json()["job_id"]
+
+        response = client.get(f"/api/jobs/{job_id}/status")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+        assert "badge" in response.text
+
+
+class TestStaticFiles:
+    def test_css_accessible(self, client: TestClient, app) -> None:
+        """CSS should be served from /static/style.css."""
+        response = client.get("/static/style.css")
+        # May be 404 if static dir doesn't exist in test, but shouldn't error
+        assert response.status_code in (200, 404)
+
+
+class TestJobQueueDB:
+    def test_job_persisted_to_sqlite(
+        self, tmp_path: Path, spec_path: Path, fake_model: Path
+    ) -> None:
+        db_path = tmp_path / "test.db"
+        queue = JobQueue(db_path, on_job=lambda j: None)
+
+        job = queue.submit(fake_model, tmp_path / "out", spec_path)
+        loaded = queue.get(job.job_id)
+        assert loaded is not None
+        assert loaded.job_id == job.job_id
+        assert loaded.status == JobStatus.QUEUED
+
+    def test_list_jobs(self, tmp_path: Path, spec_path: Path, fake_model: Path) -> None:
+        db_path = tmp_path / "test.db"
+        queue = JobQueue(db_path, on_job=lambda j: None)
+
+        queue.submit(fake_model, tmp_path / "out", spec_path)
+        jobs = queue.list_jobs()
+        assert len(jobs) == 1

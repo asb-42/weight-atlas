@@ -1,0 +1,11 @@
+<div class="job-status job-status--{{ job.status }}">
+    <span class="badge badge--{{ job.status }}">{{ job.status }}</span>
+    <div class="progress-bar">
+        <div class="progress-bar__fill" style="width: {{ (job.progress * 100) | int }}%"></div>
+    </div>
+    <span class="progress-text">{{ (job.progress * 100) | int }}%</span>
+    <p class="job-message">{{ job.message }}</p>
+    {% if job.error %}
+    <p class="job-error">{{ job.error }}</p>
+    {% endif %}
+</div>
