@@ -29,13 +29,54 @@ safetensors ─► TensorHandle (lazy) ─► Statistic.compute ─► TensorSta
 
 Renderers (matplotlib, Blender) read **only** artefacts (TIFF + JSON), never weights.
 
+
+
+## v0.2.0 — Real-Model-Calibration (Bonsai-8B)
+
+### Spec Changes
+- `spec_version`: 2 (was 1)
+- `tint` channel: `effective_rank` → `stable_rank` (log1p((frobenius/spectral_norm)²))
+- `rough` channel: `log1p` → `quantile_clip` (1–99%)
+- `height` channel: unchanged (spectral_norm + log1p)
+
+### New Slots
+- `attn_q_norm`, `attn_k_norm`: QK-Norm scale tensors (Bonsai-8B)
+
+### Name Audit System
+- Bonsai-8B fixture: `tests/fixtures/names_bonsai_8b.json`
+- `diagnose` CLI command: `weight-atlas diagnose <path>`
+- `mapping_coverage` block in fingerprint.json
+- CLI warning when `in_slots < 80%`
+
+### Degeneration Guards
+- Per-channel diagnostics: `valid_fraction`, `normalized_std`
+- Std < eps OR valid < 50% → CLI warning + warnings block + UI banner
+- Module: `weight_atlas/fields/degenerations.py`
+
+### UI Changes
+- Artifact route: `GET /models/{id}/artifacts/{name}` (allowlist + traversal protection)
+- `.tif` entries shown as "not inline displayable — download" link
+- Detail page uses only the artifact route
+- Scan job auto-renders sheets after completion
+- Degeneration warnings banner on detail page
+
+### Migration
+**v0.2.0 requires re-scan.** Existing v1 fingerprints cannot be compared with v2. The compare command hard-rejects spec_version mismatches.
+
+To migrate:
+```bash
+# Re-scan all models with v2 spec
+weight-atlas scan ./models/my_model --out ./artefacts_v2
+# Verify mapping coverage
+weight-atlas diagnose ./models/my_model
+```
 ## Conventions
 
-- **Raster**: rows = layer index, columns = slot order from `atlas_spec.v1.json`. Missing cells = `NaN`, never filled.
-- **Channels**:
-  - `height`: `spectral_norm` (log1p)
-  - `tint`: `effective_rank` (quantile-clipped 1–99 %)
-  - `rough`: `kurtosis` (log1p)
+- **Raster**: rows = layer index, columns = slot order from `atlas_spec.v2.json`. Missing cells = `NaN`, never filled.
+- **Channels** (v2):
+  - `height`: `spectral_norm` (log1p) — unchanged
+  - `tint`: `stable_rank` (log1p) — changed from effective_rank; stable_rank = log1p((frobenius/spectral_norm)²)
+  - `rough`: `kurtosis` (quantile-clipped 1–99 %) — changed from log1p
 - **RNG**: all random state seeded from `spec.seeds.svd` (currently only randomized SVD).
 - **Artefacts**: no timestamps; PNG metadata fixed (`Software: weight-atlas`, `Creation Time: 1970-01-01T00:00:00Z`); TIFF byte-identical on second run (verified by SHA-256 manifest).
 - **fingerprint.json**: top-level block includes `spec_version`, `tool_version`, `loader` for cross-spec comparability.
@@ -71,7 +112,7 @@ field_tint_smooth.tif ──┘                                          │
 
 ### Spec extension
 
-The `atlas_spec.v1.json` may include a `blender` block (all optional, defaults shown):
+The `atlas_spec.v2.json` may include a `blender` block (all optional, defaults shown):
 ```json
 {
   "blender": {
@@ -225,7 +266,7 @@ scan artefacts (B) ─┘                    │
 ```
 
 ### Spec extension
-The `atlas_spec.v1.json` may include a `compare` block:
+The `atlas_spec.v2.json` may include a `compare` block:
 ```json
 {
   "compare": {

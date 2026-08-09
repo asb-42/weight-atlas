@@ -58,13 +58,40 @@ def build_parser() -> argparse.ArgumentParser:
     activity.add_argument("--seed", type=int, default=0, help="Random seed for determinism")
     activity.add_argument("--max-layers", type=int, default=None, help="Max layers to capture")
 
+    diagnose = sub.add_parser("diagnose", help="Diagnose tensor name mapping coverage")
+    diagnose.add_argument("path", type=Path, help="Path to model file or directory")
+    diagnose.add_argument("--spec", type=Path, default=None, help="Path to atlas spec JSON")
+    diagnose.add_argument("--loader", choices=["safetensors", "gguf"], default=None,
+                          help="Loader to use (default: auto-detect)")
+    diagnose.add_argument("--threshold", type=float, default=0.8,
+                          help="Warning threshold for in_slots ratio (default: 0.8)")
+
     return parser
 
 
 def _cmd_scan(args: argparse.Namespace) -> int:
-    spec_path = args.spec or Path("specs/atlas_spec.v1.json")
+    spec_path = args.spec or Path("specs/atlas_spec.v2.json")
     spec = AtlasSpec.from_json(spec_path)
     artefacts = run_scan(args.path, args.out, spec, loader_id=args.loader)
+
+    # Check mapping coverage and warn if < 80%
+    from weight_atlas.scan import _build_fingerprint
+    from weight_atlas.core.registry import get_loader
+    from weight_atlas.core.types import detect_loader
+    loader_id = args.loader or detect_loader(args.path)
+    loader = get_loader(loader_id)()
+    handles = list(loader.open(args.path))
+    from weight_atlas.scan import _make_handles
+    stats = [_make_handles(h) for h in handles]
+    fp = _build_fingerprint(stats, spec, loader_id, handles)
+    mc = fp.get("mapping_coverage", {})
+    ratio = mc.get("ratio", 1.0)
+    if ratio < 0.8:
+        print(f"WARNING: mapping coverage {ratio:.1%} < 80% "
+              f"({mc.get('in_slots', 0)}/{mc.get('total', 0)} tensors in slots). "
+              f"Run 'weight-atlas diagnose {args.path}' for details.",
+              file=sys.stderr)
+
     for a in artefacts:
         print(a)
     return 0
@@ -99,7 +126,7 @@ def _cmd_render(args: argparse.Namespace) -> int:
     # Load spec from scan artefacts: look for a recorded spec_version.
     # We reconstruct from the default spec; in future the scan could emit
     # the spec it used.
-    spec = AtlasSpec.from_json(Path("specs/atlas_spec.v1.json"))
+    spec = AtlasSpec.from_json(Path("specs/atlas_spec.v2.json"))
 
     renderer_cls = get_renderer(args.renderer)
     renderer = renderer_cls()
@@ -150,7 +177,7 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     from weight_atlas.compare import compute_compare_summary, hotspot_ranking
     from weight_atlas.fields.tif_io import read_tif
 
-    spec_path = args.spec or Path("specs/atlas_spec.v1.json")
+    spec_path = args.spec or Path("specs/atlas_spec.v2.json")
     spec = AtlasSpec.from_json(spec_path)
 
     out: Path = args.out
@@ -337,9 +364,62 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_compare(args)
     if args.command == "activity":
         return _cmd_activity(args)
+    if args.command == "diagnose":
+        return _cmd_diagnose(args)
     parser.print_help()
     return 0
 
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+
+def _cmd_diagnose(args: argparse.Namespace) -> int:
+    """Diagnose tensor name mapping coverage for a model."""
+    from weight_atlas.core.registry import get_loader
+    from weight_atlas.core.types import detect_loader
+
+    spec_path = args.spec or Path("specs/atlas_spec.v2.json")
+    spec = AtlasSpec.from_json(spec_path)
+
+    loader_id = args.loader or detect_loader(args.path)
+    loader = get_loader(loader_id)()
+    handles = list(loader.open(args.path))
+
+    # Build mapping report
+    from weight_atlas.core.name_map import map_name
+    total = len(handles)
+    slot_counts: dict[str, int] = {}
+    unmapped: list[str] = []
+    for h in handles:
+        layer, slot = map_name(h.name)
+        slot_counts[slot] = slot_counts.get(slot, 0) + 1
+        if slot == "other":
+            unmapped.append(h.name)
+
+    in_slots = total - len(unmapped)
+    ratio = in_slots / total if total > 0 else 0.0
+
+    print(f"Model: {args.path}")
+    print(f"Loader: {loader_id}")
+    print(f"Total tensors: {total}")
+    print(f"In slots: {in_slots} ({ratio:.1%})")
+    print(f"Unmapped: {len(unmapped)}")
+    print()
+    print("Slot distribution:")
+    for slot, count in sorted(slot_counts.items(), key=lambda x: -x[1]):
+        print(f"  {slot:20s} {count:4d}")
+    if unmapped:
+        print()
+        print("Unmapped tensors:")
+        for name in unmapped:
+            print(f"  {name}")
+
+    # Warning if below threshold
+    if ratio < args.threshold:
+        print()
+        print(f"WARNING: in_slots ratio {ratio:.1%} < {args.threshold:.0%} threshold.",
+              file=sys.stderr)
+        return 1
+    return 0

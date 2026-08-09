@@ -1,3 +1,44 @@
+## [0.2.0] - 2026-08-09
+
+### Real-Model-Calibration (Bonsai-8B)
+
+**Migration Note**: v0.2.0 requires re-scan. Existing v1 fingerprints cannot be compared with v2. The compare command hard-rejects spec_version mismatches.
+
+#### Spec v2 Changes
+- `spec_version`: 2 (was 1)
+- `tint` channel: `effective_rank` → `stable_rank` = log1p((frobenius/spectral_norm)²)
+- `rough` channel: `log1p` → `quantile_clip` (1–99%)
+- `height` channel: unchanged (spectral_norm + log1p)
+- New slots: `attn_q_norm`, `attn_k_norm` (QK-Norm for Bonsai-8B)
+
+#### Name Audit System
+- Bonsai-8B fixture: `tests/fixtures/names_bonsai_8b.json`
+- `diagnose` CLI command: `weight-atlas diagnose <path>`
+- `mapping_coverage` block in fingerprint.json
+- CLI warning when `in_slots < 80%`
+- Rule ordering: `attn_q_norm`/`attn_k_norm` before `attn_q`/`attn_k`
+
+#### Degeneration Guards
+- Per-channel diagnostics: `valid_fraction`, `normalized_std`
+- Std < eps OR valid < 50% → CLI warning + warnings block + UI banner
+- Module: `weight_atlas/fields/degenerations.py`
+
+#### UI Changes
+- Artifact route: `GET /models/{id}/artifacts/{name}` (allowlist + traversal protection)
+- `.tif` entries shown as "not inline displayable — download" link
+- Detail page uses only the artifact route
+- Scan job auto-renders sheets after completion
+- Degeneration warnings banner on detail page
+
+#### New Files
+- `specs/atlas_spec.v2.json`
+- `src/weight_atlas/stats/stable_rank.py`
+- `src/weight_atlas/fields/degenerations.py`
+- `tests/test_name_audit.py`
+- `tests/test_degenerations.py`
+- `tests/fixtures/names_bonsai_8b.json`
+- `docs/MODEL_FAMILIES.md`
+
 # Changelog
 
 All notable changes to this project will be documented in this file.

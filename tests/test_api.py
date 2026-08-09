@@ -53,7 +53,7 @@ def spec_path(tmp_path: Path) -> Path:
         "sheet": {"contour_levels": 8, "light_azdeg": 315, "light_altdeg": 45, "dpi": 72},
         "seeds": {"svd": 0},
     }
-    spec_path = tmp_path / "atlas_spec.v1.json"
+    spec_path = tmp_path / "atlas_spec.v2.json"
     with open(spec_path, "w") as f:
         json.dump(spec, f)
     return spec_path

@@ -20,12 +20,12 @@ def create_app(
 
     Args:
         db_path: Path to SQLite job database. Defaults to ./data/jobs.db
-        spec_path: Path to atlas spec JSON. Defaults to ./specs/atlas_spec.v1.json
+        spec_path: Path to atlas spec JSON. Defaults to ./specs/atlas_spec.v2.json
         output_root: Root directory for scan outputs. Defaults to ./output
     """
     base = Path(__file__).resolve().parent.parent.parent.parent
     _db_path = db_path or base / "data" / "jobs.db"
-    _spec_path = spec_path or base / "specs" / "atlas_spec.v1.json"
+    _spec_path = spec_path or base / "specs" / "atlas_spec.v2.json"
     _output_root = output_root or base / "output"
 
     _db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -34,7 +34,7 @@ def create_app(
     job_queue = jobmod.JobQueue(_db_path, on_job=lambda j: None)
     job_queue.start()
 
-    app = FastAPI(title="Weight Atlas", version="0.1.0")
+    app = FastAPI(title="Weight Atlas", version="0.2.0")
 
     # Static files (CSS)
     static_dir = Path(__file__).resolve().parent.parent / "ui" / "static"

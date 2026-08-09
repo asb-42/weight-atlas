@@ -17,7 +17,10 @@ import re
 # HuggingFace rules (original)
 _RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"embed_tokens"), "embed"),
+    (re.compile(r"model\.norm"), "norm_mlp"),
     (re.compile(r"lm_head"), "lm_head"),
+    (re.compile(r"self_attn\.q_norm"), "attn_q_norm"),
+    (re.compile(r"self_attn\.k_norm"), "attn_k_norm"),
     (re.compile(r"self_attn\.q_proj"), "attn_q"),
     (re.compile(r"self_attn\.k_proj"), "attn_k"),
     (re.compile(r"self_attn\.v_proj"), "attn_v"),
@@ -41,6 +44,8 @@ _MOE_RULES: list[tuple[re.Pattern[str], str | None]] = [
 
 # GGUF-specific rules (applied after HF rules, before fallback)
 _GGUF_RULES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"blk\.\d+\.attn_q_norm"), "attn_q_norm"),
+    (re.compile(r"blk\.\d+\.attn_k_norm"), "attn_k_norm"),
     (re.compile(r"blk\.\d+\.attn_q"), "attn_q"),
     (re.compile(r"blk\.\d+\.attn_k"), "attn_k"),
     (re.compile(r"blk\.\d+\.attn_v"), "attn_v"),

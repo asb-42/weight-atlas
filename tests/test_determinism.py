@@ -16,7 +16,7 @@ def test_scan_twice_same_manifest():
         tmp = Path(tmp)
         model = tmp / "model.safetensors"
         make_fake_model(model)
-        spec = AtlasSpec.from_json(Path("specs/atlas_spec.v1.json"))
+        spec = AtlasSpec.from_json(Path("specs/atlas_spec.v2.json"))
 
         out1 = tmp / "out1"
         out2 = tmp / "out2"
@@ -38,7 +38,7 @@ def test_tif_byte_identical():
         tmp = Path(tmp)
         model = tmp / "model.safetensors"
         make_fake_model(model)
-        spec = AtlasSpec.from_json(Path("specs/atlas_spec.v1.json"))
+        spec = AtlasSpec.from_json(Path("specs/atlas_spec.v2.json"))
 
         out1 = tmp / "out1"
         out2 = tmp / "out2"

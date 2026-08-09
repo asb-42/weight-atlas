@@ -52,7 +52,7 @@
     {% for tif in tif_files %}
     {% if 'embed_density' in tif %}
     <figure>
-        <img src="/api/artefacts/{{ job.job_id }}/render/{{ tif }}" alt="{{ tif }}">
+        <img src="/models/{{ job.job_id }}/artifacts/render/{{ tif }}" alt="{{ tif }}">
         <figcaption>{{ tif }}</figcaption>
     </figure>
     {% endif %}
@@ -64,6 +64,17 @@
 {% block content %}
 <h2>{{ job.model_path }}</h2>
 <p><a href="/">← Back to models</a></p>
+
+{% if fingerprint and fingerprint.get('warnings') %}
+<section class="banner banner--warning">
+    <strong>Warnings:</strong>
+    <ul>
+        {% for warning in fingerprint.warnings %}
+        <li>{{ warning }}</li>
+        {% endfor %}
+    </ul>
+</section>
+{% endif %}
 
 <section class="detail-section">
     <h3>Fields</h3>
@@ -87,7 +98,7 @@
     <div class="image-grid">
         {% for png in sheet_pngs %}
         <figure>
-            <img src="/api/artefacts/{{ job.job_id }}/{{ png }}" alt="{{ png }}">
+            <img src="/models/{{ job.job_id }}/artifacts/{{ png }}" alt="{{ png }}">
             <figcaption>{{ png }}</figcaption>
         </figure>
         {% endfor %}
@@ -103,7 +114,7 @@
     <div class="image-grid">
         {% for png in terrain_pngs %}
         <figure>
-            <img src="/api/artefacts/{{ job.job_id }}/{{ png }}" alt="{{ png }}">
+            <img src="/models/{{ job.job_id }}/artifacts/{{ png }}" alt="{{ png }}">
             <figcaption>{{ png }}</figcaption>
         </figure>
         {% endfor %}
@@ -176,7 +187,14 @@
     <h3>Artefacts</h3>
     <ul>
         {% for tif in tif_files %}
-        <li>{{ tif }}</li>
+        <li>
+            {% if tif.endswith('.tif') or tif.endswith('.tiff') %}
+                <span class="tif-not-inline">{{ tif }} — not inline displayable</span>
+                <a href="/models/{{ job.job_id }}/artifacts/{{ tif }}" download>download</a>
+            {% else %}
+                <a href="/models/{{ job.job_id }}/artifacts/{{ tif }}">{{ tif }}</a>
+            {% endif %}
+        </li>
         {% endfor %}
     </ul>
 </section>
@@ -233,7 +251,7 @@
     {% for tif in tif_files %}
     {% if 'embed_density' in tif %}
     <figure>
-        <img src="/api/artefacts/{{ job.job_id }}/render/{{ tif }}" alt="{{ tif }}">
+        <img src="/models/{{ job.job_id }}/artifacts/render/{{ tif }}" alt="{{ tif }}">
         <figcaption>{{ tif }}</figcaption>
     </figure>
     {% endif %}

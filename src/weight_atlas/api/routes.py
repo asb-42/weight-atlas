@@ -96,7 +96,7 @@ def create_router(
             spec = AtlasSpec.from_json(spec_path)
         else:
             # Use default spec
-            default_spec_path = Path("specs/atlas_spec.v1.json")
+            default_spec_path = Path("specs/atlas_spec.v2.json")
             if default_spec_path.exists():
                 spec = AtlasSpec.from_json(default_spec_path)
             else:
@@ -282,26 +282,96 @@ def create_router(
         job = job_queue.import_scan(scan_dir, model_path)
         return JSONResponse(job.to_dict())
 
+    # Allowlist of safe file extensions for serving
+    _ARTEFACT_ALLOWLIST = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp",
+                           ".obj", ".mtl", ".stl",
+                           ".json", ".txt", ".csv", ".npy", ".tif", ".tiff"}
+
     @router.get("/api/artefacts/{job_id}/{path:path}")
     async def serve_artefact(job_id: str, path: str) -> Any:
-        """Serve an artefact file from a job's output directory."""
+        """Serve an artefact file from a job's output directory.
+
+        Security:
+        - Path traversal protection (resolved path must be within out_dir)
+        - File extension allowlist (only safe types served)
+        - Blocks symlinks that escape out_dir
+        """
         from fastapi.responses import FileResponse
 
         job = job_queue.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="job not found")
 
+        # Check extension allowlist
+        artefact_path_lower = path.lower()
+        if not any(artefact_path_lower.endswith(ext) for ext in _ARTEFACT_ALLOWLIST):
+            raise HTTPException(
+                status_code=403,
+                detail=f"File type not allowed: {path}. Allowed: {_ARTEFACT_ALLOWLIST}"
+            )
+
         # Security: ensure path doesn't escape out_dir
         out_dir = Path(job.out_dir).resolve()
         artefact_path = (out_dir / path).resolve()
 
-        # Check that the resolved path is within out_dir
-        if not str(artefact_path).startswith(str(out_dir)):
-            raise HTTPException(status_code=403, detail="Access denied")
+        # Check that the resolved path is within out_dir (traversal protection)
+        try:
+            artefact_path.relative_to(out_dir)
+        except ValueError:
+            raise HTTPException(status_code=403, detail="Access denied: path traversal")
 
         if not artefact_path.exists():
             raise HTTPException(status_code=404, detail=f"Artefact not found: {path}")
 
+        # Additional check: reject symlinks that escape out_dir
+        if artefact_path.is_symlink():
+            real_path = artefact_path.resolve()
+            try:
+                real_path.relative_to(out_dir)
+            except ValueError:
+                raise HTTPException(status_code=403, detail="Access denied: symlink escape")
+
         return FileResponse(artefact_path)
 
     return router
+
+
+    @router.get("/models/{job_id}/artifacts/{artifact_name:path}", response_class=HTMLResponse)
+    async def model_artifact(request: Request, job_id: str, artifact_name: str) -> HTMLResponse:
+        """Serve a specific artifact file for a model (canonical route per v0.2.0 spec).
+
+        Uses allowlist (.png/.obj inline, .tif as download link).
+        Traversal protection via resolved path check.
+        """
+        job = job_queue.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="job not found")
+
+        # Extension allowlist
+        artifact_lower = artifact_name.lower()
+        if not any(artifact_lower.endswith(ext) for ext in _ARTEFACT_ALLOWLIST):
+            raise HTTPException(
+                status_code=403,
+                detail=f"File type not allowed: {artifact_name}"
+            )
+
+        out_dir = Path(job.out_dir).resolve()
+        artifact_path = (out_dir / artifact_name).resolve()
+
+        try:
+            artifact_path.relative_to(out_dir)
+        except ValueError:
+            raise HTTPException(status_code=403, detail="Access denied: path traversal")
+
+        if not artifact_path.exists():
+            raise HTTPException(status_code=404, detail=f"Artifact not found: {artifact_name}")
+
+        if artifact_path.is_symlink():
+            real_path = artifact_path.resolve()
+            try:
+                real_path.relative_to(out_dir)
+            except ValueError:
+                raise HTTPException(status_code=403, detail="Access denied: symlink escape")
+
+        from fastapi.responses import FileResponse
+        return FileResponse(artifact_path)

@@ -81,7 +81,7 @@ tensors['model.embed_tokens.weight'] = rng.normal(0, 0.1, (100, 32)).astype(np.f
 save_file(tensors, str(model_path))
 
 # Load spec
-spec = AtlasSpec.from_json(Path('$PROJECT_ROOT/specs/atlas_spec.v1.json'))
+spec = AtlasSpec.from_json(Path('$PROJECT_ROOT/specs/atlas_spec.v2.json'))
 
 # Scan
 scan(model_path, Path('$TMPDIR/out1'), spec)
@@ -144,7 +144,7 @@ tensors = {
 }
 save_file(tensors, str(model_path))
 
-spec = AtlasSpec.from_json(Path('$PROJECT_ROOT/specs/atlas_spec.v1.json'))
+spec = AtlasSpec.from_json(Path('$PROJECT_ROOT/specs/atlas_spec.v2.json'))
 spec_dict = {'embedding': {'method': 'pca', 'grid': 256, 'components': 3, 'seeds': {'pca': 0}}}
 spec = AtlasSpec(**{**spec.__dict__, **spec_dict})
 

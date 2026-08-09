@@ -195,6 +195,17 @@ class JobQueue:
                 artefacts = [str(a) for a in run_scan(
                     Path(job.model_path), Path(job.out_dir), spec
                 )]
+                # Auto-render sheets after scan (v0.2.0)
+                progress_cb(0.8, "Rendering sheets...")
+                try:
+                    render_artefacts = self._auto_render_sheets(
+                        Path(job.out_dir), spec
+                    )
+                    artefacts.extend(render_artefacts)
+                except Exception as render_err:
+                    # Rendering is best-effort; don't fail the job
+                    print(f"Warning: auto-render failed: {render_err}",
+                          file=__import__('sys').stderr)
             job.artefacts = artefacts
             progress_cb(1.0, "Complete")
             job.status = JobStatus.DONE
@@ -390,7 +401,7 @@ class JobQueue:
                 from weight_atlas.core.types import AtlasSpec, Field2D
                 from weight_atlas.fields.tif_io import read_tif
 
-                spec = AtlasSpec.from_json(Path("specs/atlas_spec.v1.json"))
+                spec = AtlasSpec.from_json(Path("specs/atlas_spec.v2.json"))
                 renderer = get_renderer("sheet")()
 
                 # Discover channels from scan directory
@@ -480,3 +491,48 @@ class JobQueue:
             )
             for r in rows
         ]
+
+
+    def _auto_render_sheets(self, out_dir: Path, spec: Any) -> list[str]:
+        """Auto-render sheet PNGs from scan artefacts (best-effort)."""
+        from weight_atlas.core.registry import get_renderer
+        from weight_atlas.core.types import Field2D
+        from weight_atlas.fields.tif_io import read_tif
+
+        renderer = get_renderer("sheet")()
+        render_dir = out_dir / "render"
+        render_dir.mkdir(exist_ok=True)
+
+        # Discover channels from tif files
+        channels: set[str] = set()
+        for tif in out_dir.glob("field_*.tif"):
+            core = tif.name[len("field_"):-len(".tif")]
+            if core.endswith("_raw"):
+                channels.add(core[:-len("_raw")])
+            elif core.endswith("_smooth"):
+                channels.add(core[:-len("_smooth")])
+
+        rendered: list[str] = []
+        for channel in channels:
+            smooth_path = out_dir / f"field_{channel}_smooth.tif"
+            raw_path = out_dir / f"field_{channel}_raw.tif"
+            tif = smooth_path if smooth_path.exists() else raw_path
+            if not tif.exists():
+                continue
+
+            data = read_tif(tif)
+            n_rows, n_cols = data.shape
+            field = Field2D(
+                channel=channel,
+                data=data,
+                row_labels=[str(i) for i in range(n_rows)],
+                col_labels=list(spec.slots)[:n_cols] if n_cols <= len(spec.slots) else [str(i) for i in range(n_cols)],
+                spec_version=spec.spec_version,
+            )
+            renderer.render(field, spec, render_dir)
+
+        # Collect rendered PNGs
+        for png in render_dir.glob("*.png"):
+            rendered.append(f"render/{png.name}")
+
+        return rendered

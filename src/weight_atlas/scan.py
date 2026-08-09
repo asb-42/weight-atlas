@@ -22,6 +22,7 @@ from weight_atlas.loaders import (
 )
 from weight_atlas.stats.norms import EffectiveRank, FrobeniusNorm, SpectralNorm
 from weight_atlas.stats.shape_moments import Kurtosis, Sparsity
+from weight_atlas.stats.stable_rank import StableRank
 
 
 def _sha256(path: Path) -> str:
@@ -40,6 +41,7 @@ def _make_handles(tensor: TensorHandle) -> TensorStats:
         frobenius=FrobeniusNorm().compute(tensor),
         spectral_norm=SpectralNorm().compute(tensor),
         effective_rank=EffectiveRank().compute(tensor),
+        stable_rank=StableRank().compute(tensor),
         kurtosis=Kurtosis().compute(tensor),
         sparsity=Sparsity().compute(tensor),
         expert_id=tensor.expert_id,
@@ -94,6 +96,8 @@ def scan(
 
         scaled = apply_scale(field_raw.data, ch_spec["scale"])
         from weight_atlas.fields.smoothing import smooth, upsample
+        from weight_atlas.fields.degenerations import diagnose_fields
+
         up = upsample(scaled, int(spec.grid["upsample"]))
         smoothed = smooth(up, float(spec.grid["smooth_sigma"]))
         smooth_path = out / f"field_{channel}_smooth.tif"
@@ -176,6 +180,8 @@ def scan(
                 artefacts.append(raw_path)
 
                 from weight_atlas.fields.smoothing import smooth, upsample
+                from weight_atlas.fields.degenerations import diagnose_fields
+
                 scaled = apply_scale(density, {'type': 'log1p'})
                 up = upsample(scaled, int(spec.grid['upsample']))
                 smoothed = smooth(up, float(spec.grid['smooth_sigma']))
@@ -211,6 +217,18 @@ def scan(
                 json.dump(embedding_meta, f, indent=2)
             artefacts.append(out / 'embedding_meta.json')
 
+    # Degeneration checks on raw fields
+    fields_for_diag = {}
+    for channel in spec.channels:
+        raw_path = out / f"field_{channel}_raw.tif"
+        if raw_path.exists():
+            from weight_atlas.fields.tif_io import read_tif
+            fields_for_diag[channel] = read_tif(raw_path)
+    if fields_for_diag:
+        degen_report = diagnose_fields(fields_for_diag)
+        if degen_report.warnings:
+            fingerprint["warnings"] = fingerprint.get("warnings", []) + degen_report.warnings
+
     manifest = {str(p.relative_to(out)): _sha256(p) for p in artefacts}
     manifest_path = out / "manifest.json"
     with open(manifest_path, "w") as f:
@@ -231,7 +249,7 @@ def _build_fingerprint(
     try:
         tool_version = importlib.metadata.version("weight-atlas")
     except importlib.metadata.PackageNotFoundError:
-        tool_version = "0.1.0-dev"
+        tool_version = "0.2.0"
 
     out: dict = {
         "spec_version": spec.spec_version,
@@ -258,6 +276,7 @@ def _build_fingerprint(
             "frobenius": ts.frobenius,
             "spectral_norm": ts.spectral_norm,
             "effective_rank": ts.effective_rank,
+            "stable_rank": ts.stable_rank,
             "kurtosis": ts.kurtosis,
             "sparsity": ts.sparsity,
         }
@@ -268,6 +287,15 @@ def _build_fingerprint(
 
     out["model"]["n_tensors"] = len(out["tensors"])
     out["model"]["n_layers"] = len(layers)
+
+    # Add mapping coverage (name audit)
+    n_mapped = sum(1 for name in out["tensors"] if map_name(name)[1] != "other")
+    n_total = len(out["tensors"])
+    out["mapping_coverage"] = {
+        "in_slots": n_mapped,
+        "total": n_total,
+        "ratio": round(n_mapped / n_total, 4) if n_total > 0 else 0.0,
+    }
 
     # Add quantization summary for GGUF
     if loader_id == "gguf" and ggml_types:

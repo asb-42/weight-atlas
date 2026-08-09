@@ -44,6 +44,7 @@ class TensorStats:
     frobenius: float = 0.0
     spectral_norm: float = 0.0
     effective_rank: float = 0.0
+    stable_rank: float = 0.0
     kurtosis: float = 0.0
     sparsity: float = 0.0
     expert_id: int | None = None  # For MoE expert tensors
@@ -83,7 +84,7 @@ class ExpertPanel:
 
 @dataclass
 class AtlasSpec:
-    """Versioned cartography convention loaded from atlas_spec.v1.json."""
+    """Versioned cartography convention loaded from atlas_spec.v2.json."""
     spec_version: int
     slots: list[str]
     channels: dict[str, Any]

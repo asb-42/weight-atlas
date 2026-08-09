@@ -17,7 +17,7 @@ from weight_atlas.fields.tif_io import read_tif, write_tif
 
 @pytest.fixture
 def spec():
-    return AtlasSpec.from_json(Path("specs/atlas_spec.v1.json"))
+    return AtlasSpec.from_json(Path("specs/atlas_spec.v2.json"))
 
 
 def test_rasterizer_shape_and_nan(spec):
