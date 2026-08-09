@@ -439,10 +439,10 @@ class TestQ8Scan:
 class TestUnsupportedQuant:
     def test_unsupported_quant_error_message(self):
         """Unsupported quant type should produce error with type name."""
-        from weight_atlas.loaders.gguf_dequant import GGML_TYPE_Q2_K, check_supported
+        from weight_atlas.loaders.gguf_dequant import GGML_TYPE_IQ2_XXS, check_supported
 
-        with pytest.raises(ValueError, match="Q2_K"):
-            check_supported(GGML_TYPE_Q2_K)
+        with pytest.raises(ValueError, match="IQ2_XXS"):
+            check_supported(GGML_TYPE_IQ2_XXS)
 
 
 class TestCrossLoaderCompare:

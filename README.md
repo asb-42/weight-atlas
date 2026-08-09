@@ -8,6 +8,35 @@ LLM weight fingerprinting and topographic visualization. Scan a model → extrac
 2. **Render/Compare never read weights**: The entire visualization and comparison pipeline operates on artifacts (statistics, fields, projections).
 3. **Determinism is part of the measurement protocol**: All RNGs are seeded from the spec. Byte-identical outputs guaranteed on the same machine.
 
+## Installation
+
+### Recommended: Virtual Environment
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+### Alternative: User Installation
+
+```bash
+pip install --user -e .
+```
+
+### Alternative: pipx (Isolated Tool)
+
+```bash
+pipx install -e .
+```
+
+### Troubleshooting Installation
+
+**`externally-managed-environment` error**: Modern Linux systems (PEP 668) prevent system-wide pip installs. Use one of:
+- Virtual environment (recommended)
+- `pip install --user -e .` (user-level)
+- `pipx install -e .` (isolated)
+
 ## Quickstart
 
 ```bash

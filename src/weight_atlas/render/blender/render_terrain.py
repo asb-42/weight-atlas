@@ -60,8 +60,8 @@ def clear_scene() -> None:
 def make_grid_mesh(grid_res: int, z_scale: float, height: np.ndarray) -> object:
     """Create a grid mesh and displace vertices from height data.
 
-    Uses ``foreach_set`` for fast vertex assignment (spec requirement for M2).
-    Returns the created object.
+    Uses ``from_pydata`` which handles loop allocation internally and is
+    stable for large meshes on Blender 4.x. Returns the created object.
     """
     import bpy
     n = grid_res
@@ -76,10 +76,11 @@ def make_grid_mesh(grid_res: int, z_scale: float, height: np.ndarray) -> object:
     h_norm = (height - h_min) / h_range
     zz = h_norm * z_scale
 
-    # Create mesh with known vertex count
-    verts = np.stack([xx.ravel(), yy.ravel(), zz.ravel()], axis=-1).astype(np.float64)
+    # Build vertex list
+    verts = [(xx[i, j], yy[i, j], zz[i, j]) for i in range(n) for j in range(n)]
 
-    # Build quad faces
+    # Build quad faces (empty edges for from_pydata)
+    edges: list = []
     faces = []
     for i in range(n - 1):
         for j in range(n - 1):
@@ -90,13 +91,7 @@ def make_grid_mesh(grid_res: int, z_scale: float, height: np.ndarray) -> object:
             faces.append((v0, v1, v2, v3))
 
     mesh = bpy.data.meshes.new("TerrainMesh")
-    mesh.vertices.add(len(verts))
-    mesh.polygons.add(len(faces))
-    mesh.vertices.foreach_set("co", verts.ravel())
-    mesh.polygons.foreach_set("vertices", [v for face in faces for v in face])
-    mesh.polygons.foreach_set("loop_start", list(range(0, len(faces) * 4, 4)))
-    mesh.polygons.foreach_set("loop_total", [4] * len(faces))
-    mesh.update()
+    mesh.from_pydata(verts, edges, faces)
 
     obj = bpy.data.objects.new("Terrain", mesh)
     bpy.context.collection.objects.link(obj)
@@ -122,7 +117,7 @@ def add_vertex_colors(obj: object, tint: np.ndarray) -> None:
     colors[:, 2] = 1.0 - t_norm.ravel()  # inverse for blue
     colors[:, 3] = 1.0
 
-    col_attr = mesh.color_attributes.new(name="Tint", type="COLOR", domain="POINT")
+    col_attr = mesh.color_attributes.new(name="Tint", type="FLOAT_COLOR", domain="POINT")
     col_attr.data.foreach_set("color", colors.ravel())
 
 

@@ -103,16 +103,21 @@ class MatplotlibSheet:
         return [raw_path]
 
 
-def filled_norm(data: np.ndarray) -> np.ndarray:
-    """Min-max normalise a field to [0,1], ignoring NaN; NaN stays NaN."""
+def filled_norm(data: np.ndarray, quantile_clip: float = 0.02) -> np.ndarray:
+    """Normalize a field to [0,1] using quantile clipping, ignoring NaN.
+
+    Uses q02-q98 quantile range for normalization to be robust against outliers.
+    Values outside the quantile range are clipped.
+    """
     out = data.copy()
     finite = np.isfinite(out)
     if not finite.any():
         return out
-    vmin = float(np.nanmin(out))
-    vmax = float(np.nanmax(out))
+    vals = out[finite]
+    vmin = float(np.quantile(vals, quantile_clip))
+    vmax = float(np.quantile(vals, 1 - quantile_clip))
     if vmax > vmin:
-        out[finite] = (out[finite] - vmin) / (vmax - vmin)
+        out[finite] = np.clip((out[finite] - vmin) / (vmax - vmin), 0, 1)
     else:
         out[finite] = 0.0
     return out

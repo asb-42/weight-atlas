@@ -89,7 +89,18 @@ def create_router(
             raise HTTPException(status_code=404, detail="job not found")
 
         out_dir = Path(job.out_dir)
-        spec = AtlasSpec.from_json(Path(job.spec_path))
+
+        # Load spec from job spec_path, or fallback to default
+        spec_path = Path(job.spec_path) if job.spec_path else None
+        if spec_path is not None and spec_path.exists():
+            spec = AtlasSpec.from_json(spec_path)
+        else:
+            # Use default spec
+            default_spec_path = Path("specs/atlas_spec.v1.json")
+            if default_spec_path.exists():
+                spec = AtlasSpec.from_json(default_spec_path)
+            else:
+                raise HTTPException(status_code=500, detail="Default spec not found")
 
         # Load fingerprint for stats table
         fp_path = out_dir / "fingerprint.json"
@@ -104,11 +115,32 @@ def create_router(
         obj_meshes = sorted(out_dir.glob("*.obj"))
         tif_files = sorted(out_dir.glob("field_*.tif"))
 
+        # Compute out_dir relative to output_root FIRST (handle imported dirs outside root)
+        try:
+            out_dir_rel = str(out_dir.relative_to(output_root))
+        except ValueError:
+            out_dir_rel = str(out_dir)
+
+        # Also check render/ subdirectory for rendered PNGs
+        render_dir = out_dir / "render"
+        if render_dir.exists():
+            render_sheet = sorted(render_dir.glob("*_raw.png"))
+            render_terrain = sorted(render_dir.glob("terrain_*.png"))
+            sheet_pngs.extend(render_sheet)
+            terrain_pngs.extend(render_terrain)
+            if not tif_files:
+                tif_files = sorted(render_dir.glob("field_*.tif"))
+
+        # Create job_info dict with full path for image URLs
+        job_info = job.to_dict()
+        job_info['out_dir'] = str(out_dir)
+        job_info['out_dir_rel'] = out_dir_rel
+
         return templates.TemplateResponse(
             request,
             "detail.html",
             {
-                "job": job.to_dict(),
+                "job": job_info,
                 "fingerprint": fingerprint,
                 "spec": {
                     "spec_version": spec.spec_version,
@@ -117,11 +149,11 @@ def create_router(
                     "grid": spec.grid,
                     "sheet": spec.sheet,
                 },
-                "sheet_pngs": [str(p.name) for p in sheet_pngs],
-                "terrain_pngs": [str(p.name) for p in terrain_pngs],
+                "sheet_pngs": [f"render/{p.name}" for p in sheet_pngs],
+                "terrain_pngs": [f"render/{p.name}" for p in terrain_pngs],
                 "obj_meshes": [str(p.name) for p in obj_meshes],
                 "tif_files": [str(p.name) for p in tif_files],
-                "out_dir": str(out_dir.relative_to(output_root)),
+                "out_dir": out_dir_rel,
             },
         )
 
@@ -233,5 +265,43 @@ def create_router(
                 "out_dir": str(out_dir.relative_to(output_root)),
             },
         )
+
+    @router.post("/api/import")
+    async def import_scan(payload: dict[str, str]) -> JSONResponse:
+        """Import an existing scan directory into the job database."""
+        scan_dir_str = payload.get("scan_dir", "")
+        model_path = payload.get("model_path", "")
+        if not scan_dir_str:
+            raise HTTPException(status_code=400, detail="scan_dir required")
+        scan_dir = Path(scan_dir_str).resolve()
+        if not scan_dir.exists():
+            raise HTTPException(status_code=404, detail=f"scan_dir not found: {scan_dir}")
+        if not (scan_dir / "fingerprint.json").exists():
+            raise HTTPException(status_code=400, detail="Not a valid scan directory (missing fingerprint.json)")
+
+        job = job_queue.import_scan(scan_dir, model_path)
+        return JSONResponse(job.to_dict())
+
+    @router.get("/api/artefacts/{job_id}/{path:path}")
+    async def serve_artefact(job_id: str, path: str) -> Any:
+        """Serve an artefact file from a job's output directory."""
+        from fastapi.responses import FileResponse
+
+        job = job_queue.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="job not found")
+
+        # Security: ensure path doesn't escape out_dir
+        out_dir = Path(job.out_dir).resolve()
+        artefact_path = (out_dir / path).resolve()
+
+        # Check that the resolved path is within out_dir
+        if not str(artefact_path).startswith(str(out_dir)):
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        if not artefact_path.exists():
+            raise HTTPException(status_code=404, detail=f"Artefact not found: {path}")
+
+        return FileResponse(artefact_path)
 
     return router

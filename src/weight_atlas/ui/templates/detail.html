@@ -52,7 +52,7 @@
     {% for tif in tif_files %}
     {% if 'embed_density' in tif %}
     <figure>
-        <img src="/static/outputs/{{ out_dir }}/{{ tif }}" alt="{{ tif }}">
+        <img src="/api/artefacts/{{ job.job_id }}/render/{{ tif }}" alt="{{ tif }}">
         <figcaption>{{ tif }}</figcaption>
     </figure>
     {% endif %}
@@ -66,18 +66,34 @@
 <p><a href="/">← Back to models</a></p>
 
 <section class="detail-section">
+    <h3>Fields</h3>
+    {% if tif_files %}
+    <div class="fields-info">
+        <p>Available field data (TIFF):</p>
+        <ul>
+            {% for tif in tif_files %}
+            <li><code>{{ tif }}</code></li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% else %}
+    <p>No field data available.</p>
+    {% endif %}
+</section>
+
+<section class="detail-section">
     <h3>Sheet</h3>
     {% if sheet_pngs %}
     <div class="image-grid">
         {% for png in sheet_pngs %}
         <figure>
-            <img src="/static/outputs/{{ out_dir }}/{{ png }}" alt="{{ png }}">
+            <img src="/api/artefacts/{{ job.job_id }}/{{ png }}" alt="{{ png }}">
             <figcaption>{{ png }}</figcaption>
         </figure>
         {% endfor %}
     </div>
     {% else %}
-    <p>No sheet images available. Run the sheet renderer first.</p>
+    <p>No sheet images available. Run <code>weight-atlas render {{ out_dir }} --renderer sheet</code> to generate them.</p>
     {% endif %}
 </section>
 
@@ -87,7 +103,7 @@
     <div class="image-grid">
         {% for png in terrain_pngs %}
         <figure>
-            <img src="/static/outputs/{{ out_dir }}/{{ png }}" alt="{{ png }}">
+            <img src="/api/artefacts/{{ job.job_id }}/{{ png }}" alt="{{ png }}">
             <figcaption>{{ png }}</figcaption>
         </figure>
         {% endfor %}
@@ -217,7 +233,7 @@
     {% for tif in tif_files %}
     {% if 'embed_density' in tif %}
     <figure>
-        <img src="/static/outputs/{{ out_dir }}/{{ tif }}" alt="{{ tif }}">
+        <img src="/api/artefacts/{{ job.job_id }}/render/{{ tif }}" alt="{{ tif }}">
         <figcaption>{{ tif }}</figcaption>
     </figure>
     {% endif %}

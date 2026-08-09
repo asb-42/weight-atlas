@@ -15,6 +15,21 @@
     <div id="job-result"></div>
 </section>
 
+<section class="submit-job">
+    <h3>Import Existing Scan</h3>
+    <form hx-post="/api/import" hx-target="#import-result" hx-swap="innerHTML">
+        <label for="scan_dir">Scan directory:</label>
+        <input type="text" id="scan_dir" name="scan_dir"
+               placeholder="/path/to/existing/artefacts/directory"
+               required>
+        <label for="import_model_path">Model path (optional):</label>
+        <input type="text" id="import_model_path" name="model_path"
+               placeholder="/path/to/original/model">
+        <button type="submit">Import</button>
+    </form>
+    <div id="import-result"></div>
+</section>
+
 <section class="model-list">
     <h3>Completed Models</h3>
     {% if models %}

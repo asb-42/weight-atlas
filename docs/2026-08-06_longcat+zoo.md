@@ -662,3 +662,275 @@ Report-Format: Block 1: M8.5; Block 2: Release; dann Stopp – danach gehört da
 ----
 
 Und weil nach dem Release die eigentliche Arbeit beginnt, hier schon der Anschluss-Plan für dich: der erste echte Atlas. Ich würde so vorgehen: scan über die safetensors-Shards des dense 27B und des MoE 35B-A3B (je ~10–20 min, CPU-freundlich dank mmap), dann drei Vergleiche, die deine Ursprungsfragen beantworten: (1) compare --mode aligned der beiden → Architektur-Δ (dense-Bänder vs. Experten-Hochland erstmals quantitativ), (2) falls du ein abliteriertes Derivat hast: compare --mode strict → Läsionskarte, (3) activity mit Protokoll v1 auf beiden → funktionelle Karte inkl. Expert-Usage des MoE. Sag Bescheid, wenn der Release-Report da ist – dann terminieren wir die echte Vermessung.
+
+----
+
+Damit ist der Bogen geschlossen – vom ersten Konzeptbild bis zum getaggten Release. Erst das finale Review, dann die Übergabe an dich, dann der Plan für die erste echte Vermessung.
+
+----
+
+Finales Review – M8.5 + Release v0.1.0: akzeptiert
+
+M8.5: Alle sieben Punkte mit Verweis; activity-Extra befüllt, Protokoll-JSON als Source of Truth mit protocol.py-Loader, activity_meta.json vollständig (inkl. Protokoll-Hash und Scanner-Parameter), mypy-Entscheidung für Optional-Imports dokumentiert. 196+1 Tests, Ruff/mypy clean.
+
+Release: Alle Artefakte da – CHANGELOG mit den drei Garantien, ROADMAP in der vereinbarten Priorisierung, README mit ehrlichem „ist/ist nicht“-Abschnitt, release_check.sh grün (Blender/Activity-Smokes korrekt als SKIP gekennzeichnet), Tag lokal gesetzt, kein Push – exakt wie beauftragt.
+
+Retrospektive in einem Satz: Die Architektur hat gehalten, weil wir die Trennung Analyse (kanonische Artefakte) / Präsentation (Renderer) / Protokoll (Spec) nie aufgeweicht haben – und die Report-Disziplin mit Bestätigungslisten ist der Grund, warum neun Milestones ohne Scope-Explosion geliefert wurden.
+
+----
+
+Vor dem Push: eine echte Entscheidung + zwei Mikro-Items
+
+LICENSE fehlt. Ein Open-Source-Repo ohne License-File ist rechtlich „all rights reserved“ – das willst du nicht. Deine Entscheidung: MIT (maximal simpel) oder Apache-2.0 (mit Patentklausel, üblich im ML-Umfeld). Vor dem Push commiten.
+
+v0.1.1-Mikro-Liste (nicht release-blockierend, aber als erste Backlog-Items fixiert): Activity-Sektion auf der Detailseite (Report nennt nur das Badge in der Liste); docs/activity_protocol.v1.md entweder aus der JSON generieren mit Drift-Test oder streichen; Existenz-Check eines --version-Tests.
+
+Push-Checkliste für dich: License-File commiten → Remote anlegen → git push --tags + Branch → GitHub-Release-Dialog mit CHANGELOG-Auszug (M0–M8 + die drei Garantien) → danach release_check.sh einmal in frischer Clone-venv laufen lassen (Catch: frische Umgebung).
+
+----
+
+Der erste echte Atlas – Run-Plan
+
+Damit beantwortet das Tool endlich deine Ursprungsfragen an echten Gewichten. Reihenfolge und Interpretationshinweise:
+
+# 0) Setup (CPU-freundlich: alles mmap-basiert, kein Voll-Load)
+uv sync --extra web --extra gguf
+
+# 1) Anatomie-Scans (~je 20–60 min auf CPU, abhängig von I/O)
+weight-atlas scan /weights/qwen3.6-27b/    --out runs/qwen27b
+weight-atlas scan /weights/qwen3.6-35b-a3b/ --out runs/qwen35b
+
+# 2) Architektur-Δ (dein dicht-vs-MoE-Vergleich)
+weight-atlas compare runs/qwen27b runs/qwen35b --out runs/delta-arch --mode aligned
+
+# 3) MoE-Signatur als Terrain (falls Blender vorhanden)
+weight-atlas render runs/qwen35b --renderer blender --field expert_mlp_down
+
+# 4) Funktionelle Schicht (GPU empfohlen; CPU machbar, Protokoll ist Prefill-only)
+weight-atlas activity /weights/qwen3.6-27b/     --out runs/act27b  --protocol v1 --device cuda --dtype bfloat16
+weight-atlas activity /weights/qwen3.6-35b-a3b/ --out runs/act35b  --protocol v1 --device cuda --dtype bfloat16
+weight-atlas compare runs/act27b runs/act35b --out runs/delta-func --mode aligned
+
+Worauf du beim Lesen achten solltest:
+
+- Sheets: dense 27B = laminare, sanfte Bänder; 35B-A3B = zerklüftetes Experten-Hochland im Panel-Terrain – dein erstes Konzeptbild, jetzt aus echten Gewichten.
+- aligned-Δ: Hotspots erwarte ich v. a. in mlp-Slots mittlerer/später Layer (MoE ersetzt dense-MLP-Kapazität) und natürlich im router-Slot (NaN auf der dense-Seite → dort Skip-Note statt Δ).
+- Embedding-Sheets: gleiche Tokenizer-Familie → ähnliche semantische Geometrie, aber unterschiedliche Dichtestruktur – der subtilste der drei Fingerabdrücke.
+- Activity: expert_usage zeigt, ob das MoE bei refusal/math/code sichtbar andere Experten-Kohorten aktiviert; Scanner-Disziplin beachten: beide Runs auf derselben Hardware, gleiches Dtype, sonst warnt compare zu Recht.
+- Falls du ein abliteriertes Derivat bekommst: compare --mode strict auf den Scans = strukturelle Läsionskarte, plus Activity-Δ auf dem refusal-State = funktionelle Läsionskarte. Genau das Bild aus deiner allerersten Skizze (die Δ-Abliteration-Leiste) – jetzt messbar.
+
+Praktische Hinweise: GGUF-Alternativdateien nur mit identischer Quantisierung vergleichen (README-Regel); bei 27B/35B sind die größten Matrizen als float32-Kopie ~0,5 GB – normaler Workstation-RAM reicht; für Activity braucht bf16-27B ≈ 54 GB VRAM (A100-80er) – sonst CPU, das Protokoll hat keine Generation, nur kurze Prefills.
+
+Schließkreis zur Eingangsfrage: Ja, es war machbar – und zwar ohne die Analogie zu überreizen. Die „Sagittal-Schnitte“ sind jetzt deterministische, diffbare Artefakte; die MRI-Analogie lebt nur noch dort, wo sie trägt, im Protokoll- und Vergleichsdenken (States = Konditionen, Device = Scanner, Δ = Läsions-Overlay). Wenn die ersten echten Scans laufen, schick mir die compare_summary.json und die Sheets – die Interpretation der realen Signaturen machen wir gemeinsam, und aus den Auffälligkeiten speist sich dann v0.1.1.
+
+----
+
+Jetzt haben wir alles, um die drei Rätsel endgültig zu schließen – und der Fingerprint liefert dabei sogar schon den ersten echten Befund über Bonsai-8B. Der Reihe nach.
+
+1. Die drei Rätsel, gelöst
+
+Rätsel 1 (schwarzes Bild): Das war das Roh-TIFF in einem Viewer, der Float32 ohne Auto-Leveling anzeigt. Kein Bug, falsches Betrachtungswerkzeug.
+
+Rätsel 2 (leeres tint-PNG): Das ist der eigentliche Fund. tint = effective_rank, und der ist bei echten Modellen fast binär: 1-D-Tensoren (Norms) = 1.0, 2-D-Matrizen ≈ 16. Nach Quantil-Normalisierung wird daraus ein Streifenmuster (Spalten konstant 0 oder 1), und Contours existieren nur an Streifenkanten – exakt die vertikalen Linienbänder in deinem PNG. Nicht der Scan ist kaputt, der Kanal ist für echte Gewichte uninformativ. Das war mit den Fixture-Modellen nicht sichtbar, weil deren Slots bewusst unterschiedliche Skalen hatten.
+
+Rätsel 3 (keine Bilder in UI): Unverändert die fehlende Artefakt-Route (M3-Route-Liste hat keinen Ausliefer-Endpunkt) – steht im Auftrag.
+
+2. Was der Fingerprint trotzdem zeigt – und zwei echte Defekte
+
+Positiv: IQ4_XS-Dequant funktioniert (Stats plausibel), 399/399 Tensoren erfasst, n_layers=36 korrekt, und die attn_norm-Spalte zeigt eine wunderschöne echte Signatur: Frobenius/Spectral wächst von 0.6 (Layer 0) monoton bis ~259 (Layer 33) – klassische Outlier-Bildung in der Tiefe. height_raw.png müsste diese Ridge bereits zeigen – schau dir das File jetzt an, das ist dein erster echter Atlas-Befund. Ebenso rough_raw.png: Die Norm-Spalten glühen (Kurtosis bis 2497), Matrizen liegen bei ≈ −1.9 (Uniform-Charakter der IQ4_XS-Dequant – selbst das ist eine Quantisierungs-Signatur).
+
+Defekt A: attn_q_norm/attn_k_norm (72 Tensoren, QK-Norm, shape [128]) haben keinen definierten Slot. Je nach Regex-Ankerung kollidieren sie mit attn_q/attn_k (überschreiben deren Stats!) oder landen in other. Beides undokumentiert → Audit Pflicht.
+
+Defekt B: Der tint-Kanal (siehe Rätsel 2).
+
+3. ARBEITSAUFTRAG v0.2.0 „Real-Model-Calibration“
+
+A. Name-Audit + Rules:
+
+- Bonsai-Namensliste (Namen+Shapes) als committed Fixture tests/fixtures/names_bonsai_8b.json.
+- Mapping-Test: jede Name→Slot-Erwartung explizit assertet; Duplicate-(Layer,Slot)-Paare → Fehler im Test. Rules-Reihenfolge: attn_q_norm/attn_k_norm vor attn_q/attn_k; Ziel-Slot für v1: other (Slots frozen), dokumentiert.
+- diagnose-Kommando + mapping_coverage-Block im Fingerprint (Anteile in_slots/other/unmapped nach Parametern); CLI-Warnung bei in_slots < 80 %.
+
+B. Spec v2 (Kalibrierung der Kanäle, bewusster Semantik-Bruch):
+
+- tint → stable_rank = log1p((frobenius/spectral_norm)²) (1-D → 0). Der variiert bei echten Modellen reichhaltig (≈1 bei Norms, 60–300 bei Matrizen) und ist genau die „Orografie“, die wir wollten. effective_rank bleibt als Zusatzkanal rank erhalten.
+- rough (kurtosis): Skalierung quantile_clip statt log1p – die 2497er-Ausreißer dürfen nicht das ganze Feld plattwalzen.
+- height unverändert (spectral, log1p).
+- spec_version: 2; compare rejectet v1-gegen-v2 hart (korrekt so); README: „v0.2.0 verlangt Re-Scan“. Bestehende Bonsai-Artefakte bleiben lesbar, aber unvergleichbar – Migration note in CHANGELOG.
+
+C. Degenerations-Guards: pro Kanal valid_fraction + normierte Std; Std < eps ODER valid < 50 % → CLI-Warnung + warnings-Block + UI-Banner. Test: Konstant-Feld-Fixture feuert.
+
+D. UI: Artefakt-Route GET /models/{id}/artifacts/{name} (Allowlist .png/.obj, Traversal-Schutz); .tif-Einträge als „nicht inline darstellbar – Download“-Link; Detailseite nutzt ausschließlich die Route; Scan-Job ruft render sheet automatisch (verifizieren).
+
+E. Doku/Release: docs/MODEL_FAMILIES.md mit erstem Eintrag Bonsai-8B (GGUF, IQ4_XS+ F32-Norms, GQA, QK-Norm vorhanden!, Vocab 151669, Norm-Outlier-Ridge als Referenzsignatur); ARCHITECTURE.md (stable-rank-Rationale, Spec-v2-Migration); CHANGELOG; Tag v0.2.0 lokal, kein Push.
+
+DoD: Block 1 = Name-Audit-Ergebnis (Kollision ja/nein, vorher/nachher); Block 2 = v0.2.0 wie gehabt; Tests/ruff/mypy grün; Akzeptanzkriterium für dich danach: Re-Scan Bonsai → tint-Sheet zeigt keine Streifen, sondern Binnenstruktur; height-Sheet zeigt die Norm-Ridge; du schickst mir beide PNGs zum Gegenlesen.
+
+Kurz zur Einordnung: Genau dafür ist das Spec-Versionierungs-System da – wir haben jetzt zum ersten Mal echte Kalibrierungsdaten, und v0.2.0 ist die ehrliche Konsequenz daraus. Die Garantien bleiben stehen; nur die Projektionskonventionen werden an der Realität kalibriert.
+
+----
+
+# HANDOVER PROMPT — weight-atlas v0.2.0 "Real-Model Calibration"
+
+You are taking over a project called **weight-atlas**. A previous agent built v0.1.0 over 4 days. The tool is structurally sound (clean architecture, 196+ tests, deterministic artifacts), but it **fails on its first real-world model**. Your job is to diagnose, fix, and deliver a usable visualization. Read this carefully before touching any code.
+
+---
+
+## 1. What weight-atlas is supposed to do
+
+A fingerprinting and comparison tool for LLM weight files (`.safetensors`, `.gguf`). Pipeline:
+
+scan <path> → fingerprint.json + field_<channel>_{raw,smooth}.tif
+render <dir> --renderer sheet|blender|preview → PNG/OBJ
+compare <dirA> <dirB> → delta sheets
+
+
+Core guarantee: **renderers never read weights**, only artifacts. Artifacts are renderer-independent (TIFF + JSON + manifest.json). Spec is versioned (`specs/atlas_spec.v1.json`); spec mismatch → hard-reject in `compare`.
+
+---
+
+## 2. What actually exists (don't rebuild this)
+
+- **Repo layout:** `src/weight_atlas/{core,loaders,stats,fields,render,compare,embedding,activity,api,ui,cli.py}`
+- **Milestones delivered:** M0 (scaffolding) → M1 (vertical slice) → M1.5 (contours, PNG metadata, spec_version, manifest-discovery) → M2 (Blender Workbench renderer, OBJ export) → M3 (FastAPI + HTMX UI, SQLite job queue) → M4 (compare strict/aligned, Δ-sheets, hotspots) → M5 (GGUF loader incl. IQ4_XS and full k-quant) → M6 (MoE expert panels) → M7 (PCA/UMAP embedding sheet) → M8 (activity/fMRI mode via PyTorch hooks) → **v0.1.0 tagged locally**
+- **Test count:** 196 passed, 1 skipped; ruff + mypy clean.
+- **Key files you'll touch:**
+  - `specs/atlas_spec.v1.json` — canonical spec (slots, channels, scales)
+  - `src/weight_atlas/core/name_map.py` — regex rules: tensor name → (layer, slot)
+  - `src/weight_atlas/fields/rasterizer.py` — stats → layer×slot matrix
+  - `src/weight_atlas/fields/scaling.py` — log1p, quantile_clip
+  - `src/weight_atlas/render/matplotlib_sheet.py` — hillshade + hypsometric tint + contours
+  - `src/weight_atlas/loaders/gguf_loader.py` + `gguf_dequant.py`
+  - `fingerprint.json` (already generated for Bonsai-8B, attached)
+
+---
+
+## 3. The failure on Bonsai-8B.gguf
+
+User ran:
+```bash
+weight-atlas scan Bonsai-8B.gguf --out artefacts_bonsai
+weight-atlas render artefacts_bonsai --renderer sheet
+
+Result: tint_raw.png is a nearly empty image with vertical line bands (see attached). tint_raw.tif viewed directly is black. The tool produced artifacts correctly, but the visualizations are not interpretable.
+The root cause is not a bug in the pipeline — it's a calibration failure of the spec v1 channel definitions against real model statistics.
+
+## 4. Root-cause analysis (do NOT skip this)
+
+Open the attached fingerprint.json and verify these observations yourself:
+
+Problem A — tint channel (effective_rank) collapses
+
+- effective_rank on real 2D matrices (shape [4096, *]) clusters tightly around ~15.7–16.0 because the randomized SVD uses k=16 truncation (see stats/spectral.py).
+- On 1D tensors (norms) it's exactly 1.0.
+- After quantile_clip(0.01, 0.99) → normalised to [0,1], the field becomes two-level: matrices ≈ 1.0, norms ≈ 0.0. Result: the vertical stripe pattern you see in tint_raw.png. There's no within-class variance to visualize.
+
+Problem B — height channel (spectral_norm) is dominated by outlier norms
+
+- Layer-norm gammas grow monotonically from ~0.6 (layer 0) to ~259 (layer 33) — a clear and beautiful signature of this model (RMSNorm outlier drift with depth).
+- But the spectral_norm of actual weight matrices is much lower (3–16).
+- With log1p scaling, the norm-column saturates the colormap; matrix structure is visually suppressed.
+
+Problem C — rough channel (kurtosis) has extreme outliers
+
+- Kurtosis of norm vectors reaches 431, 2497, even 2125 in some layers; matrices sit at ≈ −1.9 (a uniformity signature of IQ4_XS dequant — itself interesting!).
+- log1p scaling is not robust to these outliers — a single layer with kurtosis 2497 compresses the entire colormap.
+
+Problem D — UI has no artifact-serving route
+
+- detail.html references PNG paths directly. The API has no GET /models/{id}/artifacts/{name} endpoint. Browser gets 404s. (Secondary issue, fixable in same pass.)
+
+Problem E — Name-map ambiguity
+
+- Bonsai-8B has attn_q_norm/attn_k_norm (QK-Norm, shape [128], 72 tensors). These collide with attn_q/attn_k rules depending on regex ordering. No audit was run. The fingerprint shows them, but mapping coverage is unknown.
+
+None of this is a code defect. It's a spec v1 that was designed against seeded fixtures (where slots had artificially different scales) and never re-calibrated against real model distributions.
+
+## 5. What v0.2.0 must deliver (your deliverables)
+
+### 5.1 Spec v2 — re-calibrate the channels
+
+Bump spec_version to 2. Add a v2 block to specs/atlas_spec.v1.json (keep v1 intact for backwards compatibility; compare already rejects cross-spec):
+
+Channel
+Spec v1 (broken)
+Spec v2 (fixed)
+height
+spectral_norm + log1p
+spectral_norm + log1p (keep — it's fine, just scale per-row in the renderer)
+tint
+effective_rank + quantile_clip
+stable_rank = (frobenius / spectral_norm)² + log1p. Stable rank varies from 1 (norms) to 60–300 (matrices) — rich within-class variance.
+rough
+kurtosis + log1p
+kurtosis + quantile_clip(0.01, 0.99) instead of log1p. Robust to outliers.
+
+Add a fourth diagnostic channel (additive, not breaking): rank = effective_rank (entropy of singular spectrum), kept for those who want it.
+Update fingerprint.json schema to include spec_version: 2 and a mapping_coverage block:
+
+"mapping_coverage": {
+  "in_slots": 0.92, "in_other": 0.07, "unmapped": 0.01,
+  "unmapped_tensors": ["attn_q_norm.weight", "attn_k_norm.weight"]
+}
+
+### 5.2 Name-map audit + extension
+
+- Add Bonsai-8B's name patterns to tests/fixtures/names_bonsai_8b.json (commit this file).
+- Extend name_map.py: attn_q_norm/attn_k_norm before attn_q/attn_k, target slot other (do NOT change frozen v1 slots; document in docs/MODEL_FAMILIES.md).
+- scan CLI: print a WARNING if unmapped > 0.05 or in_slots < 0.8.
+
+### 5.3 Renderer hardening
+
+- matplotlib_sheet.py: when valid fraction of a channel < 0.1 OR std < 1e-6, emit a clear warning banner on the PNG itself ("Channel degenerate — check spec calibration") rather than a silent blank image. Add this as a regression test.
+- Add a new renderer preview (ID preview): float32 TIFF → 8-bit PNG with auto-levels + gamma correction, so TIFFs are viewable without ImageJ. Scan auto-runs preview alongside sheet.
+- Per-row (per-layer) normalization option in the sheet renderer (helps when norms dominate — spec v2 knob sheet.per_row_normalize: true).
+
+### 5.4 UI fix
+
+- Add route GET /models/{id}/artifacts/{name} with suffix allowlist (.png, .obj), path-traversal protection, correct Content-Type.
+- detail.html must use only this route.
+- .tif entries: show as "TIFF — download only" with a download link.
+- Add a banner on the detail page if mapping_coverage.in_slots < 0.8 or any channel has the degenerate-banner warning.
+
+### 5.5 Documentation
+
+- docs/MODEL_FAMILIES.md (new file): first entry "Bonsai-8B" — GGUF, IQ4_XS + F32 norms, GQA (head_dim=128, n_kv=8), QK-Norm present, RMSNorm outlier ridge (frobenius 0.6→259 over 36 layers) as reference signature.
+- ARCHITECTURE.md: section "Spec versioning and real-model calibration" explaining why v2 differs from v1.
+- CHANGELOG.md entry for v0.2.0: headline "First real-model calibration (Bonsai-8B)".
+- README.md: add "Re-scan required" notice for v0.1.0 artifacts; v1 vs v2 artifacts cannot be compared (correct behavior).
+
+### 5.6 Release
+
+- Bump version = "0.2.0" in pyproject.toml.
+- weight-atlas --version returns 0.2.0 (test this).
+- Tag v0.2.0 locally, do NOT push.
+
+## 6. Acceptance criteria (DoD)
+
+You are done when ALL of the following are true:
+
+1. Re-scan Bonsai-8B.gguf → sheet_stable_rank.png (new tint) shows within-matrix variance, not two-level stripes.
+2. sheet_spectral_norm.png (with per-row normalization enabled) shows both the norm ridge AND structure in matrix columns.
+3. sheet_kurtosis.png (quantile-clipped) shows matrices in a readable range, not crushed by a single 2497 outlier.
+4. diagnose command (new, add it) prints mapping coverage and top unmapped tensor names.
+5. UI detail.html loads images without 404s and shows coverage banner.
+6. Test count ≥ 220; ruff + mypy clean; scripts/release_check.sh passes in a fresh venv.
+7. Tag v0.2.0 exists locally; CHANGELOG updated.
+
+## 7. Rules of engagement
+
+- Do not rewrite the pipeline. The architecture (artifacts-are-canonical, renderers-read-artifacts-only, spec-versioned) is correct and must be preserved.
+- Do not add dependencies to core. stable_rank is computed from existing frobenius and spectral_norm — no new stats needed. preview renderer uses only matplotlib (already a dep).
+- Do not re-run M0–M8. Those milestones are done. Start from the current repo state.
+- If you deviate from this spec, document the deviation with rationale in your first progress report. I will review before you continue.
+- Report format: Block 1 = deviations + rationale; Block 2 = files created/modified; Block 3 = test results; Block 4 = DoD checklist; Block 5 = open questions (if any).
+
+## 8. Your first action
+
+Reply with a short acknowledgment (≤ 5 lines) confirming you've read this, followed by:
+
+1. The command you'll run first (probably ls src/weight_atlas/ && cat specs/atlas_spec.v1.json).
+2. The first commit you'll make (likely feat(diagnose): add diagnose CLI command).
+3. Any question you have before starting.
+
+Then begin. Do not ask for permission beyond the initial acknowledgment.

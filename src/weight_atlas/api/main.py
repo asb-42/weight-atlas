@@ -41,6 +41,11 @@ def create_app(
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
+    # Output artefacts (PNG, TIFF, JSON)
+    output_static_dir = base / "output"
+    if output_static_dir.exists():
+        app.mount("/static/outputs", StaticFiles(directory=str(output_static_dir)), name="outputs")
+
     # Templates
     templates_dir = Path(__file__).resolve().parent.parent / "ui" / "templates"
     from fastapi.templating import Jinja2Templates

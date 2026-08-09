@@ -15,6 +15,10 @@ from pathlib import Path
 
 from weight_atlas.core.registry import get_renderer
 from weight_atlas.core.types import AtlasSpec
+from weight_atlas.render import (
+    blender,  # noqa: F401 — registers renderer
+    matplotlib_sheet,  # noqa: F401 — registers renderer
+)
 from weight_atlas.scan import scan as run_scan
 
 
@@ -115,9 +119,18 @@ def _cmd_render(args: argparse.Namespace) -> int:
         tif = smooth_path if smooth_path.exists() else raw_path
         if not tif.exists():
             continue
+
+        data = read_tif(tif)
+
+        # Apply channel scaling for better visualization
+        from weight_atlas.fields.scaling import apply_scale
+        ch_spec = spec.channels.get(channel, {})
+        if "scale" in ch_spec:
+            data = apply_scale(data, ch_spec["scale"])
+
         field = Field2D(
             channel=channel,
-            data=read_tif(tif),
+            data=data,
             spec_version=spec.spec_version,
         )
         # Add scatter overlay for embedding density field

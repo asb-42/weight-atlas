@@ -352,6 +352,108 @@ class JobQueue:
         self._queue.put(job.job_id)
         return job
 
+    def import_scan(
+        self,
+        scan_dir: Path,
+        model_path: str = "",
+        auto_render: bool = True,
+    ) -> Job:
+        """Import an existing scan directory into the job database.
+
+        Args:
+            scan_dir: Path to the directory containing scan artefacts
+            model_path: Optional model path to display (default: scan_dir name)
+            auto_render: If True, render sheets after import
+
+        Returns:
+            Job: The created job entry
+        """
+        import json
+        # shutil imported where needed
+        now = self._now()
+
+        # Load fingerprint if available
+        fp_path = scan_dir / "fingerprint.json"
+        if fp_path.exists():
+            with open(fp_path) as f:
+                fp = json.load(f)
+            if not model_path:
+                model_path = fp.get("model", {}).get("path", str(scan_dir))
+        else:
+            if not model_path:
+                model_path = str(scan_dir)
+
+        # Auto-render sheets if requested
+        if auto_render:
+            try:
+                from weight_atlas.core.registry import get_renderer
+                from weight_atlas.core.types import AtlasSpec, Field2D
+                from weight_atlas.fields.tif_io import read_tif
+
+                spec = AtlasSpec.from_json(Path("specs/atlas_spec.v1.json"))
+                renderer = get_renderer("sheet")()
+
+                # Discover channels from scan directory
+                channels = set()
+                for tif in scan_dir.glob("field_*.tif"):
+                    core = tif.name[len("field_"):-len(".tif")]
+                    if core.endswith("_raw"):
+                        channels.add(core[:-len("_raw")])
+                    elif core.endswith("_smooth"):
+                        channels.add(core[:-len("_smooth")])
+
+                render_dir = scan_dir / "render"
+                for channel in channels:
+                    # Render smooth version if available, else raw
+                    smooth_path = scan_dir / f"field_{channel}_smooth.tif"
+                    raw_path = scan_dir / f"field_{channel}_raw.tif"
+                    tif = smooth_path if smooth_path.exists() else raw_path
+                    if not tif.exists():
+                        continue
+
+                    data = read_tif(tif)
+                    n_rows, n_cols = data.shape
+                    row_labels = [str(i) for i in range(n_rows)]
+                    col_labels = list(spec.slots)
+
+                    field = Field2D(
+                        channel=channel,
+                        data=data,
+                        row_labels=row_labels,
+                        col_labels=col_labels,
+                        spec_version=spec.spec_version,
+                    )
+                    renderer.render(field, spec, render_dir)
+            except Exception:
+                pass  # Rendering is best-effort
+
+        # Discover artefacts (including any rendered PNGs)
+        artefacts = []
+        if (scan_dir / "manifest.json").exists():
+            with open(scan_dir / "manifest.json") as f:
+                manifest = json.load(f)
+            artefacts = list(manifest.keys())
+        # Add rendered PNGs
+        render_dir = scan_dir / "render"
+        if render_dir.exists():
+            for png in render_dir.glob("*.png"):
+                artefacts.append(f"render/{png.name}")
+
+        job = Job(
+            job_id=str(uuid.uuid4()),
+            model_path=model_path,
+            out_dir=str(scan_dir),
+            spec_path="",
+            status=JobStatus.DONE,
+            progress=1.0,
+            message="Imported",
+            created_at=now,
+            updated_at=now,
+            artefacts=artefacts,
+        )
+        self._save(job)
+        return job
+
     def get(self, job_id: str) -> Job | None:
         return self._load(job_id)
 
