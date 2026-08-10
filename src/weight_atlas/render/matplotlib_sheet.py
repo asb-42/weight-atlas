@@ -108,6 +108,18 @@ class MatplotlibSheet:
         ax.set_yticklabels(field.row_labels, fontsize=6)
         ax.set_title(f"{field.channel} – raw")
 
+        # Colorbar/legend showing actual data range
+        if finite.any():
+            vals = data[finite]
+            vmin = float(np.min(vals))
+            vmax = float(np.max(vals))
+            # Create a scalar mappable for the colorbar
+            sm = plt.cm.ScalarMappable(cmap=_HYPSO, norm=plt.Normalize(vmin=0, vmax=1))
+            sm.set_array([])
+            cbar = fig.colorbar(sm, ax=ax, fraction=0.046, pad=0.04)
+            cbar.set_label(f"Value range: {vmin:.2f} – {vmax:.2f}", fontsize=8)
+            cbar.ax.tick_params(labelsize=6)
+
         # Degenerate channel banner on PNG
         if is_degenerate:
             fig.text(
