@@ -266,6 +266,88 @@ def create_router(
             },
         )
 
+    @router.post("/api/jobs/{job_id}/render/{renderer:path}")
+    async def render_job(job_id: str, renderer: str) -> JSONResponse:
+        """Trigger rendering for a job."""
+        job = job_queue.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="job not found")
+
+        out_dir = Path(job.out_dir)
+        if not out_dir.exists():
+            raise HTTPException(status_code=404, detail="output directory not found")
+
+        from weight_atlas.core.registry import get_renderer
+        from weight_atlas.core.types import AtlasSpec, Field2D
+        from weight_atlas.fields.tif_io import read_tif
+
+        spec = AtlasSpec.from_json(Path("specs/atlas_spec.v2.json"))
+        renderer_cls = get_renderer(renderer)
+        renderer_obj = renderer_cls()
+
+        render_dir = out_dir / "render"
+        render_dir.mkdir(exist_ok=True)
+
+        # Discover channels
+        channels: set[str] = set()
+        for tif in out_dir.glob("field_*.tif"):
+            core = tif.name[len("field_"):-len(".tif")]
+            if core.endswith("_raw"):
+                channels.add(core[:-len("_raw")])
+            elif core.endswith("_smooth"):
+                channels.add(core[:-len("_smooth")])
+
+        produced: list[str] = []
+        for channel in channels:
+            smooth_path = out_dir / f"field_{channel}_smooth.tif"
+            raw_path = out_dir / f"field_{channel}_raw.tif"
+            tif = smooth_path if smooth_path.exists() else raw_path
+            if not tif.exists():
+                continue
+
+            data = read_tif(tif)
+            n_rows, n_cols = data.shape
+            field = Field2D(
+                channel=channel,
+                data=data,
+                row_labels=[str(i) for i in range(n_rows)],
+                col_labels=list(spec.slots)[:n_cols] if n_cols <= len(spec.slots) else [str(i) for i in range(n_cols)],
+                spec_version=spec.spec_version,
+            )
+            try:
+                paths = renderer_obj.render(field, spec, render_dir)
+                produced.extend(str(p.name) for p in paths)
+            except Exception as e:
+                produced.append(f"Error rendering {channel}: {e}")
+
+        # Also render preview for each channel
+        if renderer == "sheet":
+            from weight_atlas.render.preview import PreviewRenderer
+            preview_renderer = PreviewRenderer()
+            for channel in channels:
+                smooth_path = out_dir / f"field_{channel}_smooth.tif"
+                raw_path = out_dir / f"field_{channel}_raw.tif"
+                tif = smooth_path if smooth_path.exists() else raw_path
+                if not tif.exists():
+                    continue
+
+                data = read_tif(tif)
+                n_rows, n_cols = data.shape
+                field = Field2D(
+                    channel=channel,
+                    data=data,
+                    row_labels=[str(i) for i in range(n_rows)],
+                    col_labels=list(spec.slots)[:n_cols] if n_cols <= len(spec.slots) else [str(i) for i in range(n_cols)],
+                    spec_version=spec.spec_version,
+                )
+                try:
+                    paths = preview_renderer.render(field, spec, render_dir)
+                    produced.extend(str(p.name) for p in paths)
+                except Exception as e:
+                    produced.append(f"Error rendering preview {channel}: {e}")
+
+        return JSONResponse({"status": "ok", "renderer": renderer, "produced": produced})
+
     @router.post("/api/import")
     async def import_scan(payload: dict[str, str]) -> JSONResponse:
         """Import an existing scan directory into the job database."""

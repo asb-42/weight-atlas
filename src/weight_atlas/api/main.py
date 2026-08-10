@@ -9,6 +9,11 @@ from fastapi.staticfiles import StaticFiles
 
 from weight_atlas.api import jobs as jobmod
 from weight_atlas.api.routes import create_router
+from weight_atlas.render import (  # noqa: F401 — registers renderers
+    blender,
+    matplotlib_sheet,
+    preview,
+)
 
 
 def create_app(

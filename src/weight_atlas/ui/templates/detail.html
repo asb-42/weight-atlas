@@ -56,19 +56,55 @@
 </section>
 
 <section class="detail-section">
+    <h3>Operations</h3>
+    <div class="operations">
+        <button hx-post="/api/jobs/{{ job.job_id }}/render/sheet" hx-target="#render-status" hx-swap="innerHTML">
+            Render Sheets
+        </button>
+        <button hx-post="/api/jobs/{{ job.job_id }}/render/preview" hx-target="#render-status" hx-swap="innerHTML">
+            Render Previews
+        </button>
+        <span id="render-status"></span>
+    </div>
+    <p class="hint">Sheets: hillshade + hypsometric tint + contours. Previews: auto-leveled 8-bit PNG for quick inspection.</p>
+</section>
+
+<section class="detail-section">
     <h3>Sheet</h3>
+    <p class="channel-info">
+        <strong>Height:</strong> spectral_norm (log1p) — layer norm outlier ridge visible as vertical stripe.
+        <strong>Tint:</strong> stable_rank (log1p) = log1p((frobenius/spectral_norm)²) — matrix effective dimensionality.
+        <strong>Rough:</strong> kurtosis (quantile-clipped 1-99%) — distribution shape (negative = uniform, positive = peaked).
+    </p>
     {% if sheet_pngs %}
     <div class="image-grid">
         {% for png in sheet_pngs %}
+        {% if 'preview_' not in png %}
         <figure>
             <img src="/models/{{ job.job_id }}/artifacts/{{ png }}" alt="{{ png }}">
             <figcaption>{{ png }}</figcaption>
         </figure>
+        {% endif %}
         {% endfor %}
     </div>
     {% else %}
-    <p>No sheet images available. Run <code>weight-atlas render {{ out_dir }} --renderer sheet</code> to generate them.</p>
+    <p>No sheet images available. Click "Render Sheets" to generate them.</p>
     {% endif %}
+</section>
+
+<section class="detail-section">
+    <h3>Preview (auto-leveled)</h3>
+    <div class="image-grid">
+        {% for png in sheet_pngs %}
+        {% if 'preview_' in png %}
+        <figure>
+            <img src="/models/{{ job.job_id }}/artifacts/{{ png }}" alt="{{ png }}">
+            <figcaption>{{ png }}</figcaption>
+        </figure>
+        {% endif %}
+        {% endfor %}
+    </div>
+    <p class="hint">Auto-leveled 8-bit PNG with gamma=2.2 correction for quick visual inspection.</p>
 </section>
 
 <section class="detail-section">
