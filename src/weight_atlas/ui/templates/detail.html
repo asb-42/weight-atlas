@@ -17,12 +17,25 @@
 
 {% if fingerprint and fingerprint.get('mapping_coverage') %}
 {% set mc = fingerprint.mapping_coverage %}
+{% if mc.unmapped is defined %}
+{# v0.2.0 format: in_slots is a ratio, unmapped is a count #}
 {% if mc.in_slots < 0.8 or mc.unmapped > 0 %}
 <section class="banner banner--warning">
     <strong>Mapping Coverage:</strong>
     {{ "%.1%" | format(mc.in_slots) }} in slots
     ({{ mc.unmapped }} unmapped{% if mc.unmapped_tensors %}: {{ mc.unmapped_tensors | join(', ') }}{% endif %})
 </section>
+{% endif %}
+{% elif mc.in_slots is defined and mc.in_slots > 1 %}
+{# v0.1.0 format: in_slots is a count, compute ratio #}
+{% set ratio = mc.ratio if mc.ratio is defined else (mc.in_slots / mc.total if mc.total else 1.0) %}
+{% if ratio < 0.8 %}
+<section class="banner banner--warning">
+    <strong>Mapping Coverage:</strong>
+    {{ "%.1%" | format(ratio) }} in slots
+    ({{ mc.total - mc.in_slots }} unmapped)
+</section>
+{% endif %}
 {% endif %}
 {% endif %}
 
@@ -103,7 +116,7 @@
                 {% for name, stats in fingerprint.get("tensors", {}).items() %}
                 <tr>
                     <td>{{ name }}</td>
-                    <td>{{ stats.shape | join('×') }}</td>
+                    <td>{{ stats.shape | join("x") }}</td>
                     <td>{{ "%.4f" | format(stats.frobenius) }}</td>
                     <td>{{ "%.4f" | format(stats.spectral_norm) }}</td>
                     <td>{{ "%.4f" | format(stats.effective_rank) }}</td>
