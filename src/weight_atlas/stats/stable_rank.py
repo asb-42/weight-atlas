@@ -36,7 +36,7 @@ class StableRank:
         self._spectral = SpectralNorm(seed=seed)
 
     def compute(self, t: TensorHandle) -> float:
-        x = t.load()
+
         frob = FrobeniusNorm().compute(t)
         spec = self._spectral.compute(t)
         if spec == 0.0:

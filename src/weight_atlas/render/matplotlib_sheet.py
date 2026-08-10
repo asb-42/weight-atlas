@@ -25,6 +25,10 @@ _PNG_METADATA = {
     "Creation Time": "1970-01-01T00:00:00Z",
 }
 
+# Thresholds for degenerate channel detection
+_EPS = 1e-6
+_MIN_VALID_FRACTION = 0.1
+
 
 @register_renderer("sheet")
 class MatplotlibSheet:
@@ -43,6 +47,13 @@ class MatplotlibSheet:
         data = field.data
         n_rows, n_cols = data.shape
         figsize = (max(6, n_cols * 0.5), max(4, n_rows * 0.4))
+
+        # Check for degenerate channel
+        is_degenerate, degen_reason = _check_degenerate(data)
+
+        # Per-row normalization (spec v2 knob)
+        if sheet.get("per_row_normalize", False):
+            data = _per_row_normalize(data)
 
         # Hillshade from the normalised field.
         ls = LightSource(azdeg=azdeg, altdeg=altdeg)
@@ -97,10 +108,75 @@ class MatplotlibSheet:
         ax.set_yticklabels(field.row_labels, fontsize=6)
         ax.set_title(f"{field.channel} – raw")
 
+        # Degenerate channel banner on PNG
+        if is_degenerate:
+            fig.text(
+                0.5, 0.01,
+                f"Channel degenerate — check spec calibration: {degen_reason}",
+                ha="center", va="bottom",
+                fontsize=8, color="red",
+                fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="yellow", alpha=0.8),
+            )
+
         raw_path = out / f"{field.channel}_raw.png"
         fig.savefig(raw_path, dpi=dpi, bbox_inches="tight", metadata=_PNG_METADATA)
         plt.close(fig)
         return [raw_path]
+
+
+def _check_degenerate(data: np.ndarray) -> tuple[bool, str]:
+    """Check if a channel field is degenerate (constant or near-constant).
+
+    Returns (is_degenerate, reason_string).
+    """
+    total_cells = data.size
+    if total_cells == 0:
+        return True, "empty field"
+
+    finite_mask = np.isfinite(data)
+    n_valid = int(finite_mask.sum())
+    valid_fraction = n_valid / total_cells
+
+    if n_valid == 0:
+        return True, "no finite values"
+
+    vals = data[finite_mask]
+    std = float(np.std(vals))
+    mean = float(np.mean(np.abs(vals)))
+    normalized_std = std / mean if mean > 0 else (0.0 if std == 0 else std)
+
+    reasons: list[str] = []
+    if normalized_std < _EPS:
+        reasons.append(f"normalized_std={normalized_std:.2e} < {_EPS}")
+    if valid_fraction < _MIN_VALID_FRACTION:
+        reasons.append(f"valid_fraction={valid_fraction:.1%} < {_MIN_VALID_FRACTION:.0%}")
+
+    if reasons:
+        return True, "; ".join(reasons)
+    return False, ""
+
+
+def _per_row_normalize(data: np.ndarray) -> np.ndarray:
+    """Normalize each row independently to [0, 1].
+
+    Helps when norms dominate — reveals within-row structure.
+    NaN values are preserved.
+    """
+    out = data.copy()
+    for i in range(out.shape[0]):
+        row = out[i, :]
+        finite = np.isfinite(row)
+        if not finite.any():
+            continue
+        vals = row[finite]
+        vmin = float(np.min(vals))
+        vmax = float(np.max(vals))
+        if vmax > vmin:
+            row[finite] = (vals - vmin) / (vmax - vmin)
+        else:
+            row[finite] = 0.0
+    return out
 
 
 def filled_norm(data: np.ndarray, quantile_clip: float = 0.02) -> np.ndarray:

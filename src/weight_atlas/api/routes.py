@@ -283,7 +283,7 @@ def create_router(
         return JSONResponse(job.to_dict())
 
     # Allowlist of safe file extensions for serving
-    _ARTEFACT_ALLOWLIST = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp",
+    _artefact_allowlist = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp",
                            ".obj", ".mtl", ".stl",
                            ".json", ".txt", ".csv", ".npy", ".tif", ".tiff"}
 
@@ -304,10 +304,10 @@ def create_router(
 
         # Check extension allowlist
         artefact_path_lower = path.lower()
-        if not any(artefact_path_lower.endswith(ext) for ext in _ARTEFACT_ALLOWLIST):
+        if not any(artefact_path_lower.endswith(ext) for ext in _artefact_allowlist):
             raise HTTPException(
                 status_code=403,
-                detail=f"File type not allowed: {path}. Allowed: {_ARTEFACT_ALLOWLIST}"
+                detail=f"File type not allowed: {path}. Allowed: {_artefact_allowlist}"
             )
 
         # Security: ensure path doesn't escape out_dir
@@ -318,7 +318,7 @@ def create_router(
         try:
             artefact_path.relative_to(out_dir)
         except ValueError:
-            raise HTTPException(status_code=403, detail="Access denied: path traversal")
+            raise HTTPException(status_code=403, detail="Access denied: path traversal") from None
 
         if not artefact_path.exists():
             raise HTTPException(status_code=404, detail=f"Artefact not found: {path}")
@@ -329,15 +329,12 @@ def create_router(
             try:
                 real_path.relative_to(out_dir)
             except ValueError:
-                raise HTTPException(status_code=403, detail="Access denied: symlink escape")
+                raise HTTPException(status_code=403, detail="Access denied: symlink escape") from None
 
         return FileResponse(artefact_path)
 
-    return router
-
-
-    @router.get("/models/{job_id}/artifacts/{artifact_name:path}", response_class=HTMLResponse)
-    async def model_artifact(request: Request, job_id: str, artifact_name: str) -> HTMLResponse:
+    @router.get("/models/{job_id}/artifacts/{artifact_name:path}")
+    async def model_artifact(job_id: str, artifact_name: str) -> Any:
         """Serve a specific artifact file for a model (canonical route per v0.2.0 spec).
 
         Uses allowlist (.png/.obj inline, .tif as download link).
@@ -349,7 +346,7 @@ def create_router(
 
         # Extension allowlist
         artifact_lower = artifact_name.lower()
-        if not any(artifact_lower.endswith(ext) for ext in _ARTEFACT_ALLOWLIST):
+        if not any(artifact_lower.endswith(ext) for ext in _artefact_allowlist):
             raise HTTPException(
                 status_code=403,
                 detail=f"File type not allowed: {artifact_name}"
@@ -361,7 +358,7 @@ def create_router(
         try:
             artifact_path.relative_to(out_dir)
         except ValueError:
-            raise HTTPException(status_code=403, detail="Access denied: path traversal")
+            raise HTTPException(status_code=403, detail="Access denied: path traversal") from None
 
         if not artifact_path.exists():
             raise HTTPException(status_code=404, detail=f"Artifact not found: {artifact_name}")
@@ -371,7 +368,9 @@ def create_router(
             try:
                 real_path.relative_to(out_dir)
             except ValueError:
-                raise HTTPException(status_code=403, detail="Access denied: symlink escape")
+                raise HTTPException(status_code=403, detail="Access denied: symlink escape") from None
 
         from fastapi.responses import FileResponse
         return FileResponse(artifact_path)
+
+    return router

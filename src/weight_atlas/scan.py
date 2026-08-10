@@ -95,8 +95,8 @@ def scan(
         artefacts.append(raw_path)
 
         scaled = apply_scale(field_raw.data, ch_spec["scale"])
-        from weight_atlas.fields.smoothing import smooth, upsample
         from weight_atlas.fields.degenerations import diagnose_fields
+        from weight_atlas.fields.smoothing import smooth, upsample
 
         up = upsample(scaled, int(spec.grid["upsample"]))
         smoothed = smooth(up, float(spec.grid["smooth_sigma"]))
@@ -179,8 +179,8 @@ def scan(
                 write_tif(raw_path, density)
                 artefacts.append(raw_path)
 
-                from weight_atlas.fields.smoothing import smooth, upsample
                 from weight_atlas.fields.degenerations import diagnose_fields
+                from weight_atlas.fields.smoothing import smooth, upsample
 
                 scaled = apply_scale(density, {'type': 'log1p'})
                 up = upsample(scaled, int(spec.grid['upsample']))
@@ -291,10 +291,12 @@ def _build_fingerprint(
     # Add mapping coverage (name audit)
     n_mapped = sum(1 for name in out["tensors"] if map_name(name)[1] != "other")
     n_total = len(out["tensors"])
+    n_unmapped = n_total - n_mapped
     out["mapping_coverage"] = {
-        "in_slots": n_mapped,
-        "total": n_total,
-        "ratio": round(n_mapped / n_total, 4) if n_total > 0 else 0.0,
+        "in_slots": round(n_mapped / n_total, 4) if n_total > 0 else 0.0,
+        "in_other": round(n_unmapped / n_total, 4) if n_total > 0 else 0.0,
+        "unmapped": n_unmapped,
+        "unmapped_tensors": [name for name in out["tensors"] if map_name(name)[1] == "other"][:20],
     }
 
     # Add quantization summary for GGUF

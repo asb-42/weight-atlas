@@ -204,3 +204,61 @@ class TestJobQueueDB:
         queue.submit(fake_model, tmp_path / "out", spec_path)
         jobs = queue.list_jobs()
         assert len(jobs) == 1
+
+
+class TestArtefactRoute:
+    def test_artefact_route_serves_png(self, client: TestClient, fake_model: Path, tmp_path: Path) -> None:
+        """GET /models/{id}/artifacts/{name} should serve PNG files."""
+        scan_dir = tmp_path / "scan_test"
+        scan_dir.mkdir(exist_ok=True)
+        fp = {"spec_version": 2, "model": {"n_tensors": 1, "n_layers": 1}, "tensors": {}}
+        with open(scan_dir / "fingerprint.json", "w") as f:
+            json.dump(fp, f)
+        # Create a fake PNG
+        import numpy as np
+        from PIL import Image
+        img = Image.fromarray((np.random.default_rng(42).normal(0, 1, (100, 100)) * 255).astype(np.uint8))
+        img.save(scan_dir / "test_raw.png")
+
+        # Import the scan
+        resp = client.post("/api/import", json={"scan_dir": str(scan_dir), "model_path": str(fake_model)})
+        assert resp.status_code == 200
+        imported_job_id = resp.json()["job_id"]
+
+        # Now try to serve the artefact
+        resp = client.get(f"/models/{imported_job_id}/artifacts/test_raw.png")
+        assert resp.status_code == 200
+        assert "image/png" in resp.headers.get("content-type", "")
+
+    def test_artefact_route_blocks_traversal(self, client: TestClient, fake_model: Path, tmp_path: Path) -> None:
+        """Path traversal should be blocked."""
+        scan_dir = tmp_path / "scan_test2"
+        scan_dir.mkdir(exist_ok=True)
+        fp = {"spec_version": 2, "model": {"n_tensors": 1, "n_layers": 1}, "tensors": {}}
+        with open(scan_dir / "fingerprint.json", "w") as f:
+            json.dump(fp, f)
+
+        resp = client.post("/api/import", json={"scan_dir": str(scan_dir), "model_path": str(fake_model)})
+        assert resp.status_code == 200
+        imported_job_id = resp.json()["job_id"]
+
+        # Try path traversal
+        resp = client.get(f"/models/{imported_job_id}/artifacts/../../../etc/passwd")
+        assert resp.status_code in (403, 404)
+
+    def test_artefact_route_blocks_disallowed_extensions(self, client: TestClient, fake_model: Path, tmp_path: Path) -> None:
+        """Disallowed file extensions should be blocked."""
+        scan_dir = tmp_path / "scan_test3"
+        scan_dir.mkdir(exist_ok=True)
+        fp = {"spec_version": 2, "model": {"n_tensors": 1, "n_layers": 1}, "tensors": {}}
+        with open(scan_dir / "fingerprint.json", "w") as f:
+            json.dump(fp, f)
+        with open(scan_dir / "malicious.exe", "wb") as f:
+            f.write(b"fake exe")
+
+        resp = client.post("/api/import", json={"scan_dir": str(scan_dir), "model_path": str(fake_model)})
+        assert resp.status_code == 200
+        imported_job_id = resp.json()["job_id"]
+
+        resp = client.get(f"/models/{imported_job_id}/artifacts/malicious.exe")
+        assert resp.status_code == 403

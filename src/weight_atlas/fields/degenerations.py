@@ -13,10 +13,10 @@ Produces warnings that flow into:
 from __future__ import annotations
 
 import sys
+from typing import TextIO
 from dataclasses import dataclass, field
 
 import numpy as np
-
 
 # Thresholds
 _EPS = 1e-6  # normalized Std below this → degenerate
@@ -75,10 +75,7 @@ def diagnose_channel(channel: str, field: np.ndarray) -> ChannelDiagnostics:
 
     # Normalized std: std / mean (coefficient of variation)
     # If mean is 0, check if std is also 0
-    if mean > 0:
-        normalized_std = std / mean
-    else:
-        normalized_std = 0.0 if std == 0 else std
+    normalized_std = std / mean if mean > 0 else 0.0 if std == 0 else std
 
     is_degenerate = False
     reasons: list[str] = []
@@ -103,14 +100,14 @@ def diagnose_channel(channel: str, field: np.ndarray) -> ChannelDiagnostics:
 def diagnose_fields(
     fields: dict[str, np.ndarray],
     *,
-    file: sys.__stdin__ | None = None,
+    file: TextIO | None = None,
 ) -> DegenerationReport:
     """Run diagnostics on all channel fields.
-    
+
     Args:
         fields: dict mapping channel name to 2D numpy array
         file: where to print warnings (default: stderr)
-    
+
     Returns:
         DegenerationReport with all diagnostics and warnings
     """
@@ -118,8 +115,8 @@ def diagnose_fields(
         file = sys.stderr
 
     report = DegenerationReport()
-    for channel, field in sorted(fields.items()):
-        diag = diagnose_channel(channel, field)
+    for channel, data in sorted(fields.items()):
+        diag = diagnose_channel(channel, data)
         report.channels[channel] = diag
         if diag.is_degenerate:
             warning = (
@@ -135,7 +132,7 @@ def diagnose_fields(
 
 def check_constant_field(field: np.ndarray) -> bool:
     """Check if a field is constant (all same value or all NaN).
-    
+
     Returns True if the field is degenerate (constant or all-NaN).
     """
     finite_mask = np.isfinite(field)

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Release check script for weight-atlas v0.1.0
+# Release check script for weight-atlas v0.2.0
 # Tests core functionality without optional dependencies.
 # Exit codes: 0 = success, 1 = failure
 
@@ -8,7 +8,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Use venv python if available, otherwise fall back to python3
+PYTHON="$PROJECT_ROOT/.venv/bin/python"
+if [ ! -x "$PYTHON" ]; then
+    PYTHON="$(command -v python3)"
+fi
+
 echo "=== weight-atlas Release Check ==="
+echo "Using: $PYTHON"
 echo ""
 
 # Colors for output
@@ -25,18 +32,18 @@ FAILED=0
 
 # 1. Version check
 echo "--- Version Check ---"
-VERSION=$(python -c "import weight_atlas; print(weight_atlas.__version__)" 2>/dev/null || echo "unknown")
-if [ "$VERSION" = "0.1.0" ]; then
+VERSION=$($PYTHON -c "import weight_atlas; print(weight_atlas.__version__)" 2>/dev/null || echo "unknown")
+if [ "$VERSION" = "0.2.0" ]; then
     pass "Version is $VERSION"
 else
-    fail "Version mismatch: expected 0.1.0, got $VERSION"
+    fail "Version mismatch: expected 0.2.0, got $VERSION"
     FAILED=1
 fi
 echo ""
 
 # 2. Core imports
 echo "--- Core Imports ---"
-if python -c "from weight_atlas.scan import scan; from weight_atlas.cli import main; print('OK')" 2>/dev/null; then
+if $PYTHON -c "from weight_atlas.scan import scan; from weight_atlas.cli import main; print('OK')" 2>/dev/null; then
     pass "Core imports successful"
 else
     fail "Core imports failed"
@@ -46,7 +53,7 @@ echo ""
 
 # 3. CLI help
 echo "--- CLI Help ---"
-if weight-atlas --help >/dev/null 2>&1; then
+if $PYTHON -m weight_atlas.cli --help >/dev/null 2>&1; then
     pass "CLI help works"
 else
     fail "CLI help failed"
@@ -61,7 +68,7 @@ trap "rm -rf $TMPDIR" EXIT
 
 cd "$PROJECT_ROOT"
 
-python -c "
+$PYTHON -c "
 import numpy as np
 from safetensors.numpy import save_file
 from pathlib import Path
@@ -104,7 +111,7 @@ echo ""
 
 # 5. Determinism check (second run)
 echo "--- Determinism Check ---"
-python -c "
+$PYTHON -c "
 import numpy as np
 from pathlib import Path
 from weight_atlas.fields.tif_io import read_tif
@@ -129,7 +136,7 @@ echo ""
 
 # 6. Embedding generation
 echo "--- Embedding Generation ---"
-python -c "
+$PYTHON -c "
 import numpy as np
 from safetensors.numpy import save_file
 from pathlib import Path
@@ -181,7 +188,7 @@ echo ""
 
 # 8. Activity smoke (only with extra)
 echo "--- Activity Smoke Test ---"
-if python -c "import torch; import transformers" 2>/dev/null; then
+if $PYTHON -c "import torch; import transformers" 2>/dev/null; then
     skip "Activity smoke test (torch/transformers available but not automated in CI)"
 else
     skip "Activity smoke test (install with: pip install -e '.[activity]')"

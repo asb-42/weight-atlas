@@ -1,66 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Model Detail — Weight Atlas<section class="detail-section">
-    <h3>Quantization (GGUF)</h3>
-    {% if fingerprint.quantization %}
-    <table>
-        <thead>
-            <tr>
-                <th>Type</th>
-                <th>Count</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for type, count in fingerprint.quantization.items() %}
-            <tr>
-                <td>{{ type }}</td>
-                <td>{{ count }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p>Not a GGUF model or no quantization data.</p>
-    {% endif %}
-</section>
-
-{% if fingerprint and fingerprint.get('model', {}).get('moe') %}
-<section class="detail-section">
-    <h3>MoE Architecture</h3>
-    <div class="moe-badge">
-        <span class="badge badge--info">MoE</span>
-        <span>{{ fingerprint.model.moe.num_experts }} experts</span>
-        {% if fingerprint.model.moe.shared_expert %}
-        <span class="badge badge--success">+ Shared Expert</span>
-        {% endif %}
-        <span>{{ fingerprint.model.moe.num_layers }} layers</span>
-    </div>
-</section>
-{% endif %}
-
-{% if fingerprint and fingerprint.get('embedding_meta') %}
-<section class="detail-section">
-    <h3>Embedding Projection</h3>
-    <div class="embedding-info">
-        <p><strong>Method:</strong> {{ fingerprint.embedding_meta.method }}</p>
-        {% if fingerprint.embedding_meta.explained_variance %}
-        <p><strong>Explained Variance:</strong> {{ fingerprint.embedding_meta.explained_variance | join(', ') }}</p>
-        {% endif %}
-        {% if fingerprint.embedding_meta.version %}
-        <p><strong>Version:</strong> {{ fingerprint.embedding_meta.version }}</p>
-        {% endif %}
-    </div>
-    {% for tif in tif_files %}
-    {% if 'embed_density' in tif %}
-    <figure>
-        <img src="/models/{{ job.job_id }}/artifacts/render/{{ tif }}" alt="{{ tif }}">
-        <figcaption>{{ tif }}</figcaption>
-    </figure>
-    {% endif %}
-    {% endfor %}
-</section>
-{% endif %}
-
-{% endblock %}
+{% block title %}Model Detail — Weight Atlas{% endblock %}
 {% block content %}
 <h2>{{ job.model_path }}</h2>
 <p><a href="/">← Back to models</a></p>
@@ -74,6 +13,17 @@
         {% endfor %}
     </ul>
 </section>
+{% endif %}
+
+{% if fingerprint and fingerprint.get('mapping_coverage') %}
+{% set mc = fingerprint.mapping_coverage %}
+{% if mc.in_slots < 0.8 or mc.unmapped > 0 %}
+<section class="banner banner--warning">
+    <strong>Mapping Coverage:</strong>
+    {{ "%.1%" | format(mc.in_slots) }} in slots
+    ({{ mc.unmapped }} unmapped{% if mc.unmapped_tensors %}: {{ mc.unmapped_tensors | join(', ') }}{% endif %})
+</section>
+{% endif %}
 {% endif %}
 
 <section class="detail-section">
@@ -189,7 +139,7 @@
         {% for tif in tif_files %}
         <li>
             {% if tif.endswith('.tif') or tif.endswith('.tiff') %}
-                <span class="tif-not-inline">{{ tif }} — not inline displayable</span>
+                <span class="tif-not-inline">{{ tif }} — TIFF (download only)</span>
                 <a href="/models/{{ job.job_id }}/artifacts/{{ tif }}" download>download</a>
             {% else %}
                 <a href="/models/{{ job.job_id }}/artifacts/{{ tif }}">{{ tif }}</a>
@@ -198,9 +148,10 @@
         {% endfor %}
     </ul>
 </section>
+
+{% if fingerprint and fingerprint.get('quantization') %}
 <section class="detail-section">
     <h3>Quantization (GGUF)</h3>
-    {% if fingerprint.quantization %}
     <table>
         <thead>
             <tr>
@@ -217,10 +168,8 @@
             {% endfor %}
         </tbody>
     </table>
-    {% else %}
-    <p>Not a GGUF model or no quantization data.</p>
-    {% endif %}
 </section>
+{% endif %}
 
 {% if fingerprint and fingerprint.get('model', {}).get('moe') %}
 <section class="detail-section">

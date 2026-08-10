@@ -72,12 +72,14 @@ def build_parser() -> argparse.ArgumentParser:
 def _cmd_scan(args: argparse.Namespace) -> int:
     spec_path = args.spec or Path("specs/atlas_spec.v2.json")
     spec = AtlasSpec.from_json(spec_path)
+
+
     artefacts = run_scan(args.path, args.out, spec, loader_id=args.loader)
 
     # Check mapping coverage and warn if < 80%
-    from weight_atlas.scan import _build_fingerprint
     from weight_atlas.core.registry import get_loader
     from weight_atlas.core.types import detect_loader
+    from weight_atlas.scan import _build_fingerprint
     loader_id = args.loader or detect_loader(args.path)
     loader = get_loader(loader_id)()
     handles = list(loader.open(args.path))
@@ -179,6 +181,8 @@ def _cmd_compare(args: argparse.Namespace) -> int:
 
     spec_path = args.spec or Path("specs/atlas_spec.v2.json")
     spec = AtlasSpec.from_json(spec_path)
+
+
 
     out: Path = args.out
     out.mkdir(parents=True, exist_ok=True)
@@ -380,8 +384,8 @@ def _cmd_diagnose(args: argparse.Namespace) -> int:
     from weight_atlas.core.registry import get_loader
     from weight_atlas.core.types import detect_loader
 
-    spec_path = args.spec or Path("specs/atlas_spec.v2.json")
-    spec = AtlasSpec.from_json(spec_path)
+
+
 
     loader_id = args.loader or detect_loader(args.path)
     loader = get_loader(loader_id)()

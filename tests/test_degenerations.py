@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from weight_atlas.fields.degenerations import (
-    ChannelDiagnostics,
     check_constant_field,
     diagnose_channel,
     diagnose_fields,
