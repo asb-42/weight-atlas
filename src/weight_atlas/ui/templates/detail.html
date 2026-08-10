@@ -58,12 +58,13 @@
 <section class="detail-section">
     <h3>Operations</h3>
     <div class="operations">
-        <button hx-post="/api/jobs/{{ job.job_id }}/render/sheet" hx-target="#render-status" hx-swap="innerHTML">
+        <button hx-post="/api/jobs/{{ job.job_id }}/render/sheet" hx-target="#render-status" hx-swap="innerHTML" hx-indicator="#render-spinner">
             Render Sheets
         </button>
-        <button hx-post="/api/jobs/{{ job.job_id }}/render/preview" hx-target="#render-status" hx-swap="innerHTML">
+        <button hx-post="/api/jobs/{{ job.job_id }}/render/preview" hx-target="#render-status" hx-swap="innerHTML" hx-indicator="#render-spinner">
             Render Previews
         </button>
+        <span id="render-spinner" class="htmx-indicator"><span class="spinner"></span> Rendering...</span>
         <span id="render-status"></span>
     </div>
     <p class="hint">Sheets: hillshade + hypsometric tint + contours. Previews: auto-leveled 8-bit PNG for quick inspection.</p>

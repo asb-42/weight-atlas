@@ -260,3 +260,68 @@ dd {
     margin: 0;
     padding-left: 1.5rem;
 }
+
+/* Operations section */
+.operations {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+    margin: 1rem 0;
+}
+
+.hint {
+    color: #888;
+    font-size: 0.85rem;
+    margin: 0.5rem 0;
+}
+
+.channel-info {
+    background: var(--bg-alt);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.75rem 1rem;
+    margin: 0.5rem 0;
+    font-size: 0.9rem;
+}
+
+.channel-info strong {
+    color: var(--highlight);
+}
+
+/* HTMX spinner */
+.htmx-indicator {
+    display: none;
+}
+
+.htmx-request .htmx-indicator {
+    display: inline-flex;
+}
+
+.htmx-request.htmx-indicator {
+    display: inline-flex;
+}
+
+.spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--highlight);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    margin-right: 0.5rem;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+#render-status {
+    font-size: 0.85rem;
+    color: var(--success);
+}
+
+#render-status:empty {
+    display: none;
+}
