@@ -46,7 +46,7 @@ weight-atlas scan ./models/my_model --out ./artefacts
 weight-atlas render ./artefacts --renderer sheet
 ```
 
-> **v0.2.0 requires re-scan.** Existing v1 fingerprints cannot be compared with v2. See [CHANGELOG.md](CHANGELOG.md) for migration details.
+> **v0.2.1 requires re-scan.** Existing v2.0 fingerprints cannot be compared with v2.1. See [CHANGELOG.md](CHANGELOG.md) for migration details.
 
 ## Features
 
@@ -120,7 +120,7 @@ uvicorn weight_atlas.api.main:app --reload
 
 ## Determinism
 
-Every RNG is seeded from `specs/atlas_spec.v2.json`. Artifacts contain no timestamps. A second `scan` over the same input yields byte-identical `manifest.json` (SHA-256 per artefact).
+Every RNG is seeded from `specs/atlas_spec.v2.1.json`. Artifacts contain no timestamps. A second `scan` over the same input yields byte-identical `manifest.json` (SHA-256 per artefact).
 
 ## Layout
 
@@ -137,7 +137,7 @@ src/weight_atlas/
    api/       FastAPI app, job queue, routes (M3)
    ui/        Jinja2 templates + static CSS (M3)
    cli.py
-specs/atlas_spec.v2.json
+specs/atlas_spec.v2.1.json
 tests/       seeded fixtures, hand-computed + determinism tests
 docs/        ARCHITECTURE.md, BACKLOG.md, ROADMAP.md, CHANGELOG.md
 ```

@@ -72,11 +72,11 @@ weight-atlas diagnose ./models/my_model
 ```
 ## Conventions
 
-- **Raster**: rows = layer index, columns = slot order from `atlas_spec.v2.json`. Missing cells = `NaN`, never filled.
+- **Raster**: rows = layer index, columns = slot order from `atlas_spec.v2.1.json`. Missing cells = `NaN`, never filled.
 - **Channels** (v2.1):
-  - `height`: `spectral_norm` → `robust_scale(log1p(spectral_norm))` — outlier suppression + [0,1] mapping
-  - `tint`: `stable_rank` → `robust_scale(log1p(stable_rank))` — outlier suppression + [0,1] mapping
-  - `rough`: `kurtosis` → `robust_scale(kurtosis)` — unified with other channels
+  - `height`: `spectral_norm` → `log1p` → `rank_scale(per_column)` — outlier suppression + [0,1] mapping
+  - `tint`: `stable_rank` → `log1p` → `robust_scale(1-99%)` — outlier suppression + [0,1] mapping
+  - `rough`: `kurtosis` → `rank_scale(per_column)` — unified with other channels
 - **RNG**: all random state seeded from `spec.seeds.svd` (currently only randomized SVD).
 - **Artefacts**: no timestamps; PNG metadata fixed (`Software: weight-atlas`, `Creation Time: 1970-01-01T00:00:00Z`); TIFF byte-identical on second run (verified by SHA-256 manifest).
 - **fingerprint.json**: top-level block includes `spec_version`, `tool_version`, `loader` for cross-spec comparability.
@@ -112,7 +112,7 @@ field_tint_smooth.tif ──┘                                          │
 
 ### Spec extension
 
-The `atlas_spec.v2.json` may include a `blender` block (all optional, defaults shown):
+The `atlas_spec.v2.1.json` may include a `blender` block (all optional, defaults shown):
 ```json
 {
   "blender": {
@@ -266,7 +266,7 @@ scan artefacts (B) ─┘                    │
 ```
 
 ### Spec extension
-The `atlas_spec.v2.json` may include a `compare` block:
+The `atlas_spec.v2.1.json` may include a `compare` block:
 ```json
 {
   "compare": {

@@ -29,7 +29,7 @@ Weight Atlas is a tool for **LLM weight fingerprinting and topographic visualiza
 
 ### Three Core Guarantees
 
-1. **Artifacts are renderer-independent and canonical**: All outputs follow a versioned specification (`atlas_spec.v2.json`). Renderers never access raw weights.
+1. **Artifacts are renderer-independent and canonical**: All outputs follow a versioned specification (`atlas_spec.v2.1.json`). Renderers never access raw weights.
 2. **Render/Compare never read weights**: The entire visualization and comparison pipeline operates on artifacts (statistics, fields, projections).
 3. **Determinism is part of the measurement protocol**: All RNGs are seeded from the spec. Byte-identical outputs guaranteed on the same machine.
 
@@ -130,13 +130,13 @@ Model → TensorHandle (lazy) → Statistics → Rasterize → Field2D → Rende
 
 | Channel | Statistic | Scale |
 |---------|-----------|-------|
-| height | spectral_norm | log1p |
-| tint | effective_rank | quantile_clip (1-99%) |
-| rough | kurtosis | log1p |
+| height | spectral_norm | log1p → rank_scale (per_column) |
+| tint | stable_rank | log1p → robust_scale (1-99%) |
+| rough | kurtosis | rank_scale (per_column) |
 
 ### Determinism
 
-All random number generators are seeded from `specs/atlas_spec.v2.json`. A second scan over the same input yields byte-identical artifacts (verified by SHA-256 manifest).
+All random number generators are seeded from `specs/atlas_spec.v2.1.json`. A second scan over the same input yields byte-identical artifacts (verified by SHA-256 manifest).
 
 ---
 
@@ -159,7 +159,7 @@ weight-atlas scan <path> --out <dir> [options]
 |----------|------|----------|-------------|
 | `path` | Path | Yes | Path to model file or directory |
 | `--out` | Path | Yes | Output directory |
-| `--spec` | Path | No | Path to atlas spec JSON (default: `specs/atlas_spec.v2.json`) |
+| `--spec` | Path | No | Path to atlas spec JSON (default: `specs/atlas_spec.v2.1.json`) |
 | `--loader` | choice | No | `safetensors` or `gguf` (default: auto-detect) |
 
 **Output**: `fingerprint.json`, `field_<channel>_raw.tif`, `field_<channel>_smooth.tif`, `embedding_pca.npy`, `embedding_meta.json`, `manifest.json`
@@ -407,9 +407,9 @@ weight-atlas activity --help
   "slots": ["embed","attn_q","attn_k","attn_v","attn_o","mlp_gate","mlp_up",
              "mlp_down","norm_attn","norm_mlp","router","lm_head","other"],
   "channels": {
-    "height": {"stat": "spectral_norm", "scale": {"type": "log1p"}},
-    "tint": {"stat": "effective_rank", "scale": {"type": "quantile_clip", "lo": 0.01, "hi": 0.99}},
-    "rough": {"stat": "kurtosis", "scale": {"type": "log1p"}}
+    "height": {"stat": "spectral_norm", "pre": "log1p", "scale": {"type": "rank_scale", "per_column": true}},
+    "tint": {"stat": "stable_rank", "pre": "log1p", "scale": {"type": "robust_scale", "lower": 0.01, "upper": 0.99}},
+    "rough": {"stat": "kurtosis", "scale": {"type": "rank_scale", "per_column": true}}
   },
   "grid": {"upsample": 8, "smooth_sigma": 1.0},
   "sheet": {"contour_levels": 12, "light_azdeg": 315, "light_altdeg": 45, "dpi": 150},
