@@ -116,6 +116,34 @@ def test_rank_scale_reversed():
     np.testing.assert_allclose(y, expected)
 
 
+def test_rank_scale_per_column():
+    """rank_scale with per_column=True should rank each column independently."""
+    # Column 0: values 1-10, Column 1: values 100-1000
+    x = np.array([[1.0, 100.0], [2.0, 200.0], [3.0, 300.0], [4.0, 400.0], [5.0, 500.0],
+                  [6.0, 600.0], [7.0, 700.0], [8.0, 800.0], [9.0, 900.0], [10.0, 1000.0]])
+    y = rank_scale(x, per_column=True)
+    # Each column should span [0, 1] independently
+    assert y[:, 0].min() == pytest.approx(0.0)
+    assert y[:, 0].max() == pytest.approx(1.0)
+    assert y[:, 1].min() == pytest.approx(0.0)
+    assert y[:, 1].max() == pytest.approx(1.0)
+    # Column 0: value 1 -> rank 0, value 10 -> rank 1
+    assert y[0, 0] == pytest.approx(0.0)
+    assert y[9, 0] == pytest.approx(1.0)
+    # Column 1: value 100 -> rank 0, value 1000 -> rank 1
+    assert y[0, 1] == pytest.approx(0.0)
+    assert y[9, 1] == pytest.approx(1.0)
+
+
+def test_rank_scale_per_column_with_nan():
+    """rank_scale per_column should handle NaN values."""
+    x = np.array([[1.0, np.nan], [2.0, 200.0], [3.0, 300.0]])
+    y = rank_scale(x, per_column=True)
+    assert not np.isnan(y[0, 0])
+    assert np.isnan(y[0, 1])
+    assert not np.isnan(y[1, 1])
+
+
 def test_upsample_bilinear():
     x = np.array([[1.0, 2.0], [3.0, 4.0]])
     y = upsample(x, factor=2)

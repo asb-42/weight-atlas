@@ -3,9 +3,9 @@
   "slots": ["embed","attn_q","attn_q_norm","attn_k","attn_k_norm","attn_v","attn_o","mlp_gate","mlp_up",
              "mlp_down","norm_attn","norm_mlp","router","lm_head","other"],
   "channels": {
-    "height": {"stat": "spectral_norm",  "pre": "log1p", "scale": {"type": "rank_scale"}},
+    "height": {"stat": "spectral_norm",  "pre": "log1p", "scale": {"type": "rank_scale", "per_column": true}},
     "tint":   {"stat": "stable_rank",    "pre": "log1p", "scale": {"type": "robust_scale", "lower": 0.01, "upper": 0.99}},
-    "rough":  {"stat": "kurtosis",       "scale": {"type": "rank_scale"}}
+    "rough":  {"stat": "kurtosis",       "scale": {"type": "rank_scale", "per_column": true}}
   },
   "grid":  {"upsample": 8, "smooth_sigma": 1.0},
   "sheet": {"contour_levels": 12, "light_azdeg": 315, "light_altdeg": 45, "dpi": 150, "per_row_normalize": true},

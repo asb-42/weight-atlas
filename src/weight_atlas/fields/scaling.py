@@ -38,7 +38,7 @@ def robust_scale(field: np.ndarray, lower: float = 0.01, upper: float = 0.99) ->
     return out
 
 
-def rank_scale(field: np.ndarray) -> np.ndarray:
+def rank_scale(field: np.ndarray, per_column: bool = False) -> np.ndarray:
     """Rank-based normalization to [0, 1].
 
     Each cell gets its percentile rank within the distribution:
@@ -47,27 +47,45 @@ def rank_scale(field: np.ndarray) -> np.ndarray:
     This guarantees full color utilization regardless of outliers.
     A single extreme value no longer saturates the colormap.
 
+    Args:
+        field: 2D array to normalize
+        per_column: if True, compute ranks independently per column (slot).
+            This ensures each slot gets full color range independently,
+            preventing slots with extreme values from dominating.
+
     Properties:
     - Immune to outliers of any magnitude
     - Always uses full [0, 1] range
     - Works well even with small N (though resolution suffers)
     - Makes images "shape-comparable" (pattern, structure, texture)
     - Does NOT preserve magnitude comparability between models
+    - per_column=True: also not magnitude-comparable between slots
 
     NaN is preserved.
     """
     out = field.copy()
-    finite = np.isfinite(out)
-    vals = out[finite]
-    if vals.size == 0:
-        return out
-
-    # Compute ranks (0-based) and normalize to [0, 1]
-    # argsort of argsort gives the rank of each element
-    ranks = np.empty_like(vals, dtype=np.float64)
-    order = np.argsort(vals)
-    ranks[order] = np.arange(vals.size, dtype=np.float64) / (vals.size - 1) if vals.size > 1 else 0.5
-    out[finite] = ranks
+    if not per_column:
+        # Global ranking across all cells
+        finite = np.isfinite(out)
+        vals = out[finite]
+        if vals.size == 0:
+            return out
+        ranks = np.empty_like(vals, dtype=np.float64)
+        order = np.argsort(vals)
+        ranks[order] = np.arange(vals.size, dtype=np.float64) / (vals.size - 1) if vals.size > 1 else 0.5
+        out[finite] = ranks
+    else:
+        # Per-column ranking (each slot gets full color range independently)
+        for col in range(out.shape[1]):
+            col_data = out[:, col]
+            finite = np.isfinite(col_data)
+            vals = col_data[finite]
+            if vals.size == 0:
+                continue
+            ranks = np.empty_like(vals, dtype=np.float64)
+            order = np.argsort(vals)
+            ranks[order] = np.arange(vals.size, dtype=np.float64) / (vals.size - 1) if vals.size > 1 else 0.5
+            col_data[finite] = ranks
     return out
 
 
@@ -87,7 +105,8 @@ def apply_scale(field: np.ndarray, scale_spec: dict) -> np.ndarray:
     if typ == "robust_scale":
         return robust_scale(field, lower=float(scale_spec.get("lower", 0.01)), upper=float(scale_spec.get("upper", 0.99)))
     if typ == "rank_scale":
-        return rank_scale(field)
+        per_column = scale_spec.get("per_column", False)
+        return rank_scale(field, per_column=per_column)
     if typ == "quantile_clip":
         return quantile_clip(field, lo=float(scale_spec["lo"]), hi=float(scale_spec["hi"]))
     raise ValueError(f"unknown scale type: {typ}")
