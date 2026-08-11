@@ -16,7 +16,7 @@ from weight_atlas.core.registry import register_renderer
 from weight_atlas.core.types import AtlasSpec, Field2D
 
 # Fixed hypsometric palette: green → brown → white
-_HYPSO_COLORS = ["#2166ac", "#4393c3", "#92c5de", "#f7f7f7", "#fddbc7", "#f4a582", "#d6604d", "#b2182b"]
+_HYPSO_COLORS = ['#2166ac', '#4393c3', '#92c5de', '#f7f7f7', '#fddbc7', '#f4a582', '#d6604d', '#b2182b']
 _HYPSO = LinearSegmentedColormap.from_list("hypsometric", _HYPSO_COLORS, N=256)
 
 # Fixed PNG metadata per spec: Software + Creation Time (epoch zero for determinism)
