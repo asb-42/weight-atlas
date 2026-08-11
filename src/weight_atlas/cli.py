@@ -70,7 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _cmd_scan(args: argparse.Namespace) -> int:
-    spec_path = args.spec or Path("specs/atlas_spec.v2.json")
+    spec_path = args.spec or Path("specs/atlas_spec.v2.1.json")
     spec = AtlasSpec.from_json(spec_path)
 
 
@@ -128,7 +128,7 @@ def _cmd_render(args: argparse.Namespace) -> int:
     # Load spec from scan artefacts: look for a recorded spec_version.
     # We reconstruct from the default spec; in future the scan could emit
     # the spec it used.
-    spec = AtlasSpec.from_json(Path("specs/atlas_spec.v2.json"))
+    spec = AtlasSpec.from_json(Path("specs/atlas_spec.v2.1.json"))
 
     renderer_cls = get_renderer(args.renderer)
     renderer = renderer_cls()
@@ -179,7 +179,7 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     from weight_atlas.compare import compute_compare_summary, hotspot_ranking
     from weight_atlas.fields.tif_io import read_tif
 
-    spec_path = args.spec or Path("specs/atlas_spec.v2.json")
+    spec_path = args.spec or Path("specs/atlas_spec.v2.1.json")
     spec = AtlasSpec.from_json(spec_path)
 
 

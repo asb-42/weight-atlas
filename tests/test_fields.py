@@ -10,14 +10,14 @@ import pytest
 
 from weight_atlas.core.types import AtlasSpec, TensorStats
 from weight_atlas.fields.rasterizer import rasterize
-from weight_atlas.fields.scaling import log1p, quantile_clip
+from weight_atlas.fields.scaling import log1p, quantile_clip, rank_scale
 from weight_atlas.fields.smoothing import smooth, upsample
 from weight_atlas.fields.tif_io import read_tif, write_tif
 
 
 @pytest.fixture
 def spec():
-    return AtlasSpec.from_json(Path("specs/atlas_spec.v2.json"))
+    return AtlasSpec.from_json(Path("specs/atlas_spec.v2.1.json"))
 
 
 def test_rasterizer_shape_and_nan(spec):
@@ -63,6 +63,57 @@ def test_quantile_clip_range():
     y = quantile_clip(x, lo=0.01, hi=0.99)
     assert y.min() >= -1e-9
     assert y.max() <= 1.0 + 1e-9
+
+
+def test_rank_scale_range():
+    """rank_scale should map values to [0, 1] using percentile ranks."""
+    rng = np.random.default_rng(0)
+    x = rng.normal(0, 1, 1000)
+    y = rank_scale(x)
+    assert y.min() >= -1e-9
+    assert y.max() <= 1.0 + 1e-9
+
+
+def test_rank_scale_immune_to_outliers():
+    """rank_scale should be immune to extreme outliers."""
+    rng = np.random.default_rng(0)
+    x = rng.normal(0, 1, 100)
+    x_with_outlier = np.append(x, 1e6)  # extreme outlier
+    y = rank_scale(x_with_outlier)
+    # All values should be in [0, 1]
+    assert y.min() >= -1e-9
+    assert y.max() <= 1.0 + 1e-9
+    # The outlier should map to 1.0, not dominate the distribution
+    assert y[-1] == pytest.approx(1.0)
+    # Other values should still span the full range
+    assert y[:-1].min() < 0.1
+    assert y[:-1].max() > 0.5
+
+
+def test_rank_scale_preserves_nan():
+    """rank_scale should preserve NaN values."""
+    x = np.array([1.0, np.nan, 3.0, 2.0])
+    y = rank_scale(x)
+    assert np.isnan(y[1])
+    assert not np.isnan(y[0])
+    assert not np.isnan(y[2])
+    assert not np.isnan(y[3])
+
+
+def test_rank_scale_uniform_distribution():
+    """rank_scale on uniform data should produce uniform ranks."""
+    x = np.arange(100, dtype=np.float64)
+    y = rank_scale(x)
+    expected = np.arange(100, dtype=np.float64) / 99.0
+    np.testing.assert_allclose(y, expected)
+
+
+def test_rank_scale_reversed():
+    """rank_scale on reversed data should produce reversed ranks."""
+    x = np.arange(100, 0, -1, dtype=np.float64)
+    y = rank_scale(x)
+    expected = np.arange(99, -1, -1, dtype=np.float64) / 99.0
+    np.testing.assert_allclose(y, expected)
 
 
 def test_upsample_bilinear():

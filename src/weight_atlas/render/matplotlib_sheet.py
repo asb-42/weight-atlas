@@ -82,23 +82,21 @@ class MatplotlibSheet:
                     y_norm = np.full_like(y, n_rows / 2)
                 ax.scatter(x_norm, y_norm, s=0.3, alpha=0.3, c="white", linewidths=0)
 
-        # Contour overlay on the scaled height field (q02-q98 quantile range).
+        # Contour overlay on the scaled height field (v2.1: fixed [0,1] range).
+        # robust_scale guarantees a well-distributed [0,1] range, so fixed
+        # percentile levels are globally comparable without per-model recomputation.
         finite = np.isfinite(data)
         if finite.any():
-            vals = data[finite]
-            q02 = float(np.quantile(vals, 0.02))
-            q98 = float(np.quantile(vals, 0.98))
-            if q98 > q02:
-                levels = np.linspace(q02, q98, contour_levels)
-                ax.contour(
-                    data,
-                    levels=levels,
-                    colors="black",
-                    alpha=0.4,
-                    linewidths=0.6,
-                    origin="upper",
-                    extent=(-0.5, n_cols - 0.5, n_rows - 0.5, -0.5),
-                )
+            levels = np.linspace(0.02, 0.98, contour_levels)
+            ax.contour(
+                data,
+                levels=levels,
+                colors="black",
+                alpha=0.4,
+                linewidths=0.6,
+                origin="upper",
+                extent=(-0.5, n_cols - 0.5, n_rows - 0.5, -0.5),
+            )
 
         ax.set_xlabel("slot")
         ax.set_ylabel("layer")

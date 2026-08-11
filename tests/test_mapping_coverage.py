@@ -12,7 +12,7 @@ from weight_atlas.scan import _build_fingerprint
 @pytest.fixture
 def spec():
     from weight_atlas.core.types import AtlasSpec
-    return AtlasSpec.from_json(Path("specs/atlas_spec.v2.json"))
+    return AtlasSpec.from_json(Path("specs/atlas_spec.v2.1.json"))
 
 
 def test_mapping_coverage_format(spec):

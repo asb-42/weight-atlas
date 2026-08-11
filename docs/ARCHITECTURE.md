@@ -73,10 +73,10 @@ weight-atlas diagnose ./models/my_model
 ## Conventions
 
 - **Raster**: rows = layer index, columns = slot order from `atlas_spec.v2.json`. Missing cells = `NaN`, never filled.
-- **Channels** (v2):
-  - `height`: `spectral_norm` (log1p) — unchanged
-  - `tint`: `stable_rank` (log1p) — changed from effective_rank; stable_rank = log1p((frobenius/spectral_norm)²)
-  - `rough`: `kurtosis` (quantile-clipped 1–99 %) — changed from log1p
+- **Channels** (v2.1):
+  - `height`: `spectral_norm` → `robust_scale(log1p(spectral_norm))` — outlier suppression + [0,1] mapping
+  - `tint`: `stable_rank` → `robust_scale(log1p(stable_rank))` — outlier suppression + [0,1] mapping
+  - `rough`: `kurtosis` → `robust_scale(kurtosis)` — unified with other channels
 - **RNG**: all random state seeded from `spec.seeds.svd` (currently only randomized SVD).
 - **Artefacts**: no timestamps; PNG metadata fixed (`Software: weight-atlas`, `Creation Time: 1970-01-01T00:00:00Z`); TIFF byte-identical on second run (verified by SHA-256 manifest).
 - **fingerprint.json**: top-level block includes `spec_version`, `tool_version`, `loader` for cross-spec comparability.
@@ -87,7 +87,7 @@ The matplotlib sheet is a **pure height map**: hillshade + hypsometric tint + co
 
 ## Contour Convention
 
-Contours on the 2D sheet use deterministic, comparable levels: `np.linspace(q02, q98, spec.sheet.contour_levels)` computed from the **raw height field** (before normalization), where q02/q98 are the 2nd and 98th percentiles. Line color is fixed black with alpha 0.4. This makes contours comparable across models (unlike percentiles of the normalized field).
+Contours on the 2D sheet use deterministic, comparable levels: `np.linspace(0.02, 0.98, spec.sheet.contour_levels)` applied to the **scaled height field** (already in [0,1]). Because `robust_scale` guarantees a well-distributed [0,1] range, fixed percentile levels are globally comparable without per-model recomputation. Line color is fixed black with alpha 0.4.
 
 ## Blender Pipeline
 

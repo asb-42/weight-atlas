@@ -32,7 +32,7 @@ from weight_atlas.core.types import AtlasSpec
 @pytest.fixture
 def spec() -> AtlasSpec:
     """Load the default atlas spec."""
-    return AtlasSpec.from_json(Path("specs/atlas_spec.v2.json"))
+    return AtlasSpec.from_json(Path("specs/atlas_spec.v2.1.json"))
 
 
 @pytest.fixture

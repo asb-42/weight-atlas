@@ -14,7 +14,7 @@ from weight_atlas.core.name_map import map_name
 from weight_atlas.core.registry import get_loader
 from weight_atlas.core.types import AtlasSpec, TensorHandle, TensorStats, detect_loader
 from weight_atlas.fields.rasterizer import detect_moe, rasterize, rasterize_expert_panels
-from weight_atlas.fields.scaling import apply_scale
+from weight_atlas.fields.scaling import apply_scale, log1p
 from weight_atlas.fields.tif_io import write_tif
 from weight_atlas.loaders import (
     gguf_loader,  # noqa: F401 — triggers registration
@@ -81,6 +81,12 @@ def scan(
     stats = [_make_handles(h) for h in handles]
 
     fingerprint = _build_fingerprint(stats, spec, loader_id, handles)
+
+    # Compute scaling metadata for fingerprint (v2.1)
+    scaling_meta = _compute_scaling_metadata(stats, spec)
+    if scaling_meta:
+        fingerprint["scaling"] = scaling_meta
+
     fp_path = out / "fingerprint.json"
     with open(fp_path, "w") as f:
         json.dump(fingerprint, f, indent=2, sort_keys=True)
@@ -94,7 +100,12 @@ def scan(
         write_tif(raw_path, field_raw.data)
         artefacts.append(raw_path)
 
-        scaled = apply_scale(field_raw.data, ch_spec["scale"])
+        # v2.1 pipeline: apply pre-transform (e.g. log1p) then robust_scale
+        pre = ch_spec.get("pre")
+        data = field_raw.data
+        if pre == "log1p":
+            data = log1p(data)
+        scaled = apply_scale(data, ch_spec["scale"])
         from weight_atlas.fields.degenerations import diagnose_fields
         from weight_atlas.fields.smoothing import smooth, upsample
 
@@ -111,7 +122,11 @@ def scan(
             write_tif(panel_raw_path, panel.data)
             artefacts.append(panel_raw_path)
 
-            scaled_panel = apply_scale(panel.data, ch_spec["scale"])
+            # v2.1 pipeline: apply pre-transform then robust_scale
+            panel_data = panel.data
+            if pre == "log1p":
+                panel_data = log1p(panel_data)
+            scaled_panel = apply_scale(panel_data, ch_spec["scale"])
             up_panel = upsample(scaled_panel, int(spec.grid["upsample"]))
             smoothed_panel = smooth(up_panel, float(spec.grid["smooth_sigma"]))
             panel_smooth_path = out / f"field_expert_{panel.slot}_{channel}_smooth.tif"
@@ -312,3 +327,66 @@ def _build_fingerprint(
         out["model"]["moe"] = moe_info
 
     return out
+
+
+def _compute_scaling_metadata(stats: Iterable[TensorStats], spec: AtlasSpec) -> dict | None:
+    """Compute scaling metadata for fingerprint.json (v2.1).
+
+    For each channel, records the robust scale parameters and the raw/clip bounds.
+    Only applies when spec uses robust_scale.
+    """
+    # Check if any channel uses robust_scale
+    has_robust = any(
+        ch_spec["scale"]["type"] in ("robust_scale", "quantile_clip")
+        for ch_spec in spec.channels.values()
+    )
+    if not has_robust:
+        return None
+
+    # Build per-channel stat arrays from stats
+    channels_meta: dict[str, dict] = {}
+    for channel, ch_spec in spec.channels.items():
+        stat_key = ch_spec["stat"]
+        scale_type = ch_spec["scale"]["type"]
+        if scale_type not in ("robust_scale", "quantile_clip"):
+            continue
+
+        # Collect all values for this stat across tensors
+        vals_list: list[float] = []
+        for ts in stats:
+            v = getattr(ts, stat_key, None)
+            if v is not None and np.isfinite(v):
+                vals_list.append(float(v))
+
+        if not vals_list:
+            continue
+
+        arr = np.array(vals_list, dtype=np.float64)
+        raw_min = float(np.min(arr))
+        raw_max = float(np.max(arr))
+        # Apply pre-transform (e.g. log1p) before computing clip bounds (v2.1)
+        pre = ch_spec.get("pre")
+        if pre == "log1p":
+            arr = np.log1p(np.maximum(arr, 0.0))
+
+        lower = float(ch_spec["scale"].get("lower", ch_spec["scale"].get("lo", 0.01)))
+        upper = float(ch_spec["scale"].get("upper", ch_spec["scale"].get("hi", 0.99)))
+
+        q_lo = float(np.quantile(arr, lower))
+        q_hi = float(np.quantile(arr, upper))
+
+        channels_meta[channel] = {
+            "q_lo": round(q_lo, 4),
+            "q_hi": round(q_hi, 4),
+            "raw_min": round(raw_min, 4),
+            "raw_max": round(raw_max, 4),
+        }
+
+    if not channels_meta:
+        return None
+
+    return {
+        "method": "robust_scale",
+        "params": {"lower": 0.01, "upper": 0.99},
+        "channels": channels_meta,
+    }

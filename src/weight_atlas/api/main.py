@@ -25,12 +25,12 @@ def create_app(
 
     Args:
         db_path: Path to SQLite job database. Defaults to ./data/jobs.db
-        spec_path: Path to atlas spec JSON. Defaults to ./specs/atlas_spec.v2.json
+        spec_path: Path to atlas spec JSON. Defaults to ./specs/atlas_spec.v2.1.json
         output_root: Root directory for scan outputs. Defaults to ./output
     """
     base = Path(__file__).resolve().parent.parent.parent.parent
     _db_path = db_path or base / "data" / "jobs.db"
-    _spec_path = spec_path or base / "specs" / "atlas_spec.v2.json"
+    _spec_path = spec_path or base / "specs" / "atlas_spec.v2.1.json"
     _output_root = output_root or base / "output"
 
     _db_path.parent.mkdir(parents=True, exist_ok=True)

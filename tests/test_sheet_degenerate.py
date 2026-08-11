@@ -17,7 +17,7 @@ from weight_atlas.render.matplotlib_sheet import (
 
 @pytest.fixture
 def spec() -> AtlasSpec:
-    return AtlasSpec.from_json(Path("specs/atlas_spec.v2.json"))
+    return AtlasSpec.from_json(Path("specs/atlas_spec.v2.1.json"))
 
 
 @pytest.fixture

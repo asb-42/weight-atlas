@@ -64,18 +64,21 @@
         <button hx-post="/api/jobs/{{ job.job_id }}/render/preview" hx-target="#render-status" hx-swap="innerHTML" hx-indicator="#render-spinner">
             Render Previews
         </button>
-        <span id="render-spinner" class="htmx-indicator"><span class="spinner"></span> Rendering...</span>
+        <button hx-post="/api/jobs/{{ job.job_id }}/rescan" hx-target="#render-status" hx-swap="innerHTML" hx-indicator="#render-spinner" class="btn-danger">
+            Re-scan Model
+        </button>
+        <span id="render-spinner" class="htmx-indicator"><span class="spinner"></span> Working...</span>
         <span id="render-status"></span>
     </div>
-    <p class="hint">Sheets: hillshade + hypsometric tint + contours. Previews: auto-leveled 8-bit PNG for quick inspection.</p>
+    <p class="hint">Sheets: hillshade + hypsometric tint + contours. Previews: auto-leveled 8-bit PNG for quick inspection. Re-scan: re-run full scan pipeline with current spec (overwrites existing artefacts).</p>
 </section>
 
 <section class="detail-section">
     <h3>Sheet</h3>
     <p class="channel-info">
-        <strong>Height:</strong> spectral_norm (log1p) — layer norm outlier ridge visible as vertical stripe.
-        <strong>Tint:</strong> stable_rank (log1p) = log1p((frobenius/spectral_norm)²) — matrix effective dimensionality.
-        <strong>Rough:</strong> kurtosis (quantile-clipped 1-99%) — distribution shape (negative = uniform, positive = peaked).
+        <strong>Height:</strong> spectral_norm (robust_scale) — layer norm outlier ridge visible as vertical stripe.
+        <strong>Tint:</strong> stable_rank (robust_scale) = log1p((frobenius/spectral_norm)²) — matrix effective dimensionality.
+        <strong>Rough:</strong> kurtosis (robust_scale) — distribution shape (negative = uniform, positive = peaked).
     </p>
     {% if sheet_pngs %}
     <div class="image-grid">

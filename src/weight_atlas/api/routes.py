@@ -96,7 +96,7 @@ def create_router(
             spec = AtlasSpec.from_json(spec_path)
         else:
             # Use default spec
-            default_spec_path = Path("specs/atlas_spec.v2.json")
+            default_spec_path = Path("specs/atlas_spec.v2.1.json")
             if default_spec_path.exists():
                 spec = AtlasSpec.from_json(default_spec_path)
             else:
@@ -266,6 +266,43 @@ def create_router(
             },
         )
 
+    @router.post("/api/jobs/{job_id}/rescan")
+    async def rescan_job(job_id: str) -> JSONResponse:
+        """Re-run the full scan pipeline for a job."""
+        job = job_queue.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="job not found")
+
+        out_dir = Path(job.out_dir)
+        if not out_dir.exists():
+            raise HTTPException(status_code=404, detail="output directory not found")
+
+        from weight_atlas.core.types import AtlasSpec
+        from weight_atlas.scan import scan as run_scan
+
+        # Load spec from job spec_path, or fallback to default
+        spec_path = Path(job.spec_path) if job.spec_path else None
+        if spec_path is not None and spec_path.exists():
+            spec = AtlasSpec.from_json(spec_path)
+        else:
+            spec = AtlasSpec.from_json(Path("specs/atlas_spec.v2.1.json"))
+
+        # Re-run scan (overwrites existing artefacts)
+        model_path = Path(job.model_path)
+        if not model_path.exists():
+            raise HTTPException(status_code=404, detail=f"model path not found: {model_path}")
+
+        artefacts = [str(a) for a in run_scan(model_path, out_dir, spec)]
+
+        # Auto-render sheets after scan
+        try:
+            render_artefacts = job_queue._auto_render_sheets(out_dir, spec)
+            artefacts.extend(render_artefacts)
+        except Exception:
+            pass  # Rendering is best-effort
+
+        return JSONResponse({"status": "ok", "artefacts": artefacts})
+
     @router.post("/api/jobs/{job_id}/render/{renderer:path}")
     async def render_job(job_id: str, renderer: str) -> JSONResponse:
         """Trigger rendering for a job."""
@@ -280,8 +317,9 @@ def create_router(
         from weight_atlas.core.registry import get_renderer
         from weight_atlas.core.types import AtlasSpec, Field2D
         from weight_atlas.fields.tif_io import read_tif
+        from weight_atlas.fields.scaling import apply_scale
 
-        spec = AtlasSpec.from_json(Path("specs/atlas_spec.v2.json"))
+        spec = AtlasSpec.from_json(Path("specs/atlas_spec.v2.1.json"))
         renderer_cls = get_renderer(renderer)
         renderer_obj = renderer_cls()
 
@@ -306,6 +344,10 @@ def create_router(
                 continue
 
             data = read_tif(tif)
+            # Apply channel scaling on-the-fly (same as CLI render)
+            ch_spec = spec.channels.get(channel, {})
+            if "scale" in ch_spec:
+                data = apply_scale(data, ch_spec["scale"])
             n_rows, n_cols = data.shape
             field = Field2D(
                 channel=channel,
@@ -332,6 +374,10 @@ def create_router(
                     continue
 
                 data = read_tif(tif)
+                # Apply channel scaling on-the-fly (same as CLI render)
+                ch_spec_prev = spec.channels.get(channel, {})
+                if "scale" in ch_spec_prev:
+                    data = apply_scale(data, ch_spec_prev["scale"])
                 n_rows, n_cols = data.shape
                 field = Field2D(
                     channel=channel,

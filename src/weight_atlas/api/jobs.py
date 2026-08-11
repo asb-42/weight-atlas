@@ -400,8 +400,9 @@ class JobQueue:
                 from weight_atlas.core.registry import get_renderer
                 from weight_atlas.core.types import AtlasSpec, Field2D
                 from weight_atlas.fields.tif_io import read_tif
+                from weight_atlas.fields.scaling import apply_scale
 
-                spec = AtlasSpec.from_json(Path("specs/atlas_spec.v2.json"))
+                spec = AtlasSpec.from_json(Path("specs/atlas_spec.v2.1.json"))
                 renderer = get_renderer("sheet")()
 
                 # Discover channels from scan directory
@@ -423,6 +424,10 @@ class JobQueue:
                         continue
 
                     data = read_tif(tif)
+                    # Apply channel scaling on-the-fly (same as CLI render)
+                    ch_spec = spec.channels.get(channel, {})
+                    if "scale" in ch_spec:
+                        data = apply_scale(data, ch_spec["scale"])
                     n_rows, n_cols = data.shape
                     row_labels = [str(i) for i in range(n_rows)]
                     col_labels = list(spec.slots)
@@ -498,6 +503,7 @@ class JobQueue:
         from weight_atlas.core.registry import get_renderer
         from weight_atlas.core.types import Field2D
         from weight_atlas.fields.tif_io import read_tif
+        from weight_atlas.fields.scaling import apply_scale
 
         renderer = get_renderer("sheet")()
         render_dir = out_dir / "render"
@@ -521,6 +527,10 @@ class JobQueue:
                 continue
 
             data = read_tif(tif)
+            # Apply channel scaling on-the-fly (same as CLI render)
+            ch_spec = spec.channels.get(channel, {})
+            if "scale" in ch_spec:
+                data = apply_scale(data, ch_spec["scale"])
             n_rows, n_cols = data.shape
             field = Field2D(
                 channel=channel,
