@@ -249,7 +249,7 @@ class JobQueue:
         channels = self._discover_channels_from_manifest(manifest)
 
         summary_channels = {}
-        all_artefacts: list[str] = []
+        all_artefacts: list[Path] = []
 
         for channel in channels:
             field_a_path = dir_a / f"field_{channel}_raw.tif"
@@ -271,7 +271,7 @@ class JobQueue:
 
             delta_path = out / f"delta_{channel}_raw.tif"
             write_tif(delta_path, summary.channels[channel].delta)
-            all_artefacts.append(str(delta_path))
+            all_artefacts.append(delta_path)
 
         compare_summary = {
             "mode": "strict",
@@ -299,7 +299,7 @@ class JobQueue:
         with open(summary_path, "w") as f:
             json.dump(compare_summary, f, indent=2, sort_keys=True)
             f.write("\n")
-        all_artefacts.append(str(summary_path))
+        all_artefacts.append(summary_path)
 
         return all_artefacts
 
@@ -416,18 +416,20 @@ class JobQueue:
 
                 render_dir = scan_dir / "render"
                 for channel in channels:
-                    # Render smooth version if available, else raw
                     smooth_path = scan_dir / f"field_{channel}_smooth.tif"
                     raw_path = scan_dir / f"field_{channel}_raw.tif"
-                    tif = smooth_path if smooth_path.exists() else raw_path
-                    if not tif.exists():
+                    # Use smooth TIFF if available (already scaled by scan pipeline)
+                    if smooth_path.exists():
+                        data = read_tif(smooth_path)
+                    elif raw_path.exists():
+                        data = read_tif(raw_path)
+                        # Apply channel scaling on-the-fly for raw TIFFs
+                        ch_spec = spec.channels.get(channel, {})
+                        if "scale" in ch_spec:
+                            data = apply_scale(data, ch_spec["scale"])
+                    else:
                         continue
 
-                    data = read_tif(tif)
-                    # Apply channel scaling on-the-fly (same as CLI render)
-                    ch_spec = spec.channels.get(channel, {})
-                    if "scale" in ch_spec:
-                        data = apply_scale(data, ch_spec["scale"])
                     n_rows, n_cols = data.shape
                     row_labels = [str(i) for i in range(n_rows)]
                     col_labels = list(spec.slots)
@@ -522,15 +524,19 @@ class JobQueue:
         for channel in channels:
             smooth_path = out_dir / f"field_{channel}_smooth.tif"
             raw_path = out_dir / f"field_{channel}_raw.tif"
-            tif = smooth_path if smooth_path.exists() else raw_path
-            if not tif.exists():
+            # Use smooth TIFF if available (already scaled by scan pipeline)
+            # Only fall back to raw TIFF if smooth doesn't exist
+            if smooth_path.exists():
+                data = read_tif(smooth_path)
+            elif raw_path.exists():
+                data = read_tif(raw_path)
+                # Apply channel scaling on-the-fly for raw TIFFs
+                ch_spec = spec.channels.get(channel, {})
+                if "scale" in ch_spec:
+                    data = apply_scale(data, ch_spec["scale"])
+            else:
                 continue
 
-            data = read_tif(tif)
-            # Apply channel scaling on-the-fly (same as CLI render)
-            ch_spec = spec.channels.get(channel, {})
-            if "scale" in ch_spec:
-                data = apply_scale(data, ch_spec["scale"])
             n_rows, n_cols = data.shape
             field = Field2D(
                 channel=channel,

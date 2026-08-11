@@ -339,15 +339,19 @@ def create_router(
         for channel in channels:
             smooth_path = out_dir / f"field_{channel}_smooth.tif"
             raw_path = out_dir / f"field_{channel}_raw.tif"
-            tif = smooth_path if smooth_path.exists() else raw_path
-            if not tif.exists():
+            # Use smooth TIFF if available (already scaled by scan pipeline)
+            # Only fall back to raw TIFF if smooth doesn't exist
+            if smooth_path.exists():
+                data = read_tif(smooth_path)
+            elif raw_path.exists():
+                data = read_tif(raw_path)
+                # Apply channel scaling on-the-fly for raw TIFFs
+                ch_spec = spec.channels.get(channel, {})
+                if "scale" in ch_spec:
+                    data = apply_scale(data, ch_spec["scale"])
+            else:
                 continue
 
-            data = read_tif(tif)
-            # Apply channel scaling on-the-fly (same as CLI render)
-            ch_spec = spec.channels.get(channel, {})
-            if "scale" in ch_spec:
-                data = apply_scale(data, ch_spec["scale"])
             n_rows, n_cols = data.shape
             field = Field2D(
                 channel=channel,
@@ -369,15 +373,16 @@ def create_router(
             for channel in channels:
                 smooth_path = out_dir / f"field_{channel}_smooth.tif"
                 raw_path = out_dir / f"field_{channel}_raw.tif"
-                tif = smooth_path if smooth_path.exists() else raw_path
-                if not tif.exists():
+                if smooth_path.exists():
+                    data = read_tif(smooth_path)
+                elif raw_path.exists():
+                    data = read_tif(raw_path)
+                    ch_spec_prev = spec.channels.get(channel, {})
+                    if "scale" in ch_spec_prev:
+                        data = apply_scale(data, ch_spec_prev["scale"])
+                else:
                     continue
 
-                data = read_tif(tif)
-                # Apply channel scaling on-the-fly (same as CLI render)
-                ch_spec_prev = spec.channels.get(channel, {})
-                if "scale" in ch_spec_prev:
-                    data = apply_scale(data, ch_spec_prev["scale"])
                 n_rows, n_cols = data.shape
                 field = Field2D(
                     channel=channel,
