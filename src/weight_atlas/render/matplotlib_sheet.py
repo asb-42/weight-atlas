@@ -55,13 +55,11 @@ class MatplotlibSheet:
         if sheet.get("per_row_normalize", False):
             data = _per_row_normalize(data)
 
-        # Hillshade from the normalised field.
-        ls = LightSource(azdeg=azdeg, altdeg=altdeg)
+        # Direct colormap (no hillshade) for better contrast with rank-scaled data
         normed = filled_norm(data)
-        hs = ls.shade(normed, cmap=_HYPSO, vert_exag=1.0)
 
         fig, ax = plt.subplots(figsize=figsize)
-        ax.imshow(hs, origin="upper", extent=(-0.5, n_cols - 0.5, n_rows - 0.5, -0.5))
+        ax.imshow(normed, cmap=_HYPSO, vmin=0, vmax=1, origin="upper", extent=(-0.5, n_cols - 0.5, n_rows - 0.5, -0.5))
 
         # Scatter overlay for embedding visualization
         if scatter_path is not None and scatter_path.exists():
@@ -100,10 +98,24 @@ class MatplotlibSheet:
 
         ax.set_xlabel("slot")
         ax.set_ylabel("layer")
-        ax.set_xticks(range(n_cols))
-        ax.set_xticklabels(field.col_labels, rotation=90, fontsize=6)
-        ax.set_yticks(range(n_rows))
-        ax.set_yticklabels(field.row_labels, fontsize=6)
+        # Handle upsampled data: col_labels may have fewer entries than n_cols
+        if len(field.col_labels) == n_cols:
+            ax.set_xticks(range(n_cols))
+            ax.set_xticklabels(field.col_labels, rotation=90, fontsize=6)
+        elif len(field.col_labels) > 0:
+            # Upsampled: show ticks at original positions
+            n_labels = len(field.col_labels)
+            tick_positions = [i * n_cols // n_labels for i in range(n_labels)]
+            ax.set_xticks(tick_positions)
+            ax.set_xticklabels(field.col_labels, rotation=90, fontsize=6)
+        if len(field.row_labels) == n_rows:
+            ax.set_yticks(range(n_rows))
+            ax.set_yticklabels(field.row_labels, fontsize=6)
+        elif len(field.row_labels) > 0:
+            n_labels = len(field.row_labels)
+            tick_positions = [i * n_rows // n_labels for i in range(n_labels)]
+            ax.set_yticks(tick_positions)
+            ax.set_yticklabels(field.row_labels, fontsize=6)
         ax.set_title(f"{field.channel} – raw")
 
         # Colorbar/legend showing actual data range
