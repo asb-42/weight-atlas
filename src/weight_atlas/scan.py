@@ -346,11 +346,17 @@ def _compute_scaling_metadata(stats: Iterable[TensorStats], spec: AtlasSpec) -> 
 
     # Build per-channel stat arrays from stats
     channels_meta: dict[str, dict] = {}
+    params: dict[str, float] | None = None
     for channel, ch_spec in spec.channels.items():
         stat_key = ch_spec["stat"]
         scale_type = ch_spec["scale"]["type"]
         if scale_type not in ("robust_scale", "quantile_clip"):
             continue
+        # Record the actual quantile bounds from the spec (not hardcoded).
+        lower = float(ch_spec["scale"].get("lower", ch_spec["scale"].get("lo", 0.01)))
+        upper = float(ch_spec["scale"].get("upper", ch_spec["scale"].get("hi", 0.99)))
+        if params is None:
+            params = {"lower": lower, "upper": upper}
 
         # Collect all values for this stat across tensors
         vals_list: list[float] = []
@@ -370,9 +376,6 @@ def _compute_scaling_metadata(stats: Iterable[TensorStats], spec: AtlasSpec) -> 
         if pre == "log1p":
             arr = np.log1p(np.maximum(arr, 0.0))
 
-        lower = float(ch_spec["scale"].get("lower", ch_spec["scale"].get("lo", 0.01)))
-        upper = float(ch_spec["scale"].get("upper", ch_spec["scale"].get("hi", 0.99)))
-
         q_lo = float(np.quantile(arr, lower))
         q_hi = float(np.quantile(arr, upper))
 
@@ -388,6 +391,6 @@ def _compute_scaling_metadata(stats: Iterable[TensorStats], spec: AtlasSpec) -> 
 
     return {
         "method": "robust_scale",
-        "params": {"lower": 0.01, "upper": 0.99},
+        "params": params or {"lower": 0.01, "upper": 0.99},
         "channels": channels_meta,
     }

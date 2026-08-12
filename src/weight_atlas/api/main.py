@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -48,9 +49,15 @@ def create_app(
     _output_root.mkdir(parents=True, exist_ok=True)
 
     job_queue = jobmod.JobQueue(_db_path, on_job=lambda j: None)
-    job_queue.start()
 
-    app = FastAPI(title="Weight Atlas", version="0.2.0")
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        """Start the worker on startup, stop it cleanly on shutdown."""
+        job_queue.start()
+        yield
+        job_queue.stop()
+
+    app = FastAPI(title="Weight Atlas", version="0.2.0", lifespan=lifespan)
 
     # Static files (CSS)
     static_dir = Path(__file__).resolve().parent.parent / "ui" / "static"
@@ -70,11 +77,4 @@ def create_app(
     router = create_router(job_queue, templates, _spec_path, _output_root, _model_roots)
     app.include_router(router)
 
-    @app.on_event("shutdown")
-    def _shutdown() -> None:
-        job_queue.stop()
-
     return app
-
-
-app = create_app()

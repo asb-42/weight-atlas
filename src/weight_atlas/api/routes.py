@@ -255,7 +255,10 @@ def create_router(
         _require_allowed(dir_a)
         _require_allowed(dir_b)
 
-        out_dir = output_root / f"compare_{dir_a.name}_vs_{dir_b.name}"
+        # Unique output dir: same-named models in different roots would otherwise
+        # overwrite each other's compare results.
+        import uuid
+        out_dir = output_root / f"compare_{dir_a.name}_vs_{dir_b.name}_{uuid.uuid4().hex[:8]}"
         out_dir.mkdir(parents=True, exist_ok=True)
 
         job = job_queue.submit_compare(dir_a, dir_b, out_dir, spec_path)
@@ -284,6 +287,13 @@ def create_router(
         if delta_render_dir.exists():
             delta_pngs = sorted(delta_render_dir.glob("delta_*.png"))
 
+        # out_dir may live outside output_root (imported scans) — fall back to the
+        # absolute path rather than raising ValueError.
+        try:
+            out_dir_rel = str(out_dir.relative_to(output_root))
+        except ValueError:
+            out_dir_rel = str(out_dir)
+
         return templates.TemplateResponse(
             request,
             "compare_report.html",
@@ -296,7 +306,7 @@ def create_router(
                 },
                 "compare_summary": compare_summary,
                 "delta_pngs": [str(p.name) for p in delta_pngs],
-                "out_dir": str(out_dir.relative_to(output_root)),
+                "out_dir": out_dir_rel,
             },
         )
 

@@ -85,8 +85,11 @@ def build_parser() -> argparse.ArgumentParser:
 def _cmd_scan(args: argparse.Namespace) -> int:
     spec = _load_spec(args.spec)
 
-
-    artefacts = run_scan(args.path, args.out, spec, loader_id=args.loader)
+    try:
+        artefacts = run_scan(args.path, args.out, spec, loader_id=args.loader)
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     # Warn when mapping coverage is poor. The fingerprint was already written by
     # run_scan — do not re-open the loader or recompute statistics here.
@@ -270,6 +273,14 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     if panels_a and panels_b:
         compare_expert_panels(panels_a, panels_b, spec, mode=args.mode)
 
+    if not summary_channels:
+        print(
+            "no channels to compare (no matching field_*_raw.tif artefacts "
+            f"in {args.dir_a} and {args.dir_b})",
+            file=sys.stderr,
+        )
+        return 0
+
     # Write compare_summary.json
     compare_summary = {
         "mode": args.mode,
@@ -373,7 +384,16 @@ def _cmd_serve(args: argparse.Namespace) -> int:
 
     url_host = "127.0.0.1" if loopback else "<this-machine-lan-ip>"
     print(f"Web UI: http://{url_host}:{args.port}  (Ctrl+C to stop)")
-    uvicorn.run("weight_atlas.api.main:app", host=args.host, port=args.port, reload=args.reload)
+    # Factory mode: uvicorn calls create_app() per worker instead of importing a
+    # module-level app, so the job worker thread only starts on lifespan startup
+    # (no import-time side effects; safe under --reload).
+    uvicorn.run(
+        "weight_atlas.api.main:create_app",
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+        factory=True,
+    )
     return 0
 
 def main(argv: list[str] | None = None) -> int:
@@ -408,10 +428,11 @@ def _cmd_diagnose(args: argparse.Namespace) -> int:
     from weight_atlas.core.registry import get_loader
     from weight_atlas.core.types import detect_loader
 
-
-
-
-    loader_id = args.loader or detect_loader(args.path)
+    try:
+        loader_id = args.loader or detect_loader(args.path)
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     loader = get_loader(loader_id)()
     handles = list(loader.open(args.path))
 

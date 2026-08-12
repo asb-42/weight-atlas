@@ -67,9 +67,20 @@ class JobQueue:
         self._worker: threading.Thread | None = None
         self._init_db()
 
+    def _connect(self) -> sqlite3.Connection:
+        """Open a SQLite connection with WAL + a busy timeout.
+
+        Concurrent worker writes and request reads otherwise hit
+        ``database is locked`` under load.
+        """
+        conn = sqlite3.connect(self._db_path, timeout=10.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=10000")
+        return conn
+
     def _init_db(self) -> None:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self._db_path) as conn:
+        with self._connect() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS jobs (
                     job_id TEXT PRIMARY KEY,
@@ -91,7 +102,7 @@ class JobQueue:
 
     def _save(self, job: Job) -> None:
         import json
-        with sqlite3.connect(self._db_path) as conn:
+        with self._connect() as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO jobs
@@ -116,7 +127,7 @@ class JobQueue:
 
     def _load(self, job_id: str) -> Job | None:
         import json
-        with sqlite3.connect(self._db_path) as conn:
+        with self._connect() as conn:
             row = conn.execute(
                 "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
             ).fetchone()
@@ -143,7 +154,7 @@ class JobQueue:
         jobs left as ``running`` by a crash/restart are reset to ``queued`` so
         they re-run idempotently (scan/compare overwrite their own outputs).
         """
-        with sqlite3.connect(self._db_path) as conn:
+        with self._connect() as conn:
             rows = conn.execute(
                 "SELECT job_id, status FROM jobs WHERE status IN (?, ?)",
                 (JobStatus.QUEUED.value, JobStatus.RUNNING.value),
@@ -305,6 +316,11 @@ class JobQueue:
             delta_path = out / f"delta_{channel}_raw.tif"
             write_tif(delta_path, summary.channels[channel].delta)
             all_artefacts.append(delta_path)
+
+        if not summary_channels:
+            # Nothing to compare (e.g. activity-only or partial scans) — avoid
+            # the NameError from referencing loop-scoped `summary`.
+            return []
 
         compare_summary = {
             "mode": "strict",
@@ -550,8 +566,11 @@ class JobQueue:
                     if field is None:
                         continue
                     renderer.render(field, spec, render_dir)
-            except Exception:
-                pass  # Rendering is best-effort
+            except Exception as render_err:  # noqa: BLE001 — best-effort, but log it
+                print(
+                    f"Warning: import auto-render failed: {render_err}",
+                    file=__import__('sys').stderr,
+                )
 
         # Discover artefacts (including any rendered PNGs)
         artefacts = []
@@ -585,7 +604,7 @@ class JobQueue:
 
     def list_jobs(self, limit: int = 50) -> list[Job]:
         import json
-        with sqlite3.connect(self._db_path) as conn:
+        with self._connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?",
                 (limit,),

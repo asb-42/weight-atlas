@@ -161,16 +161,31 @@ _GGUF_MAGIC = b"GGUF"
 
 
 def detect_loader(path: Path) -> str:
-    """Detect loader type from file magic bytes.
+    """Detect loader type from file magic bytes or directory contents.
 
     Returns:
-        "gguf" if file starts with GGUF magic, "safetensors" otherwise.
+        "gguf" for GGUF files / directories containing ``*.gguf``,
+        "safetensors" for safetensors files / directories containing
+        ``*.safetensors``.
+
+    Raises:
+        FileNotFoundError: for directories with no recognizable shards, or an
+            unreadable path — instead of silently defaulting to safetensors.
     """
     try:
+        if path.is_dir():
+            if any(path.glob("*.gguf")):
+                return "gguf"
+            if any(path.glob("*.safetensors")):
+                return "safetensors"
+            raise FileNotFoundError(
+                f"cannot detect loader for directory {path}: no .gguf or "
+                ".safetensors files. Pass --loader explicitly."
+            )
         with open(path, "rb") as f:
             magic = f.read(4)
         if magic == _GGUF_MAGIC:
             return "gguf"
         return "safetensors"
-    except OSError:
-        return "safetensors"
+    except OSError as exc:
+        raise FileNotFoundError(f"cannot detect loader for {path}: {exc}") from exc
