@@ -9,7 +9,6 @@ import pytest
 from weight_atlas.core.types import (
     DEFAULT_SPEC_NAME,
     DEFAULT_SPEC_VERSION,
-    AtlasSpec,
     detect_loader,
     get_default_spec_path,
     load_default_spec,
@@ -17,8 +16,9 @@ from weight_atlas.core.types import (
 
 
 def test_load_spec():
-    spec = AtlasSpec.from_json(Path("specs/atlas_spec.v2.2.json"))
-    assert spec.spec_version == 2
+    """The canonical default spec loads with the expected structure."""
+    spec = load_default_spec()
+    assert spec.spec_version == DEFAULT_SPEC_VERSION
     assert "attn_q" in spec.slots
     assert spec.channel_stat("height") == "spectral_norm"
     assert spec.channel_stat("tint") == "stable_rank"

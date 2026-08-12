@@ -19,6 +19,8 @@ Layout example (Kimi K3 expert ``w1``):
 
 from __future__ import annotations
 
+from typing import cast
+
 import numpy as np
 
 # FP4 E2M1 magnitude lookup table (index = lower 3 bits of the nibble).
@@ -75,7 +77,7 @@ def unpack_e2m1(packed: np.ndarray) -> np.ndarray:
     sign = (nibbles & 0x08) != 0
     magnitude = nibbles & 0x07
     values = _E2M1_LUT[magnitude]
-    return np.where(sign, -values, values)
+    return cast(np.ndarray, np.where(sign, -values, values))
 
 
 def e8m0_to_float(scale: np.ndarray) -> np.ndarray:

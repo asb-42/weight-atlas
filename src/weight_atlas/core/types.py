@@ -41,6 +41,7 @@ class TensorHandle:
         if not self._loaded:
             self._cache = self._loader().astype(np.float32, copy=False)
             self._loaded = True
+        assert self._cache is not None
         return self._cache
 
 

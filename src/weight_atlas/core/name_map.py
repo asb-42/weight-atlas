@@ -192,12 +192,12 @@ def map_name(name: str) -> tuple[int | None, str]:
     if m:
         layer = int(m.group(1))
         # Check MoE rules first (order matters!)
-        for pat, slot in _MOE_RULES:
+        for pat, moe_slot in _MOE_RULES:
             if pat.search(name):
-                if slot is None:
+                if moe_slot is None:
                     # Special handling for shared expert and expert tensors
                     return _handle_moe_hf(name, layer)
-                return layer, slot
+                return layer, moe_slot
         # Then regular HF rules
         for pat, slot in _RULES:
             if pat.search(name):
@@ -217,12 +217,12 @@ def map_name(name: str) -> tuple[int | None, str]:
     if m:
         layer = int(m.group(1))
         # Check GGUF MoE rules first
-        for pat, slot in _GGUF_MOE_RULES:
+        for pat, moe_slot in _GGUF_MOE_RULES:
             if pat.search(name):
-                if slot is None:
+                if moe_slot is None:
                     # Expert tensor (3D stacked)
                     return layer, "expert"
-                return layer, slot
+                return layer, moe_slot
         # Then regular GGUF rules
         for pat, slot in _GGUF_RULES:
             if pat.search(name):

@@ -27,7 +27,10 @@ def create_router(
         """Read a JSON or form-encoded request body (HTMX forms send urlencoded)."""
         content_type = request.headers.get("content-type", "")
         if "application/json" in content_type:
-            return await request.json()
+            payload = await request.json()
+            if not isinstance(payload, dict):
+                raise HTTPException(status_code=400, detail="expected a JSON object")
+            return {str(k): str(v) for k, v in payload.items()}
         form = await request.form()
         return {key: str(value) for key, value in form.items()}
 

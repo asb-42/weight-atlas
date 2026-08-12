@@ -14,7 +14,7 @@ matplotlib.use("Agg")  # noqa: E402 – must be set before pyplot import
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import LinearSegmentedColormap, Normalize
 
 from weight_atlas.core.registry import register_renderer
 from weight_atlas.core.types import AtlasSpec, Field2D
@@ -151,7 +151,7 @@ class MatplotlibSheet:
             p90 = float(np.quantile(vals, 0.9))
             vmin = float(np.quantile(vals, 0.02))
             vmax = float(np.quantile(vals, 0.98))
-            sm = plt.cm.ScalarMappable(cmap=_HYPSO, norm=plt.Normalize(vmin=0, vmax=1))
+            sm = plt.cm.ScalarMappable(cmap=_HYPSO, norm=Normalize(vmin=0, vmax=1))
             sm.set_array([])
             cbar = fig.colorbar(sm, ax=ax, fraction=0.046, pad=0.04)
             cbar.ax.tick_params(labelsize=6)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -51,7 +52,7 @@ def create_app(
     job_queue = jobmod.JobQueue(_db_path, on_job=lambda j: None)
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI):
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         """Start the worker on startup, stop it cleanly on shutdown."""
         job_queue.start()
         yield

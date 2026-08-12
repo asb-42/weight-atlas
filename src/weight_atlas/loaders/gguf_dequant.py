@@ -6,6 +6,8 @@ with fallback implementations for supported types.
 
 from __future__ import annotations
 
+from types import ModuleType
+
 import numpy as np
 
 # GGUF quantization type IDs
@@ -137,7 +139,9 @@ def check_supported(ggml_type: int) -> None:
 # quant types without a self-contained pure-numpy implementation. None when the
 # package is not installed.
 try:
-    import gguf as _gguf
+    import gguf
+
+    _gguf: ModuleType | None = gguf
 except ImportError:  # pragma: no cover - optional dependency
     _gguf = None
 
@@ -205,6 +209,7 @@ def _dequant_with_gguf(tensor_data: bytes, ggml_type: int) -> np.ndarray:
     than hardcoded per-type constants, so a gguf library upgrade cannot silently
     change the layout. Raises if the type is not implemented by gguf.
     """
+    assert _gguf is not None
     qtype = _gguf.GGMLQuantizationType(ggml_type)
     quant_sizes = _gguf.GGML_QUANT_SIZES.get(qtype)
     if quant_sizes is None:
@@ -216,8 +221,10 @@ def _dequant_with_gguf(tensor_data: bytes, ggml_type: int) -> np.ndarray:
     try:
         if block_bytes > 1:
             blocks = arr.reshape(-1, block_bytes)
-            return _gguf.dequantize(blocks, qtype).astype(np.float32).flatten()
-        return _gguf.dequantize(arr, qtype).astype(np.float32).flatten()
+            dequantized = _gguf.dequantize(blocks, qtype)
+        else:
+            dequantized = _gguf.dequantize(arr, qtype)
+        return np.ascontiguousarray(dequantized, dtype=np.float32).flatten()
     except NotImplementedError as exc:
         # The installed gguf library may not implement every quant type; surface
         # a clear error instead of silently producing garbage.

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 import struct
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -170,7 +171,7 @@ class SafetensorsLoader:
                                 shape=(m, k2 * 2),
                                 dtype="FP4_MXFP4",
                                 expert_id=_kimi_expert_id(base),
-                                loader=lambda f=f, n=name, s=scale_name, h=header, o=data_offset: _load_mxfp4_pair(f, h, n, s, o),
+                                loader=partial(_load_mxfp4_pair, f, header, name, scale_name, data_offset),
                             )
                         )
                         consumed.add(name)
@@ -182,7 +183,7 @@ class SafetensorsLoader:
                         name=name,
                         shape=shape,
                         dtype=dtype,
-                        loader=lambda f=f, n=name, h=header, o=data_offset, d=dtype, s=shape: _load_named(f, h, n, o, d, s),
+                        loader=partial(_load_named, f, header, name, data_offset, dtype, shape),
                     )
                 )
 

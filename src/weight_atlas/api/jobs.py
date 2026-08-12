@@ -364,7 +364,7 @@ class JobQueue:
             f.write("\n")
         all_artefacts.append(summary_path)
 
-        return all_artefacts
+        return [str(p) for p in all_artefacts]
 
     def _render_job(
         self,

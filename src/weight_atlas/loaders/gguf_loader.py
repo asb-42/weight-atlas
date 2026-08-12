@@ -139,7 +139,7 @@ class GGUFLoader:
                                 name=f"{name}[{expert_id}]",
                                 shape=expert_shape,
                                 dtype=f"ggml_{ggml_type}",
-                                loader=lambda s=shared, e=expert_id: s.slice(e),
+                                loader=self._make_shared_loader(shared, expert_id),
                                 expert_id=expert_id,
                             )
                         )
@@ -159,6 +159,16 @@ class GGUFLoader:
         self, data: np.ndarray, ggml_type: int, shape: tuple[int, ...]
     ) -> Callable[[], np.ndarray]:
         return lambda: self._load_tensor(data, ggml_type, shape)
+
+    def _make_shared_loader(
+        self, shared: _SharedExpertDequant, expert_id: int
+    ) -> Callable[[], np.ndarray]:
+        """Build a zero-arg loader that slices one expert from a shared dequant."""
+
+        def loader() -> np.ndarray:
+            return shared.slice(expert_id)
+
+        return loader
 
     def _load_tensor(self, data: np.ndarray, ggml_type: int, shape: tuple[int, ...]) -> np.ndarray:
         """Materialise a single tensor as float32."""
