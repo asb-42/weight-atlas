@@ -14,12 +14,19 @@ import sys
 from pathlib import Path
 
 from weight_atlas.core.registry import get_renderer
-from weight_atlas.core.types import AtlasSpec
+from weight_atlas.core.types import AtlasSpec, load_default_spec
 from weight_atlas.render import (
     blender,  # noqa: F401 — registers renderer
     matplotlib_sheet,  # noqa: F401 — registers renderer
 )
 from weight_atlas.scan import scan as run_scan
+
+
+def _load_spec(spec_path: Path | None) -> AtlasSpec:
+    """Load an explicitly-provided spec, else the canonical default."""
+    if spec_path is not None:
+        return AtlasSpec.from_json(spec_path)
+    return load_default_spec()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -76,8 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _cmd_scan(args: argparse.Namespace) -> int:
-    spec_path = args.spec or Path("specs/atlas_spec.v2.3.json")
-    spec = AtlasSpec.from_json(spec_path)
+    spec = _load_spec(args.spec)
 
 
     artefacts = run_scan(args.path, args.out, spec, loader_id=args.loader)
@@ -134,7 +140,7 @@ def _cmd_render(args: argparse.Namespace) -> int:
     # Load spec from scan artefacts: look for a recorded spec_version.
     # We reconstruct from the default spec; in future the scan could emit
     # the spec it used.
-    spec = AtlasSpec.from_json(Path("specs/atlas_spec.v2.3.json"))
+    spec = load_default_spec()
 
     renderer_cls = get_renderer(args.renderer)
     renderer = renderer_cls()
@@ -168,8 +174,7 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     from weight_atlas.compare import compute_compare_summary, hotspot_ranking
     from weight_atlas.fields.tif_io import read_tif
 
-    spec_path = args.spec or Path("specs/atlas_spec.v2.3.json")
-    spec = AtlasSpec.from_json(spec_path)
+    spec = _load_spec(args.spec)
 
 
 

@@ -183,7 +183,9 @@ class JobQueue:
             self._on_job(job)
 
         try:
-            spec = AtlasSpec.from_json(Path(job.spec_path))
+            from weight_atlas.core.types import load_default_spec
+            spec_path = Path(job.spec_path) if job.spec_path else None
+            spec = AtlasSpec.from_json(spec_path) if spec_path and spec_path.exists() else load_default_spec()
             artefacts: list[str]
             if job_type == "compare":
                 progress_cb(0.2, "Comparing models...")
@@ -398,10 +400,10 @@ class JobQueue:
         if auto_render:
             try:
                 from weight_atlas.core.registry import get_renderer
-                from weight_atlas.core.types import AtlasSpec
+                from weight_atlas.core.types import load_default_spec
                 from weight_atlas.fields.rasterizer import load_channel_field
 
-                spec = AtlasSpec.from_json(Path("specs/atlas_spec.v2.1.json"))
+                spec = load_default_spec()
                 renderer = get_renderer("sheet")()
 
                 # Discover channels from scan directory

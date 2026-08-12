@@ -118,6 +118,36 @@ class AtlasSpec:
         return dict(self.channels[channel]["scale"])
 
 
+# Canonical default atlas spec — the single source of truth used by BOTH the
+# CLI and the web UI. All shipped spec files must agree with this version or
+# scans produced by one entrypoint can never be compared against the other
+# (compare/align.py hard-rejects spec_version mismatches).
+DEFAULT_SPEC_NAME = "atlas_spec.v2.3.json"
+DEFAULT_SPEC_VERSION = 3
+
+
+def get_default_spec_path() -> Path:
+    """Absolute path to the canonical default atlas spec (CWD-independent)."""
+    return Path(__file__).resolve().parent.parent.parent.parent / "specs" / DEFAULT_SPEC_NAME
+
+
+def load_default_spec() -> AtlasSpec:
+    """Load the canonical default spec, asserting its version is current.
+
+    Raises RuntimeError if the shipped default spec is stale (spec_version
+    differs from DEFAULT_SPEC_VERSION), so drift between the spec files is
+    caught at startup instead of producing incompatible fingerprints.
+    """
+    spec = AtlasSpec.from_json(get_default_spec_path())
+    if spec.spec_version != DEFAULT_SPEC_VERSION:
+        raise RuntimeError(
+            f"canonical default spec {get_default_spec_path()} has spec_version "
+            f"{spec.spec_version}; expected {DEFAULT_SPEC_VERSION}. "
+            "Stale spec file — reconcile the shipped specs."
+        )
+    return spec
+
+
 # GGUF magic bytes
 _GGUF_MAGIC = b"GGUF"
 

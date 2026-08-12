@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from weight_atlas.api.jobs import JobQueue, JobStatus
-from weight_atlas.core.types import AtlasSpec
+from weight_atlas.core.types import AtlasSpec, load_default_spec
 
 
 def create_router(
@@ -21,6 +21,14 @@ def create_router(
     output_root: Path,
 ) -> APIRouter:
     router = APIRouter()
+
+    async def _read_body(request: Request) -> dict[str, str]:
+        """Read a JSON or form-encoded request body (HTMX forms send urlencoded)."""
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            return await request.json()
+        form = await request.form()
+        return {key: str(value) for key, value in form.items()}
 
     @router.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
@@ -44,8 +52,9 @@ def create_router(
         )
 
     @router.post("/api/jobs")
-    async def create_job(payload: dict[str, str]) -> JSONResponse:
+    async def create_job(request: Request) -> JSONResponse:
         """Submit a new scan job."""
+        payload = await _read_body(request)
         model_path_str = payload.get("model_path", "")
         if not model_path_str:
             raise HTTPException(status_code=400, detail="model_path required")
@@ -95,12 +104,11 @@ def create_router(
         if spec_path is not None and spec_path.exists():
             spec = AtlasSpec.from_json(spec_path)
         else:
-            # Use default spec
-            default_spec_path = Path("specs/atlas_spec.v2.1.json")
-            if default_spec_path.exists():
-                spec = AtlasSpec.from_json(default_spec_path)
-            else:
-                raise HTTPException(status_code=500, detail="Default spec not found")
+            # Use the canonical default spec (asserts version at load).
+            try:
+                spec = load_default_spec()
+            except (OSError, RuntimeError) as exc:
+                raise HTTPException(status_code=500, detail=f"Default spec not found: {exc}") from exc
 
         # Load fingerprint for stats table
         fp_path = out_dir / "fingerprint.json"
@@ -206,8 +214,9 @@ def create_router(
         )
 
     @router.post("/api/compare")
-    async def create_compare_job(payload: dict[str, str]) -> JSONResponse:
+    async def create_compare_job(request: Request) -> JSONResponse:
         """Submit a new compare job."""
+        payload = await _read_body(request)
         dir_a_str = payload.get("dir_a", "")
         dir_b_str = payload.get("dir_b", "")
         if not dir_a_str or not dir_b_str:
@@ -280,12 +289,12 @@ def create_router(
         from weight_atlas.core.types import AtlasSpec
         from weight_atlas.scan import scan as run_scan
 
-        # Load spec from job spec_path, or fallback to default
+        # Load spec from job spec_path, or fallback to canonical default
         spec_path = Path(job.spec_path) if job.spec_path else None
         if spec_path is not None and spec_path.exists():
             spec = AtlasSpec.from_json(spec_path)
         else:
-            spec = AtlasSpec.from_json(Path("specs/atlas_spec.v2.1.json"))
+            spec = load_default_spec()
 
         # Re-run scan (overwrites existing artefacts)
         model_path = Path(job.model_path)
@@ -315,10 +324,10 @@ def create_router(
             raise HTTPException(status_code=404, detail="output directory not found")
 
         from weight_atlas.core.registry import get_renderer
-        from weight_atlas.core.types import AtlasSpec
+        from weight_atlas.core.types import load_default_spec
         from weight_atlas.fields.rasterizer import load_channel_field
 
-        spec = AtlasSpec.from_json(Path("specs/atlas_spec.v2.1.json"))
+        spec = load_default_spec()
         renderer_cls = get_renderer(renderer)
         renderer_obj = renderer_cls()
 
@@ -364,8 +373,9 @@ def create_router(
         return JSONResponse({"status": "ok", "renderer": renderer, "produced": produced})
 
     @router.post("/api/import")
-    async def import_scan(payload: dict[str, str]) -> JSONResponse:
+    async def import_scan(request: Request) -> JSONResponse:
         """Import an existing scan directory into the job database."""
+        payload = await _read_body(request)
         scan_dir_str = payload.get("scan_dir", "")
         model_path = payload.get("model_path", "")
         if not scan_dir_str:

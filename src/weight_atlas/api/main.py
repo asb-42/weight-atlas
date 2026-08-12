@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from weight_atlas.api import jobs as jobmod
 from weight_atlas.api.routes import create_router
+from weight_atlas.core.types import get_default_spec_path, load_default_spec
 from weight_atlas.render import (  # noqa: F401 — registers renderers
     blender,
     matplotlib_sheet,
@@ -25,12 +26,17 @@ def create_app(
 
     Args:
         db_path: Path to SQLite job database. Defaults to ./data/jobs.db
-        spec_path: Path to atlas spec JSON. Defaults to ./specs/atlas_spec.v2.1.json
+        spec_path: Path to atlas spec JSON. Defaults to the canonical
+            ``get_default_spec_path()`` (atlas_spec.v2.3.json).
         output_root: Root directory for scan outputs. Defaults to ./output
     """
     base = Path(__file__).resolve().parent.parent.parent.parent
     _db_path = db_path or base / "data" / "jobs.db"
-    _spec_path = spec_path or base / "specs" / "atlas_spec.v2.1.json"
+    if spec_path is None:
+        # Assert the shipped default spec is canonical before serving, so the
+        # web UI and CLI can never silently produce incompatible fingerprints.
+        load_default_spec()
+    _spec_path = spec_path or get_default_spec_path()
     _output_root = output_root or base / "output"
 
     _db_path.parent.mkdir(parents=True, exist_ok=True)
