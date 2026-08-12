@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}Compare Report — Weight Atlas{% if compare_summary.expert_panels %}
+<section class="detail-section">
+    <h3>Expert Panel Comparison (MoE)</h3>
+    {% for panel in compare_summary.expert_panels %}
+    <h4>{{ panel.slot }} - {{ panel.channel }}</h4>
+    {% if panel.status == "compared" %}
+    <table>
+        <tbody>
+            <tr><td>Rel. L2</td><td>{{ "%.6f" | format(panel.rel_l2) }}</td></tr>
+            <tr><td>Cosine Sim</td><td>{{ "%.6f" | format(panel.cosine_sim) }}</td></tr>
+        </tbody>
+    </table>
+    {% else %}
+    <div class="banner banner--info">
+        <p>Skipped: {{ panel.reason }}</p>
+    </div>
+    {% endif %}
+    {% endfor %}
+</section>
+{% endif %}
+
+{% endblock %}
+{% block content %}
+<h2>Compare Report</h2>
+<p><a href="/compare">← New comparison</a></p>
+
+{% if job.status != "done" %}
+<section class="detail-section">
+    <div class="job-status job-status--{{ job.status }}">
+        <span class="badge badge--{{ job.status }}">{{ job.status }}</span>
+        <div class="progress-bar">
+            <div class="progress-bar__fill" style="width: {{ (job.progress * 100) | int }}%"></div>
+        </div>
+        <span class="progress-text">{{ (job.progress * 100) | int }}%</span>
+        <p class="job-message">{{ job.message }}</p>
+        {% if job.error %}
+        <p class="job-error">{{ job.error }}</p>
+        {% endif %}
+    </div>
+</section>
+{% endif %}
+
+{% if compare_summary.channels %}
+<section class="detail-section">
+    <h3>Summary Metrics</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Channel</th>
+                <th>Rel. L2</th>
+                <th>Cosine Sim</th>
+                <th>Hotspot Layer</th>
+                <th>Hotspot Slot</th>
+                <th>Hotspot |Δ|</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for ch_name, ch_data in compare_summary.channels.items() %}
+            <tr>
+                <td>{{ ch_name }}</td>
+                <td>{{ "%.6f" | format(ch_data.rel_l2) }}</td>
+                <td>{{ "%.6f" | format(ch_data.cosine_sim) }}</td>
+                <td>{{ ch_data.argmax[0] }}</td>
+                <td>{{ ch_data.argmax[1] }}</td>
+                <td>{{ "%.6f" | format(ch_data.hotspot_value) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+
+{% if compare_summary.warnings %}
+<section class="detail-section">
+    <h3>Warnings</h3>
+    <div class="banner banner--warning">
+        <ul>
+            {% for warning in compare_summary.warnings %}
+            <li class="job-error">{{ warning }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+</section>
+{% endif %}
+
+{% if compare_summary.loaders %}
+<section class="detail-section">
+    <h3>Loader Info</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Model</th>
+                <th>Loader</th>
+                <th>Quantization</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>A</td>
+                <td>{{ compare_summary.loaders.a }}</td>
+                <td>{{ compare_summary.model_a.quantization | tojson if compare_summary.model_a.quantization else "-" }}</td>
+            </tr>
+            <tr>
+                <td>B</td>
+                <td>{{ compare_summary.loaders.b }}</td>
+                <td>{{ compare_summary.model_b.quantization | tojson if compare_summary.model_b.quantization else "-" }}</td>
+            </tr>
+        </tbody>
+    </table>
+</section>
+{% endif %}
+
+{% if compare_summary.channels %}
+<section class="detail-section">
+    <h3>Hotspot Rankings (Top-5 per Channel)</h3>
+    {% for ch_name, ch_data in compare_summary.channels.items() %}
+    <h4>{{ ch_name }}</h4>
+    <table class="stats-table">
+        <thead>
+            <tr>
+                <th>Rank</th>
+                <th>Layer</th>
+                <th>Slot</th>
+                <th>|Δ|</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for entry in ch_data.hotspot_ranking %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>{{ entry.layer }}</td>
+                <td>{{ entry.slot }}</td>
+                <td>{{ "%.6f" | format(entry.abs_delta) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endfor %}
+</section>
+{% endif %}
+
+{% if delta_pngs %}
+<section class="detail-section">
+    <h3>Delta Visualizations</h3>
+    <div class="image-grid">
+        {% for png in delta_pngs %}
+        <figure>
+            <img src="/static/outputs/{{ out_dir }}/render/{{ png }}" alt="{{ png }}">
+            <figcaption>{{ png }}</figcaption>
+        </figure>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
+{% if compare_summary.expert_panels %}
+<section class="detail-section">
+    <h3>Expert Panel Comparison (MoE)</h3>
+    {% for panel in compare_summary.expert_panels %}
+    <h4>{{ panel.slot }} - {{ panel.channel }}</h4>
+    {% if panel.status == "compared" %}
+    <table>
+        <tbody>
+            <tr><td>Rel. L2</td><td>{{ "%.6f" | format(panel.rel_l2) }}</td></tr>
+            <tr><td>Cosine Sim</td><td>{{ "%.6f" | format(panel.cosine_sim) }}</td></tr>
+        </tbody>
+    </table>
+    {% else %}
+    <div class="banner banner--info">
+        <p>Skipped: {{ panel.reason }}</p>
+    </div>
+    {% endif %}
+    {% endfor %}
+</section>
+{% endif %}
+
+{% endblock %}

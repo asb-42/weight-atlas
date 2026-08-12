@@ -1,0 +1,54 @@
+{
+  "version": "v1",
+  "description": "Activity Protocol v1 - Binding artifact for Activity Mode (fMRI). Any change to strings or states constitutes v2.",
+  "states": [
+    {
+      "name": "rest",
+      "content": "<s>",
+      "max_len": 1,
+      "description": "Baseline activity (BOS only)"
+    },
+    {
+      "name": "induction",
+      "content": "AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB AB",
+      "max_len": 128,
+      "description": "Fixed repetitive pattern"
+    },
+    {
+      "name": "de_text",
+      "content": "Die Wissenschaft hat lange Zeit geglaubt, dass der Mensch die einzige Spezies sei, die Werkzeuge herstellt und verwendet. Doch Beobachtungen an Tieren, besonders an Primaten und Krähen, haben gezeigt, dass auch andere Lebewesen in der Lage sind, Gegenstände zu modifizieren und als Werkzeuge einzusetzen. Diese Erkenntnisse haben unser Verständnis von Intelligenz und Bewusstsein grundlegend verändert.",
+      "max_len": 128,
+      "description": "German text stimulus"
+    },
+    {
+      "name": "en_text",
+      "content": "Science long believed that humans were the only species capable of making and using tools. But observations of animals, particularly primates and crows, have shown that other living beings are also able to modify objects and use them as tools. These insights have fundamentally changed our understanding of intelligence and consciousness.",
+      "max_len": 128,
+      "description": "English text stimulus"
+    },
+    {
+      "name": "code",
+      "content": "def fibonacci(n):\n    if n <= 1:\n        return n\n    return fibonacci(n-1) + fibonacci(n-2)\n\nfor i in range(10):\n    print(f\"F({i}) = {fibonacci(i)}\")",
+      "max_len": 128,
+      "description": "Code stimulus"
+    },
+    {
+      "name": "math",
+      "content": "1 + 1 = 2\n2 + 2 = 4\n3 + 3 = 6\n4 + 4 = 8\n5 + 5 = 10\n6 + 6 = 12\n7 + 7 = 14\n8 + 8 = 16\n9 + 9 = 18\n10 + 10 = 20",
+      "max_len": 128,
+      "description": "Mathematical stimulus"
+    },
+    {
+      "name": "refusal",
+      "content": "I cannot provide information on how to create harmful substances or weapons. Please ask about something else.",
+      "max_len": 128,
+      "description": "Refusal stimulus (benign wording)"
+    },
+    {
+      "name": "long",
+      "content": "The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog.",
+      "max_len": 1024,
+      "description": "Long-form repeat text"
+    }
+  ]
+}

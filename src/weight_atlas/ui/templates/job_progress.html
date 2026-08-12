@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Job {{ job.job_id[:8] }} — Weight Atlas{% endblock %}
+{% block content %}
+<h2>Job {{ job.job_id[:8] }}</h2>
+<p><a href="/">← Back to models</a></p>
+
+<div id="job-status"
+     hx-get="/api/jobs/{{ job.job_id }}/status"
+     hx-trigger="every 2s"
+     hx-target="this"
+     hx-swap="innerHTML">
+    {% include "_job_status.html" %}
+</div>
+
+{% if job.status == "done" %}
+<p>
+    <a href="/models/{{ job.job_id }}">View Model Detail →</a>
+</p>
+{% endif %}
+{% endblock %}

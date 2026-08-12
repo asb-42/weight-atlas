@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Compare Models — Weight Atlas{% endblock %}
+{% block content %}
+<h2>Compare Models</h2>
+
+<section class="submit-job">
+    <h3>Select Two Models to Compare</h3>
+    <form hx-post="/api/compare" hx-target="#compare-result" hx-swap="innerHTML">
+        <label for="dir_a">Model A (scan output directory):</label>
+        <select id="dir_a" name="dir_a" required>
+            <option value="">— Select model A —</option>
+            {% for candidate in candidates %}
+            <option value="{{ candidate.out_dir }}">{{ candidate.model_path }}</option>
+            {% endfor %}
+        </select>
+
+        <label for="dir_b">Model B (scan output directory):</label>
+        <select id="dir_b" name="dir_b" required>
+            <option value="">— Select model B —</option>
+            {% for candidate in candidates %}
+            <option value="{{ candidate.out_dir }}">{{ candidate.model_path }}</option>
+            {% endfor %}
+        </select>
+
+        <button type="submit">Run Comparison</button>
+    </form>
+    <div id="compare-result"></div>
+</section>
+
+{% if candidates|length < 2 %}
+<section class="detail-section">
+    <p>Need at least 2 completed scans to compare. <a href="/">Scan some models first</a>.</p>
+</section>
+{% endif %}
+{% endblock %}

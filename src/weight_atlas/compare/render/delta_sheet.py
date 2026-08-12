@@ -1,0 +1,193 @@
+"""Delta sheet renderer: diverging colormap visualization of field deltas."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")  # noqa: E402 – must be set before pyplot import
+
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.colors import CenteredNorm, TwoSlopeNorm
+
+from weight_atlas.core.registry import register_renderer
+from weight_atlas.core.types import AtlasSpec
+
+# Fixed PNG metadata per spec (same as matplotlib_sheet)
+_PNG_METADATA = {
+    "Software": "weight-atlas",
+    "Creation Time": "1970-01-01T00:00:00Z",
+}
+
+
+def _get_diverging_clip(spec: AtlasSpec) -> float:
+    """Get diverging_clip quantile from spec, default 0.98."""
+    compare_spec = getattr(spec, "compare", None)
+    if compare_spec and isinstance(compare_spec, dict):
+        return float(compare_spec.get("diverging_clip", 0.98))
+    return 0.98
+
+
+@register_renderer("delta")
+class DeltaSheet:
+    """Renders a delta field as a diverging colormap sheet.
+
+    Uses a blue-white-red diverging colormap centered at zero.
+    """
+
+    renderer_id = "delta"
+
+    def render(
+        self,
+        delta: np.ndarray,
+        spec: AtlasSpec,
+        out: Path,
+        *,
+        channel: str = "height",
+        row_labels: list[str] | None = None,
+        col_labels: list[str] | None = None,
+        mode: str = "strict",
+        render_profile: bool = True,
+    ) -> list[Path]:
+        """Render a delta field as a diverging colormap.
+
+        Args:
+            delta: 2D array of delta values (B - A)
+            spec: atlas specification
+            out: output directory
+            channel: channel name for title/filename
+            row_labels: labels for rows (layers)
+            col_labels: labels for columns (slots)
+            mode: alignment mode for title
+            render_profile: if True, also render 1×L profile strip
+        """
+        out.mkdir(parents=True, exist_ok=True)
+        produced: list[Path] = []
+
+        # Compute symmetric limits using diverging_clip quantile
+        diverging_clip = _get_diverging_clip(spec)
+        data = delta
+        finite = np.isfinite(data)
+        if finite.any():
+            abs_vals = np.abs(data[finite])
+            vmax = float(np.quantile(abs_vals, diverging_clip))
+        else:
+            vmax = 1.0
+
+        # Render main delta sheet
+        sheet_path = self._render_sheet(data, spec, out, channel, row_labels, col_labels, mode, vmax)
+        produced.append(sheet_path)
+
+        # Render profile strip if requested
+        if render_profile:
+            profile_path = self._render_profile(data, spec, out, channel, mode, vmax)
+            produced.append(profile_path)
+
+        return produced
+
+    def _render_sheet(
+        self,
+        data: np.ndarray,
+        spec: AtlasSpec,
+        out: Path,
+        channel: str,
+        row_labels: list[str] | None,
+        col_labels: list[str] | None,
+        mode: str,
+        vmax: float,
+    ) -> Path:
+        """Render the main delta sheet."""
+        dpi = int(spec.sheet["dpi"])
+        n_rows, n_cols = data.shape
+        figsize = (max(6, n_cols * 0.5), max(4, n_rows * 0.4))
+
+        fig, ax = plt.subplots(figsize=figsize)
+
+        # TwoSlopeNorm: blue (negative) → white (zero) → red (positive)
+        norm = TwoSlopeNorm(vmin=-vmax, vcenter=0, vmax=vmax) if vmax > 0 else CenteredNorm()
+
+        im = ax.imshow(
+            data,
+            cmap="RdBu_r",
+            norm=norm,
+            origin="upper",
+            extent=(-0.5, n_cols - 0.5, n_rows - 0.5, -0.5),
+            aspect="auto",
+        )
+
+        # Colorbar
+        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label("Δ (B − A)")
+
+        # Labels
+        ax.set_xlabel("slot")
+        ax.set_ylabel("layer")
+
+        if col_labels:
+            ax.set_xticks(range(n_cols))
+            ax.set_xticklabels(col_labels, rotation=90, fontsize=6)
+        else:
+            ax.set_xticks(range(n_cols))
+
+        if row_labels:
+            # Show every nth label if many rows
+            step = max(1, len(row_labels) // 20)
+            ticks = list(range(0, len(row_labels), step))
+            ax.set_yticks(ticks)
+            ax.set_yticklabels([row_labels[i] for i in ticks], fontsize=6)
+        else:
+            ax.set_yticks(range(n_rows))
+
+        ax.set_title(f"Δ {channel} – {mode}")
+
+        delta_path = out / f"delta_sheet_{channel}.png"
+        fig.savefig(delta_path, dpi=dpi, bbox_inches="tight", metadata=_PNG_METADATA)
+        plt.close(fig)
+        return delta_path
+
+    def _render_profile(
+        self,
+        data: np.ndarray,
+        spec: AtlasSpec,
+        out: Path,
+        channel: str,
+        mode: str,
+        vmax: float,
+    ) -> Path:
+        """Render a 1×L profile strip (per-layer relative L2) — the 'ablitation bar'."""
+        dpi = int(spec.sheet["dpi"])
+        n_rows, n_cols = data.shape
+
+        # Compute per-row relative L2 (relative to row norm)
+        profile = np.full(n_rows, np.nan, dtype=np.float64)
+        for i in range(n_rows):
+            row = data[i, :]
+            finite_row = row[np.isfinite(row)]
+            if finite_row.size > 0:
+                profile[i] = float(np.linalg.norm(finite_row) / np.sqrt(finite_row.size))
+
+        fig, ax = plt.subplots(figsize=(max(6, n_cols * 0.5), 1.0))
+
+        # Plot as 1×L strip using hot colormap
+        profile_2d = profile.reshape(1, -1)
+        norm = TwoSlopeNorm(vmin=0, vcenter=vmax / 2, vmax=vmax) if vmax > 0 else CenteredNorm()
+
+        ax.imshow(
+            profile_2d,
+            cmap="hot",
+            norm=norm,
+            origin="upper",
+            extent=(-0.5, n_cols - 0.5, -0.5, 0.5),
+            aspect="auto",
+        )
+
+        ax.set_xlabel("slot")
+        ax.set_yticks([])
+        ax.set_title(f"Δ profile {channel} – {mode}")
+
+        profile_path = out / f"delta_profile_{channel}.png"
+        fig.savefig(profile_path, dpi=dpi, bbox_inches="tight", metadata=_PNG_METADATA)
+        plt.close(fig)
+        return profile_path
