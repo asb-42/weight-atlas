@@ -63,6 +63,11 @@ class JobQueue:
         self._db_path = db_path
         self._on_job = on_job
         self._queue: Queue[str] = Queue()
+        # Job ids already placed on this instance's in-memory queue (via submit/
+        # submit_compare/submit_rescan/submit_render). start()'s restart
+        # recovery must not re-enqueue these, or a job submitted before start()
+        # would run twice.
+        self._enqueued: set[str] = set()
         self._stop = threading.Event()
         self._worker: threading.Thread | None = None
         self._init_db()
@@ -161,12 +166,15 @@ class JobQueue:
             ).fetchall()
             now = self._now()
             for job_id, status in rows:
+                if job_id in self._enqueued:
+                    continue  # already on this instance's queue — don't double-enqueue
                 if status == JobStatus.RUNNING.value:
                     conn.execute(
                         "UPDATE jobs SET status = ?, message = ?, updated_at = ? WHERE job_id = ?",
                         (JobStatus.QUEUED.value, "re-queued after restart", now, job_id),
                     )
                 self._queue.put(job_id)
+                self._enqueued.add(job_id)
 
         self._worker = threading.Thread(target=self._run, daemon=True)
         self._worker.start()
@@ -234,16 +242,20 @@ class JobQueue:
                 artefacts = self._render_job(job, spec, renderer_id or "sheet", progress_cb)
             else:
                 from weight_atlas.scan import scan as run_scan
-                progress_cb(0.1, "Loading model...")
-                progress_cb(0.3, "Computing statistics...")
+                # scan() reports granular phase progress; map its [0,1] into
+                # the job's [0.05, 0.85] (rendering follows in [0.85, 1.0]).
+                def scan_progress(pct: float, msg: str) -> None:
+                    progress_cb(0.05 + 0.8 * pct, msg)
                 artefacts = [str(a) for a in run_scan(
-                    Path(job.model_path), Path(job.out_dir), spec
+                    Path(job.model_path), Path(job.out_dir), spec,
+                    progress=scan_progress,
                 )]
-                # Auto-render sheets after scan (v0.2.0)
-                progress_cb(0.8, "Rendering sheets...")
+                # Auto-render sheets after scan (v0.2.0) → [0.85, 1.0]
+                progress_cb(0.85, "Rendering sheets...")
                 try:
                     render_artefacts = self._auto_render_sheets(
-                        Path(job.out_dir), spec
+                        Path(job.out_dir), spec,
+                        progress=lambda pct, msg: progress_cb(0.85 + 0.15 * pct, msg),
                     )
                     artefacts.extend(render_artefacts)
                 except Exception as render_err:
@@ -294,8 +306,10 @@ class JobQueue:
 
         summary_channels = {}
         all_artefacts: list[Path] = []
+        total_channels = max(1, len(channels))
 
-        for channel in channels:
+        for i, channel in enumerate(channels):
+            progress_cb(0.1 + 0.8 * (i / total_channels), f"Comparing {channel} field...")
             field_a_path = dir_a / f"field_{channel}_raw.tif"
             field_b_path = dir_b / f"field_{channel}_raw.tif"
 
@@ -438,6 +452,7 @@ class JobQueue:
             message="Queued",
         )
         self._save(job)
+        self._enqueued.add(job.job_id)
         self._queue.put(job.job_id)
         return job
 
@@ -463,6 +478,7 @@ class JobQueue:
             message="compare",
         )
         self._save(job)
+        self._enqueued.add(job.job_id)
         self._queue.put(job.job_id)
         return job
 
@@ -487,6 +503,7 @@ class JobQueue:
             message="scan",
         )
         self._save(job)
+        self._enqueued.add(job.job_id)
         self._queue.put(job.job_id)
         return job
 
@@ -507,6 +524,7 @@ class JobQueue:
             message=f"render:{renderer}",
         )
         self._save(job)
+        self._enqueued.add(job.job_id)
         self._queue.put(job.job_id)
         return job
 
@@ -627,7 +645,12 @@ class JobQueue:
         ]
 
 
-    def _auto_render_sheets(self, out_dir: Path, spec: Any) -> list[str]:
+    def _auto_render_sheets(
+        self,
+        out_dir: Path,
+        spec: Any,
+        progress: Callable[[float, str], None] | None = None,
+    ) -> list[str]:
         """Auto-render sheet PNGs from scan artefacts (best-effort)."""
         from weight_atlas.core.registry import get_renderer
         from weight_atlas.fields.rasterizer import load_channel_field
@@ -646,7 +669,11 @@ class JobQueue:
                 channels.add(core[:-len("_smooth")])
 
         rendered: list[str] = []
-        for channel in channels:
+        sorted_channels = sorted(channels)
+        total = max(1, len(sorted_channels))
+        for i, channel in enumerate(sorted_channels):
+            if progress is not None:
+                progress(i / total, f"Rendering {channel} sheet...")
             field = load_channel_field(out_dir, channel, spec, model_name=out_dir.name)
             if field is None:
                 continue

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata
 import json
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import numpy as np
@@ -54,6 +54,7 @@ def scan(
     spec: AtlasSpec,
     *,
     loader_id: str | None = None,
+    progress: Callable[[float, str], None] | None = None,
 ) -> list[Path]:
     """Run the full scan pipeline.
 
@@ -69,17 +70,38 @@ def scan(
         out: output directory
         spec: atlas specification
         loader_id: override loader (default: auto-detect)
+        progress: optional ``(fraction, message)`` callback reported as each
+            phase of the pipeline completes (loading, statistics, rasterizing,
+            smoothing, expert panels, embedding, manifest).
     """
+    def _report(pct: float, msg: str) -> None:
+        if progress is not None:
+            progress(float(pct), msg)
+
     out.mkdir(parents=True, exist_ok=True)
 
     # Auto-detect loader if not specified
     if loader_id is None:
         loader_id = detect_loader(model_path)
 
+    _report(0.0, "Opening model...")
     loader = get_loader(loader_id)()
+    _report(0.02, "Reading tensor metadata...")
     handles = list(loader.open(model_path))
-    stats = [_make_handles(h) for h in handles]
 
+    # Compute per-tensor statistics incrementally (the expensive SVD steps).
+    n_total = len(handles)
+    stats: list[TensorStats] = []
+    report_every = max(1, n_total // 40) if n_total else 1
+    for i, h in enumerate(handles):
+        stats.append(_make_handles(h))
+        if i % report_every == 0 or i == n_total - 1:
+            _report(
+                0.04 + 0.36 * ((i + 1) / n_total),
+                f"Computing statistics ({i + 1}/{n_total})...",
+            )
+
+    _report(0.42, "Building fingerprint...")
     fingerprint = _build_fingerprint(stats, spec, loader_id, handles)
 
     # Compute scaling metadata for fingerprint (v2.1)
@@ -93,8 +115,12 @@ def scan(
         f.write("\n")
 
     artefacts: list[Path] = [fp_path]
-    for channel, ch_spec in spec.channels.items():
+    n_channels = len(spec.channels)
+    for ci, (channel, ch_spec) in enumerate(spec.channels.items()):
+        chan_lo = 0.46 + 0.34 * (ci / n_channels)
+        chan_hi = 0.46 + 0.34 * ((ci + 1) / n_channels)
         stat_key = ch_spec["stat"]
+        _report(chan_lo, f"Rasterizing {channel} field ({stat_key})...")
         field_raw = rasterize(stats, spec, stat_key)
         raw_path = out / f"field_{channel}_raw.tif"
         write_tif(raw_path, field_raw.data)
@@ -109,6 +135,7 @@ def scan(
         from weight_atlas.fields.degenerations import diagnose_fields
         from weight_atlas.fields.smoothing import smooth, upsample
 
+        _report(chan_lo + 0.55 * (chan_hi - chan_lo), f"Smoothing {channel} field...")
         up = upsample(scaled, int(spec.grid["upsample"]))
         smoothed = smooth(up, float(spec.grid["smooth_sigma"]))
         smooth_path = out / f"field_{channel}_smooth.tif"
@@ -116,6 +143,7 @@ def scan(
         artefacts.append(smooth_path)
 
         # MoE expert panels
+        _report(chan_lo + 0.80 * (chan_hi - chan_lo), f"Generating {channel} expert panels...")
         expert_panels = rasterize_expert_panels(stats, spec, stat_key)
         for panel in expert_panels:
             panel_raw_path = out / f"field_expert_{panel.slot}_{channel}_raw.tif"
@@ -136,6 +164,7 @@ def scan(
     # Embedding projection (PCA or UMAP)
     embedding_spec = getattr(spec, 'embedding', {})
     if embedding_spec:
+        _report(0.80, "Projecting embeddings...")
         method = embedding_spec.get('method', 'pca')
         grid_size = embedding_spec.get('grid', 256)
         n_components = embedding_spec.get('components', 3)
@@ -152,6 +181,7 @@ def scan(
 
         if embed_tensor is not None:
             embeddings = embed_tensor.load()  # (V, D)
+            _report(0.84, f"Projecting embeddings ({method})...")
 
             if method == 'umap':
                 from weight_atlas.embedding.umap import compute_umap
@@ -234,6 +264,7 @@ def scan(
             artefacts.append(out / 'embedding_meta.json')
 
     # Degeneration checks on raw fields
+    _report(0.93, "Checking field degenerations...")
     fields_for_diag = {}
     for channel in spec.channels:
         raw_path = out / f"field_{channel}_raw.tif"
@@ -245,6 +276,7 @@ def scan(
         if degen_report.warnings:
             fingerprint["warnings"] = fingerprint.get("warnings", []) + degen_report.warnings
 
+    _report(0.97, "Writing manifest...")
     manifest = {str(p.relative_to(out)): _sha256(p) for p in artefacts}
     manifest_path = out / "manifest.json"
     with open(manifest_path, "w") as f:

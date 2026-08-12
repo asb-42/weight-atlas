@@ -234,9 +234,54 @@ dd {
     font-size: 0.85rem;
 }
 
+.job-status__head {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.progress-text {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    margin-left: auto;
+}
+
 .job-message {
-    color: #888;
+    color: var(--fg);
+    font-weight: 500;
     margin: 0.5rem 0 0;
+    min-height: 1.4em;
+}
+
+/* Animated diagonal stripes while a job is running. */
+.progress-bar--running .progress-bar__fill {
+    background: repeating-linear-gradient(
+        45deg,
+        var(--highlight) 0 10px,
+        rgba(233, 69, 96, 0.55) 10px 20px
+    );
+    background-size: 28px 28px;
+    animation: progress-stripes 0.8s linear infinite;
+}
+
+@keyframes progress-stripes {
+    from { background-position: 0 0; }
+    to { background-position: 28px 0; }
+}
+
+/* Small spinner shown next to the badge while running. */
+.job-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: var(--warning);
+    border-radius: 50%;
+    display: inline-block;
+    animation: job-spin 0.8s linear infinite;
+}
+
+@keyframes job-spin {
+    to { transform: rotate(360deg); }
 }
 
 

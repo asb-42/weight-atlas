@@ -1,9 +1,18 @@
 <div class="job-status job-status--{{ job.status }}">
-    <span class="badge badge--{{ job.status }}">{{ job.status }}</span>
-    <div class="progress-bar">
+    <div class="job-status__head">
+        <span class="badge badge--{{ job.status }}">{{ job.status }}</span>
+        {% if job.status == "running" %}
+        <span class="job-spinner" aria-hidden="true"></span>
+        {% endif %}
+        <span class="progress-text">{{ (job.progress * 100) | int }}%</span>
+    </div>
+    <div class="progress-bar{% if job.status == 'running' %} progress-bar--running{% endif %}"
+         role="progressbar"
+         aria-valuenow="{{ (job.progress * 100) | int }}"
+         aria-valuemin="0"
+         aria-valuemax="100">
         <div class="progress-bar__fill" style="width: {{ (job.progress * 100) | int }}%"></div>
     </div>
-    <span class="progress-text">{{ (job.progress * 100) | int }}%</span>
     <p class="job-message">{{ job.message }}</p>
     {% if job.error %}
     <p class="job-error">{{ job.error }}</p>
