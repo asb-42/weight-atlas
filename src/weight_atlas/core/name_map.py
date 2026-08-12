@@ -151,6 +151,22 @@ _GGUF_MOE_RULES: list[tuple[re.Pattern[str], str | None]] = [
     (re.compile(r"blk\.\d+\.ffn_down_shexp"), "mlp_down"),  # Shared expert down
 ]
 
+# VLM (vision-language) tensors — mapped as non-layer so the vision tower never
+# collides with language-model layers in the raster. Covers Qwen3/Kimi-style
+# GGUF vision towers (v.blk.N.attn_out, v.blk.N.ln1/ln2, ...) and the
+# multimodal projector (mm.N.weight).
+_VLM_RULES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"^v\.blk\.\d+\.attn_out"), "vision_o"),
+    (re.compile(r"^v\.blk\.\d+\.ln[12]"), "vision_norm"),
+    (re.compile(r"^v\.blk\.\d+\.mlp\.fc[01]"), "vision_mlp"),
+    (re.compile(r"^v\.blk\.\d+"), "vision"),
+    (re.compile(r"^v\.patch_embed"), "vision_patch_embed"),
+    (re.compile(r"^v\.pos_embed"), "vision_pos_emb"),
+    (re.compile(r"^v\.cls"), "vision"),
+    (re.compile(r"^v\.(?!blk\.)"), "vision"),
+    (re.compile(r"^mm\.\d+"), "mm_projector"),
+]
+
 # Layer index extraction patterns
 _LAYER_RE = re.compile(r"layers?\.(\d+)")
 _GGUF_LAYER_RE = re.compile(r"blk\.(\d+)")
@@ -162,9 +178,15 @@ _EXPERT_RE = re.compile(r"mlp\.experts\.(\d+)\.(gate|up|down)_proj")
 def map_name(name: str) -> tuple[int | None, str]:
     """Return (layer_index, slot) for a tensor name.
 
-    ``layer_index`` is ``None`` for non-layer tensors (embed, lm_head).
-    Supports HuggingFace, GGUF, and MoE naming conventions.
+    ``layer_index`` is ``None`` for non-layer tensors (embed, lm_head, VLM
+    vision/projector). Supports HuggingFace, GGUF, and MoE naming conventions.
     """
+    # VLM (vision-language) tensors first: they are non-layer, so the vision
+    # tower (v.blk.N.*) never collides with language-model layers in the raster.
+    for pat, slot in _VLM_RULES:
+        if pat.search(name):
+            return None, slot
+
     # Try HuggingFace layer pattern first
     m = _LAYER_RE.search(name)
     if m:

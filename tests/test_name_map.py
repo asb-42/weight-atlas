@@ -21,11 +21,55 @@ from weight_atlas.core.name_map import map_name
         ("model.layers.0.post_attention_layernorm.weight", "norm_mlp"),
         ("model.embed_tokens.weight", "embed"),
         ("lm_head.weight", "lm_head"),
+        ("blk.0.attn_q_norm.weight", "attn_q_norm"),
+        ("blk.0.attn_k_norm.weight", "attn_k_norm"),
+        ("blk.0.attn_q.weight", "attn_q"),
+        ("blk.0.attn_k.weight", "attn_k"),
+        ("blk.0.attn_v.weight", "attn_v"),
+        ("blk.0.attn_output.weight", "attn_o"),
+        ("blk.0.ffn_gate.weight", "mlp_gate"),
+        ("blk.0.ffn_up.weight", "mlp_up"),
+        ("blk.0.ffn_down.weight", "mlp_down"),
+        ("blk.0.attn_norm.weight", "norm_attn"),
+        ("blk.0.ffn_norm.weight", "norm_mlp"),
+        ("token_embd.weight", "embed"),
+        ("output.weight", "lm_head"),
+        ("blk.0.attn_gate.weight", "attn_gate"),
+        ("blk.0.post_attention_norm.weight", "norm_mlp"),
+        ("blk.0.ssm_a", "ssm_a"),
+        ("blk.0.ssm_alpha.weight", "ssm_alpha"),
+        ("blk.0.ssm_beta.weight", "ssm_beta"),
+        ("blk.0.ssm_conv1d.weight", "ssm_conv1d"),
+        ("blk.0.ssm_dt.bias", "ssm_dt"),
+        ("blk.0.ssm_norm.weight", "ssm_norm"),
+        ("blk.0.ssm_out.weight", "ssm_out"),
     ],
 )
 def test_slot_mapping(name, expected_slot):
     layer, slot = map_name(name)
     assert slot == expected_slot
+
+
+@pytest.mark.parametrize(
+    "name,expected_slot",
+    [
+        ("v.blk.0.attn_out.weight", "vision_o"),
+        ("v.blk.0.attn_out.bias", "vision_o"),
+        ("v.blk.0.ln1.weight", "vision_norm"),
+        ("v.blk.0.ln2.bias", "vision_norm"),
+        ("v.blk.5.mlp.fc0.weight", "vision_mlp"),
+        ("v.blk.5.other.weight", "vision"),
+        ("v.patch_embed.weight", "vision_patch_embed"),
+        ("v.pos_embed.weight", "vision_pos_emb"),
+        ("mm.0.weight", "mm_projector"),
+        ("mm.2.weight", "mm_projector"),
+    ],
+)
+def test_vlm_mapping(name, expected_slot):
+    """VLM (vision-language) tensors map to vision/projector slots, non-layer."""
+    layer, slot = map_name(name)
+    assert slot == expected_slot
+    assert layer is None, "VLM tensors must not collide with language-model layers"
 
 
 def test_layer_index_extracted():

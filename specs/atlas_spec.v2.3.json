@@ -9,7 +9,7 @@
              "norm_attn","norm_mlp","expert","shared_expert","router","lm_head",
              "ssm_a","ssm_alpha","ssm_beta","ssm_conv1d","ssm_dt","ssm_norm","ssm_out",
              "vision_qkv","vision_o","vision_norm","vision_mlp","vision_pos_emb","vision_patch_embed",
-             "mm_projector","other"],
+             "vision","mm_projector","other"],
   "channels": {
     "height": {"stat": "spectral_norm",  "pre": "log1p", "scale": {"type": "rank_scale", "per_column": true}},
     "tint":   {"stat": "stable_rank",    "pre": "log1p", "scale": {"type": "robust_scale", "lower": 0.01, "upper": 0.99}},
