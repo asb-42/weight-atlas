@@ -133,48 +133,52 @@ def check_supported(ggml_type: int) -> None:
         )
 
 
+# Optional official gguf library — imported once at module load. Used only for
+# quant types without a self-contained pure-numpy implementation. None when the
+# package is not installed.
+try:
+    import gguf as _gguf
+except ImportError:  # pragma: no cover - optional dependency
+    _gguf = None
+
+# Quant types that require the official gguf library (no pure-numpy fallback).
+_GGUF_ONLY = {
+    GGML_TYPE_Q4_1,
+    GGML_TYPE_Q5_0,
+    GGML_TYPE_Q5_1,
+    GGML_TYPE_Q8_1,
+    GGML_TYPE_Q2_K,
+    GGML_TYPE_Q3_K,
+    GGML_TYPE_Q4_K,
+    GGML_TYPE_Q5_K,
+    GGML_TYPE_Q6_K,
+    GGML_TYPE_TQ1_0,
+    GGML_TYPE_TQ2_0,
+    GGML_TYPE_MXFP4,
+    GGML_TYPE_NVFP4,
+}
+
+
 def dequantize(tensor_data: bytes, ggml_type: int) -> np.ndarray:
     """Dequantize a tensor to float32.
 
-    Uses the official gguf library for dequantization when available.
+    Uses the official gguf library for quant types that need it (``_GGUF_ONLY``)
+    and self-contained pure-numpy implementations for the rest (F32/F16/BF16/
+    Q8_0/Q4_0/Q8_K/Q1_0), so the module works without the ``gguf`` package.
+    Genuine dequantization errors are re-raised, never silently swallowed.
     """
     check_supported(ggml_type)
 
-    # Try using the official gguf library for dequantization
-    try:
-        import gguf
-        # Map our type constants to gguf's GGMLQuantizationType enum
-        gguf_type_map = {
-            GGML_TYPE_F32: gguf.GGMLQuantizationType.F32,
-            GGML_TYPE_F16: gguf.GGMLQuantizationType.F16,
-            GGML_TYPE_BF16: gguf.GGMLQuantizationType.BF16,
-            GGML_TYPE_Q8_0: gguf.GGMLQuantizationType.Q8_0,
-            GGML_TYPE_Q4_0: gguf.GGMLQuantizationType.Q4_0,
-            GGML_TYPE_Q2_K: gguf.GGMLQuantizationType.Q2_K,
-            GGML_TYPE_Q3_K: gguf.GGMLQuantizationType.Q3_K,
-            GGML_TYPE_Q4_K: gguf.GGMLQuantizationType.Q4_K,
-            GGML_TYPE_Q5_K: gguf.GGMLQuantizationType.Q5_K,
-            GGML_TYPE_Q6_K: gguf.GGMLQuantizationType.Q6_K,
-            GGML_TYPE_Q8_K: gguf.GGMLQuantizationType.Q8_K,
-        }
-        if ggml_type in gguf_type_map:
-            gguf_qtype = gguf_type_map[ggml_type]
-            # Get block byte size from gguf
-            if hasattr(gguf, 'GGML_QUANT_SIZES'):
-                quant_sizes = gguf.GGML_QUANT_SIZES.get(gguf_qtype)
-                block_bytes = quant_sizes[1] if quant_sizes else 4
-            else:
-                block_bytes = 4
+    if ggml_type in _GGUF_ONLY:
+        if _gguf is None:
+            name = get_type_name(ggml_type)
+            raise ImportError(
+                f"GGUF quantization type {name} requires the 'gguf' package. "
+                "Install it with: pip install gguf"
+            )
+        return _dequant_with_gguf(tensor_data, ggml_type)
 
-            arr = np.frombuffer(tensor_data, dtype=np.uint8)
-            if block_bytes > 1:
-                blocks = arr.reshape(-1, block_bytes)
-                return gguf.dequantize(blocks, gguf_qtype).astype(np.float32).flatten()
-            return gguf.dequantize(arr, gguf_qtype).astype(np.float32).flatten()
-    except (ImportError, AttributeError, Exception):
-        pass
-
-    # Fallback to custom implementations
+    # Self-contained pure-numpy path (never requires gguf).
     if ggml_type == GGML_TYPE_F32:
         return _dequant_f32(tensor_data)
     if ggml_type == GGML_TYPE_F16:
@@ -185,34 +189,8 @@ def dequantize(tensor_data: bytes, ggml_type: int) -> np.ndarray:
         return _dequant_q8_0(tensor_data)
     if ggml_type == GGML_TYPE_Q4_0:
         return _dequant_q4_0(tensor_data)
-    if ggml_type == GGML_TYPE_Q2_K:
-        return _dequant_q2_k(tensor_data)
-    if ggml_type == GGML_TYPE_Q3_K:
-        return _dequant_q3_k(tensor_data)
-    if ggml_type == GGML_TYPE_Q4_K:
-        return _dequant_q4_k(tensor_data)
-    if ggml_type == GGML_TYPE_Q5_K:
-        return _dequant_q5_k(tensor_data)
-    if ggml_type == GGML_TYPE_Q6_K:
-        return _dequant_q6_k(tensor_data)
     if ggml_type == GGML_TYPE_Q8_K:
         return _dequant_q8_k(tensor_data)
-    if ggml_type == GGML_TYPE_Q4_1:
-        return _dequant_q4_1(tensor_data)
-    if ggml_type == GGML_TYPE_Q5_0:
-        return _dequant_q5_0(tensor_data)
-    if ggml_type == GGML_TYPE_Q5_1:
-        return _dequant_q5_1(tensor_data)
-    if ggml_type == GGML_TYPE_Q8_1:
-        return _dequant_q8_1(tensor_data)
-    if ggml_type == GGML_TYPE_TQ1_0:
-        return _dequant_tq1_0(tensor_data)
-    if ggml_type == GGML_TYPE_TQ2_0:
-        return _dequant_tq2_0(tensor_data)
-    if ggml_type == GGML_TYPE_MXFP4:
-        return _dequant_mxfp4(tensor_data)
-    if ggml_type == GGML_TYPE_NVFP4:
-        return _dequant_nvfp4(tensor_data)
     if ggml_type == GGML_TYPE_Q1_0:
         return _dequant_q1_0(tensor_data)
 
@@ -220,53 +198,33 @@ def dequantize(tensor_data: bytes, ggml_type: int) -> np.ndarray:
     raise ValueError(f"Unsupported GGUF quantization type: {name}")
 
 
-def _dequant_q4_1(data: bytes) -> np.ndarray:
-    """Q4_1: block-wise dequantization (32-element blocks, f16 scale + min, 4-bit quants)."""
-    import gguf
-    arr = np.frombuffer(data, dtype=np.uint8).reshape(-1, 20)
-    return gguf.dequantize(arr, gguf.GGMLQuantizationType.Q4_1).astype(np.float32).flatten()
+def _dequant_with_gguf(tensor_data: bytes, ggml_type: int) -> np.ndarray:
+    """Dequantize via the official gguf library.
 
-
-def _dequant_q5_0(data: bytes) -> np.ndarray:
-    """Q5_0: block-wise dequantization (32-element blocks, f16 scale, 5-bit quants)."""
-    import gguf
-    arr = np.frombuffer(data, dtype=np.uint8).reshape(-1, 18)
-    return gguf.dequantize(arr, gguf.GGMLQuantizationType.Q5_0).astype(np.float32).flatten()
-
-
-def _dequant_q5_1(data: bytes) -> np.ndarray:
-    """Q5_1: block-wise dequantization (32-element blocks, f16 scale + min, 5-bit quants)."""
-    import gguf
-    arr = np.frombuffer(data, dtype=np.uint8).reshape(-1, 22)
-    return gguf.dequantize(arr, gguf.GGMLQuantizationType.Q5_1).astype(np.float32).flatten()
-
-
-def _dequant_q8_1(data: bytes) -> np.ndarray:
-    """Q8_1: block-wise dequantization (32-element blocks, f16 scale + min, 8-bit quants)."""
-    import gguf
-    arr = np.frombuffer(data, dtype=np.uint8).reshape(-1, 36)
-    return gguf.dequantize(arr, gguf.GGMLQuantizationType.Q8_1).astype(np.float32).flatten()
-
-
-def _dequant_tq1_0(data: bytes) -> np.ndarray:
-    """TQ1_0: ternary quantization (256 weights per block)."""
-    import gguf
-    arr = np.frombuffer(data, dtype=np.uint8).reshape(-1, 18)
-    return gguf.dequantize(arr, gguf.GGMLQuantizationType.TQ1_0).astype(np.float32).flatten()
-
-
-def _dequant_mxfp4(data: bytes) -> np.ndarray:
-    """MXFP4: 4-bit floating point (256 weights per block)."""
-    import gguf
-    arr = np.frombuffer(data, dtype=np.uint8).reshape(-1, 18)
-    return gguf.dequantize(arr, gguf.GGMLQuantizationType.MXFP4).astype(np.float32).flatten()
-
-
-def _dequant_nvfp4(data: bytes) -> np.ndarray:
-    """NVFP4: 4-bit floating point (256 weights per block)."""
-    import gguf
-    arr = np.frombuffer(data, dtype=np.uint8).reshape(-1, 18)
-    return gguf.dequantize(arr, gguf.GGMLQuantizationType.NVFP4).astype(np.float32).flatten()
+    Block size is taken from ``gguf.GGML_QUANT_SIZES`` (authoritative) rather
+    than hardcoded per-type constants, so a gguf library upgrade cannot silently
+    change the layout. Raises if the type is not implemented by gguf.
+    """
+    qtype = _gguf.GGMLQuantizationType(ggml_type)
+    quant_sizes = _gguf.GGML_QUANT_SIZES.get(qtype)
+    if quant_sizes is None:
+        raise ValueError(
+            f"gguf library has no block layout for {get_type_name(ggml_type)}"
+        )
+    _, block_bytes = quant_sizes
+    arr = np.frombuffer(tensor_data, dtype=np.uint8)
+    try:
+        if block_bytes > 1:
+            blocks = arr.reshape(-1, block_bytes)
+            return _gguf.dequantize(blocks, qtype).astype(np.float32).flatten()
+        return _gguf.dequantize(arr, qtype).astype(np.float32).flatten()
+    except NotImplementedError as exc:
+        # The installed gguf library may not implement every quant type; surface
+        # a clear error instead of silently producing garbage.
+        raise ValueError(
+            f"gguf library does not implement dequantization for "
+            f"{get_type_name(ggml_type)}"
+        ) from exc
 
 
 def _dequant_q1_0(data: bytes) -> np.ndarray:
@@ -291,13 +249,6 @@ def _dequant_q1_0(data: bytes) -> np.ndarray:
     # Apply scales
     result = (scales[:, np.newaxis] * (2.0 * quants - 1.0)).flatten()
     return result
-
-
-def _dequant_tq2_0(data: bytes) -> np.ndarray:
-    """TQ2_0: ternary quantization (256 weights per block)."""
-    import gguf
-    arr = np.frombuffer(data, dtype=np.uint8).reshape(-1, 18)
-    return gguf.dequantize(arr, gguf.GGMLQuantizationType.TQ2_0).astype(np.float32).flatten()
 
 
 def _dequant_f32(data: bytes) -> np.ndarray:
@@ -347,41 +298,6 @@ def _dequant_q4_0(data: bytes) -> np.ndarray:
             quants[j * 2 + 1] = float(high) - 8.0
         result[i * 32:(i + 1) * 32] = quants * scale
     return result
-
-
-def _dequant_q2_k(data: bytes) -> np.ndarray:
-    """Q2_K: block-wise dequantization (256 weights per block, 84 bytes)."""
-    import gguf
-    arr = np.frombuffer(data, dtype=np.uint8).reshape(-1, 84)
-    return gguf.dequantize(arr, gguf.GGMLQuantizationType.Q2_K).astype(np.float32).flatten()
-
-
-def _dequant_q3_k(data: bytes) -> np.ndarray:
-    """Q3_K: block-wise dequantization (256 weights per block, 110 bytes)."""
-    import gguf
-    arr = np.frombuffer(data, dtype=np.uint8).reshape(-1, 110)
-    return gguf.dequantize(arr, gguf.GGMLQuantizationType.Q3_K).astype(np.float32).flatten()
-
-
-def _dequant_q4_k(data: bytes) -> np.ndarray:
-    """Q4_K: block-wise dequantization (256 weights per block, 144 bytes)."""
-    import gguf
-    arr = np.frombuffer(data, dtype=np.uint8).reshape(-1, 144)
-    return gguf.dequantize(arr, gguf.GGMLQuantizationType.Q4_K).astype(np.float32).flatten()
-
-
-def _dequant_q5_k(data: bytes) -> np.ndarray:
-    """Q5_K: block-wise dequantization (256 weights per block, 176 bytes)."""
-    import gguf
-    arr = np.frombuffer(data, dtype=np.uint8).reshape(-1, 176)
-    return gguf.dequantize(arr, gguf.GGMLQuantizationType.Q5_K).astype(np.float32).flatten()
-
-
-def _dequant_q6_k(data: bytes) -> np.ndarray:
-    """Q6_K: block-wise dequantization (256 weights per block, 210 bytes)."""
-    import gguf
-    arr = np.frombuffer(data, dtype=np.uint8).reshape(-1, 210)
-    return gguf.dequantize(arr, gguf.GGMLQuantizationType.Q6_K).astype(np.float32).flatten()
 
 
 def _dequant_q8_k(data: bytes) -> np.ndarray:

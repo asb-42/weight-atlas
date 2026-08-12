@@ -53,17 +53,28 @@ class _SharedExpertDequant:
     ``_SharedExpertDequant``, so a layer with ``n_experts`` experts performs one
     full dequantization instead of ``n_experts`` (previously each sub-handle
     re-dequantized the whole 3D tensor on every ``load()`` — quadratic for MoE).
+
+    Shape convention: the gguf library reports ``tensor.shape`` with the expert
+    axis LAST (e.g. ``(hidden, hidden, n_experts)``) while ``tensor.data.shape``
+    (the actual memory layout) has the expert axis FIRST (e.g.
+    ``(n_experts, hidden, hidden)``). Everything here is derived from
+    ``actual_shape`` (the data layout) and experts are sliced along axis 0, so
+    slicing stays correct regardless of the header/report shape ordering.
     """
 
     def __init__(
         self,
         data: np.ndarray,
         ggml_type: int,
-        shape: tuple[int, ...],
+        actual_shape: tuple[int, ...],
     ) -> None:
+        if len(actual_shape) != 3:
+            raise ValueError(
+                f"expected a 3D stacked expert tensor, got shape {actual_shape}"
+            )
         self._data = data
         self._ggml_type = ggml_type
-        self._shape = tuple(shape)
+        self._shape = tuple(actual_shape)
         self._arr: np.ndarray | None = None
 
     def _ensure(self) -> np.ndarray:
@@ -73,8 +84,8 @@ class _SharedExpertDequant:
         return self._arr
 
     def slice(self, expert_id: int) -> np.ndarray:
-        """Return the 2D float32 slice for one expert (last axis)."""
-        return self._ensure()[:, :, expert_id]
+        """Return the 2D float32 slice for one expert (axis 0 = expert axis)."""
+        return self._ensure()[expert_id, :, :]
 
 
 @register_loader("gguf")
@@ -108,7 +119,7 @@ class GGUFLoader:
                     # Split into per-expert sub-handles sharing one dequantization
                     n_experts = actual_shape[0]
                     expert_shape = actual_shape[1:]  # (hidden, hidden)
-                    shared = _SharedExpertDequant(data, ggml_type, shape)
+                    shared = _SharedExpertDequant(data, ggml_type, actual_shape)
                     for expert_id in range(n_experts):
                         handles.append(
                             TensorHandle(

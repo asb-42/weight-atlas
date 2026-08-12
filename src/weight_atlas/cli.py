@@ -88,23 +88,22 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
     artefacts = run_scan(args.path, args.out, spec, loader_id=args.loader)
 
-    # Check mapping coverage and warn if < 80%
-    from weight_atlas.core.registry import get_loader
-    from weight_atlas.core.types import detect_loader
-    from weight_atlas.scan import _build_fingerprint
-    loader_id = args.loader or detect_loader(args.path)
-    loader = get_loader(loader_id)()
-    handles = list(loader.open(args.path))
-    from weight_atlas.scan import _make_handles
-    stats = [_make_handles(h) for h in handles]
-    fp = _build_fingerprint(stats, spec, loader_id, handles)
-    mc = fp.get("mapping_coverage", {})
-    ratio = mc.get("ratio", 1.0)
-    if ratio < 0.8:
-        print(f"WARNING: mapping coverage {ratio:.1%} < 80% "
-              f"({mc.get('in_slots', 0)}/{mc.get('total', 0)} tensors in slots). "
-              f"Run 'weight-atlas diagnose {args.path}' for details.",
-              file=sys.stderr)
+    # Warn when mapping coverage is poor. The fingerprint was already written by
+    # run_scan — do not re-open the loader or recompute statistics here.
+    fp_path = args.out / "fingerprint.json"
+    if fp_path.exists():
+        with open(fp_path) as f:
+            fp = json.load(f)
+        mc = fp.get("mapping_coverage", {})
+        ratio = float(mc.get("in_slots", 1.0))
+        if ratio < 0.8:
+            print(
+                f"WARNING: mapping coverage {ratio:.1%} < 80% "
+                f"({mc.get('unmapped', 0)} of {fp.get('model', {}).get('n_tensors', 0)} "
+                "tensors unmapped). Run 'weight-atlas diagnose "
+                f"{args.path}' for details.",
+                file=sys.stderr,
+            )
 
     for a in artefacts:
         print(a)

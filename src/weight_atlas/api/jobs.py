@@ -137,7 +137,26 @@ class JobQueue:
         )
 
     def start(self) -> None:
-        """Start the background worker thread."""
+        """Start the background worker thread, recovering interrupted jobs.
+
+        Jobs persisted as ``queued`` (never picked up) are re-enqueued, and
+        jobs left as ``running`` by a crash/restart are reset to ``queued`` so
+        they re-run idempotently (scan/compare overwrite their own outputs).
+        """
+        with sqlite3.connect(self._db_path) as conn:
+            rows = conn.execute(
+                "SELECT job_id, status FROM jobs WHERE status IN (?, ?)",
+                (JobStatus.QUEUED.value, JobStatus.RUNNING.value),
+            ).fetchall()
+            now = self._now()
+            for job_id, status in rows:
+                if status == JobStatus.RUNNING.value:
+                    conn.execute(
+                        "UPDATE jobs SET status = ?, message = ?, updated_at = ? WHERE job_id = ?",
+                        (JobStatus.QUEUED.value, "re-queued after restart", now, job_id),
+                    )
+                self._queue.put(job_id)
+
         self._worker = threading.Thread(target=self._run, daemon=True)
         self._worker.start()
 

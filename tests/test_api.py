@@ -205,6 +205,32 @@ class TestJobQueueDB:
         jobs = queue.list_jobs()
         assert len(jobs) == 1
 
+    def test_restart_recovers_queued_job(self, tmp_path: Path, spec_path: Path, fake_model: Path) -> None:
+        """A job persisted as queued must be re-enqueued when the queue restarts.
+
+        Regression test: queued-but-unstarted jobs were stranded after a server
+        restart because the in-memory queue was empty and never rehydrated.
+        """
+        import time
+
+        db_path = tmp_path / "restart.db"
+        q1 = JobQueue(db_path, on_job=lambda j: None)
+        job = q1.submit(fake_model, tmp_path / "out", spec_path)
+        # NOTE: q1.start() is deliberately never called — simulating a crash
+        # before the worker consumed the queued job.
+        assert job.status == JobStatus.QUEUED
+
+        ran: list[str] = []
+        q2 = JobQueue(db_path, on_job=lambda j: None)
+        q2._execute = lambda j: ran.append(j.job_id)  # noqa: SLF001 — test hook
+        q2.start()
+        try:
+            time.sleep(0.4)
+        finally:
+            q2.stop()
+
+        assert job.job_id in ran, "queued job was not re-enqueued after restart"
+
 
 class TestArtefactRoute:
     def test_artefact_route_serves_png(self, client: TestClient, fake_model: Path, tmp_path: Path) -> None:
