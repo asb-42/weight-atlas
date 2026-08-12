@@ -2751,15 +2751,21 @@ name = "weight-atlas"
 version = "0.2.0"
 source = { editable = "." }
 dependencies = [
+    { name = "fastapi" },
+    { name = "gguf" },
+    { name = "httpx" },
+    { name = "jinja2" },
     { name = "matplotlib" },
     { name = "ml-dtypes" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "python-multipart" },
     { name = "safetensors" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "tifffile", version = "2026.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "tifffile", version = "2026.7.31", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.optional-dependencies]
@@ -2772,18 +2778,8 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
-gguf = [
-    { name = "gguf" },
-]
 umap = [
     { name = "umap-learn" },
-]
-web = [
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "jinja2" },
-    { name = "python-multipart" },
-    { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.dev-dependencies]
@@ -2793,16 +2789,16 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.100" },
-    { name = "gguf", marker = "extra == 'gguf'", specifier = ">=0.10" },
-    { name = "httpx", marker = "extra == 'web'", specifier = ">=0.24" },
-    { name = "jinja2", marker = "extra == 'web'", specifier = ">=3.1" },
+    { name = "fastapi", specifier = ">=0.100" },
+    { name = "gguf", specifier = ">=0.19.0" },
+    { name = "httpx", specifier = ">=0.24" },
+    { name = "jinja2", specifier = ">=3.1" },
     { name = "matplotlib", specifier = ">=3.7" },
     { name = "ml-dtypes", specifier = ">=0.5.4" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.9" },
     { name = "numpy", specifier = ">=1.24" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7" },
-    { name = "python-multipart", marker = "extra == 'web'", specifier = ">=0.0.6" },
+    { name = "python-multipart", specifier = ">=0.0.6" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
     { name = "safetensors", specifier = ">=0.4" },
     { name = "scipy", specifier = ">=1.10" },
@@ -2810,9 +2806,9 @@ requires-dist = [
     { name = "torch", marker = "extra == 'activity'", specifier = ">=2.0" },
     { name = "transformers", marker = "extra == 'activity'", specifier = ">=4.30" },
     { name = "umap-learn", marker = "extra == 'umap'", specifier = ">=0.5" },
-    { name = "uvicorn", extras = ["standard"], marker = "extra == 'web'", specifier = ">=0.23" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.23" },
 ]
-provides-extras = ["web", "blender", "gguf", "umap", "activity", "dev"]
+provides-extras = ["blender", "umap", "activity", "dev"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "ruff", specifier = ">=0.16.1" }]

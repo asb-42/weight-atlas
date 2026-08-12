@@ -99,7 +99,14 @@ class GGUFLoader:
     format_id = "gguf"
 
     def open(self, path: Path) -> list[TensorHandle]:
-        from gguf import GGUFReader
+        try:
+            from gguf import GGUFReader
+        except ImportError as exc:  # pragma: no cover - gguf is a core dep
+            raise ImportError(
+                "GGUF model scanning requires the 'gguf' package. Install it with "
+                "`pip install gguf` (it is a core weight-atlas dependency, so "
+                "reinstall the project to get it)."
+            ) from exc
 
         files = _discover_gguf_files(path)
         handles: list[TensorHandle] = []
