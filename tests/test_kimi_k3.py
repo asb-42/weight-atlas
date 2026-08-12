@@ -126,11 +126,11 @@ def test_kimi_attention_and_mla_mapping():
 
 
 def test_kimi_vision_and_projector_mapping():
-    assert map_name("vision_tower.encoder.blocks.5.wqkv.weight") == (None, "vision_qkv")
-    assert map_name("vision_tower.encoder.blocks.5.wo.weight") == (None, "vision_o")
-    assert map_name("vision_tower.encoder.blocks.5.norm0.weight") == (None, "vision_norm")
-    assert map_name("vision_tower.encoder.blocks.5.mlp.fc1.weight") == (None, "vision_mlp")
-    assert map_name("vision_tower.patch_embed.pos_emb.weight") == (None, "vision_pos_emb")
+    assert map_name("vision_tower.encoder.blocks.5.wqkv.weight") == (None, "v_attn_qkv")
+    assert map_name("vision_tower.encoder.blocks.5.wo.weight") == (None, "v_attn_o")
+    assert map_name("vision_tower.encoder.blocks.5.norm0.weight") == (None, "v_attn_norm")
+    assert map_name("vision_tower.encoder.blocks.5.mlp.fc1.weight") == (None, "v_mlp")
+    assert map_name("vision_tower.patch_embed.pos_emb.weight") == (None, "v_pos_emb")
     assert map_name("mm_projector.proj.0.weight") == (None, "mm_projector")
 
 

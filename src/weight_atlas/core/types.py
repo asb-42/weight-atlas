@@ -56,6 +56,7 @@ class TensorStats:
     stable_rank: float = 0.0
     kurtosis: float = 0.0
     sparsity: float = 0.0
+    kernel_norm: float = 0.0
     expert_id: int | None = None  # For MoE expert tensors
 
 
@@ -104,6 +105,8 @@ class AtlasSpec:
     blender: dict[str, Any] = field(default_factory=dict)
     compare: dict[str, Any] = field(default_factory=dict)
     embedding: dict[str, Any] = field(default_factory=dict)
+    vision_slots: list[str] = field(default_factory=list)
+    vision_channels: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_json(cls, path: Path) -> AtlasSpec:
@@ -118,6 +121,8 @@ class AtlasSpec:
             seeds=dict(raw["seeds"]),
             blender=dict(raw.get("blender", {})),
             compare=dict(raw.get("compare", {})),
+            vision_slots=list(raw.get("vision_slots", [])),
+            vision_channels=dict(raw.get("vision_channels", {})),
         )
 
     def channel_stat(self, channel: str) -> str:

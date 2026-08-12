@@ -13,14 +13,25 @@ import numpy as np
 from weight_atlas.core.name_map import map_name
 from weight_atlas.core.registry import get_loader
 from weight_atlas.core.types import AtlasSpec, TensorHandle, TensorStats, detect_loader
-from weight_atlas.fields.rasterizer import detect_moe, rasterize, rasterize_expert_panels
+from weight_atlas.fields.rasterizer import (
+    detect_moe,
+    detect_vision,
+    rasterize,
+    rasterize_expert_panels,
+    rasterize_vision,
+)
 from weight_atlas.fields.scaling import apply_scale, log1p
 from weight_atlas.fields.tif_io import write_tif
 from weight_atlas.loaders import (
     gguf_loader,  # noqa: F401 — triggers registration
     safetensors_loader,  # noqa: F401 — triggers registration
 )
-from weight_atlas.stats.norms import EffectiveRank, FrobeniusNorm, SpectralNorm
+from weight_atlas.stats.norms import (
+    EffectiveRank,
+    FrobeniusNorm,
+    KernelNorm,
+    SpectralNorm,
+)
 from weight_atlas.stats.shape_moments import Kurtosis, Sparsity
 from weight_atlas.stats.stable_rank import StableRank
 
@@ -44,6 +55,7 @@ def _make_handles(tensor: TensorHandle) -> TensorStats:
         stable_rank=StableRank().compute(tensor),
         kurtosis=Kurtosis().compute(tensor),
         sparsity=Sparsity().compute(tensor),
+        kernel_norm=KernelNorm().compute(tensor),
         expert_id=tensor.expert_id,
     )
 
@@ -115,6 +127,7 @@ def scan(
         f.write("\n")
 
     artefacts: list[Path] = [fp_path]
+    fields_for_diag: dict[str, np.ndarray] = {}
     n_channels = len(spec.channels)
     for ci, (channel, ch_spec) in enumerate(spec.channels.items()):
         chan_lo = 0.46 + 0.34 * (ci / n_channels)
@@ -160,6 +173,38 @@ def scan(
             panel_smooth_path = out / f"field_expert_{panel.slot}_{channel}_smooth.tif"
             write_tif(panel_smooth_path, smoothed_panel)
             artefacts.append(panel_smooth_path)
+
+    # Vision tower fields (VLM models): a separate sheet with its own slot
+    # taxonomy and statistics, so multimodal models show a distinct fingerprint
+    # instead of having their vision tensors silently dropped.
+    if spec.vision_slots and spec.vision_channels:
+        from weight_atlas.fields.smoothing import smooth, upsample
+
+        n_vis = len(spec.vision_channels)
+        for vi, (channel, ch_spec) in enumerate(spec.vision_channels.items()):
+            vis_lo = 0.80 + 0.05 * (vi / n_vis)
+            stat_key = ch_spec["stat"]
+            _report(vis_lo, f"Rasterizing vision {channel} field ({stat_key})...")
+            vision_field = rasterize_vision(stats, spec, stat_key)
+            if vision_field is None:
+                continue  # text-only model — no vision tensors
+            field_name = f"vision_{channel}"
+            raw_path = out / f"field_{field_name}_raw.tif"
+            write_tif(raw_path, vision_field.data)
+            artefacts.append(raw_path)
+
+            pre = ch_spec.get("pre")
+            data = vision_field.data
+            if pre == "log1p":
+                data = log1p(data)
+            scaled = apply_scale(data, ch_spec["scale"])
+            up = upsample(scaled, int(spec.grid["upsample"]))
+            smoothed = smooth(up, float(spec.grid["smooth_sigma"]))
+            smooth_path = out / f"field_{field_name}_smooth.tif"
+            write_tif(smooth_path, smoothed)
+            artefacts.append(smooth_path)
+
+            fields_for_diag[field_name] = vision_field.data
 
     # Embedding projection (PCA or UMAP)
     embedding_spec = getattr(spec, 'embedding', {})
@@ -265,7 +310,6 @@ def scan(
 
     # Degeneration checks on raw fields
     _report(0.93, "Checking field degenerations...")
-    fields_for_diag = {}
     for channel in spec.channels:
         raw_path = out / f"field_{channel}_raw.tif"
         if raw_path.exists():
@@ -327,6 +371,7 @@ def _build_fingerprint(
             "stable_rank": ts.stable_rank,
             "kurtosis": ts.kurtosis,
             "sparsity": ts.sparsity,
+            "kernel_norm": ts.kernel_norm,
         }
         # Add ggml_type if present
         if ts.name in ggml_types:
@@ -358,6 +403,14 @@ def _build_fingerprint(
     moe_info = detect_moe(stats)
     if moe_info:
         out["model"]["moe"] = moe_info
+
+    # Add vision-tower info (VLM models) — mapped tensors, block count, and the
+    # number of global tensors (patch_embed / pos_embed / projector). Text-only
+    # models get no ``model.vision`` block.
+    vision_info = detect_vision(stats)
+    if vision_info:
+        out["model"]["vision"] = vision_info
+        out["mapping_coverage"]["vision_tensors"] = vision_info["n_tensors"]
 
     return out
 

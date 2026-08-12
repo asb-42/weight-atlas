@@ -3,10 +3,12 @@
 Convention: regex rules applied in order; first match wins. Unknown names
 map to slot ``"other"`` (never silently dropped).
 
-Supports three naming conventions:
+Supports several naming conventions:
 - HuggingFace: model.layers.N.self_attn.q_proj.weight
 - GGUF: blk.N.attn_q.weight
 - MoE (HF): model.layers.N.mlp.experts.{e}.gate_proj.weight
+- VLM vision towers (GGUF v.blk.N.* / HF vision_model / visual / vision_tower)
+  and multimodal projectors, via :func:`map_vision` (own slot taxonomy).
 """
 
 from __future__ import annotations
@@ -63,8 +65,8 @@ _HF_HYBRID_RULES: list[tuple[re.Pattern[str], str]] = [
 
 # Kimi K3 (language_model.model.layers.N.*) rules — applied after base HF rules.
 # Covers MLA (q_a/q_b/kv_a/kv_b), linear-attention/KDA (conv1d, f_a/f_b, b, A_log,
-# dt), hybrid residual branches, the vision tower (blocks.N, non-layer) and the
-# multimodal projector. Ordered so the more specific self_attn sub-branch names win.
+# dt) and hybrid residual branches. The vision tower and multimodal projector
+# are handled by ``_VISION_RULES``/``map_vision`` (checked first).
 _KIMI_RULES: list[tuple[re.Pattern[str], str]] = [
     # MLA (multi-head latent attention) projections
     (re.compile(r"self_attn\.q_a_proj"), "attn_q_a"),
@@ -95,16 +97,6 @@ _KIMI_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"mlp_res_norm"), "mlp_res_norm"),
     (re.compile(r"output_attn_res_proj"), "attn_res_proj"),
     (re.compile(r"output_attn_res_norm"), "attn_res_norm"),
-    # Vision tower (blocks.N → non-layer)
-    (re.compile(r"vision_tower\.encoder\.blocks\.\d+\.wqkv"), "vision_qkv"),
-    (re.compile(r"vision_tower\.encoder\.blocks\.\d+\.wo"), "vision_o"),
-    (re.compile(r"vision_tower\.encoder\.blocks\.\d+\.norm[01]"), "vision_norm"),
-    (re.compile(r"vision_tower\.encoder\.blocks\.\d+\.mlp\.fc[01]"), "vision_mlp"),
-    (re.compile(r"vision_tower\.encoder\.final_layernorm"), "vision_norm"),
-    (re.compile(r"vision_tower\.patch_embed\.pos_emb"), "vision_pos_emb"),
-    (re.compile(r"vision_tower\.patch_embed\.proj"), "vision_patch_embed"),
-    # Multimodal projector
-    (re.compile(r"mm_projector"), "mm_projector"),
 ]
 
 # GGUF-specific rules (applied after HF rules, before fallback)
@@ -151,20 +143,81 @@ _GGUF_MOE_RULES: list[tuple[re.Pattern[str], str | None]] = [
     (re.compile(r"blk\.\d+\.ffn_down_shexp"), "mlp_down"),  # Shared expert down
 ]
 
-# VLM (vision-language) tensors — mapped as non-layer so the vision tower never
-# collides with language-model layers in the raster. Covers Qwen3/Kimi-style
-# GGUF vision towers (v.blk.N.attn_out, v.blk.N.ln1/ln2, ...) and the
-# multimodal projector (mm.N.weight).
-_VLM_RULES: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"^v\.blk\.\d+\.attn_out"), "vision_o"),
-    (re.compile(r"^v\.blk\.\d+\.ln[12]"), "vision_norm"),
-    (re.compile(r"^v\.blk\.\d+\.mlp\.fc[01]"), "vision_mlp"),
-    (re.compile(r"^v\.blk\.\d+"), "vision"),
-    (re.compile(r"^v\.patch_embed"), "vision_patch_embed"),
-    (re.compile(r"^v\.pos_embed"), "vision_pos_emb"),
-    (re.compile(r"^v\.cls"), "vision"),
-    (re.compile(r"^v\.(?!blk\.)"), "vision"),
-    (re.compile(r"^mm\.\d+"), "mm_projector"),
+# VLM (vision-language) rules. Covers the major vision-tower naming families:
+# - GGUF llama.cpp (``v.blk.N.attn_q``, ``v.patch_embed``, ``mm.model.mlp.N``)
+# - HF Qwen3-VL / CLIP-style (``vision_model.encoder.layers.N.self_attn.*``)
+# - HF Qwen2-VL (``visual.blocks.N.attn.qkv``, ``visual.patch_embed``)
+# - Kimi K3 (``vision_tower.encoder.blocks.N.wqkv``, ``vision_tower.patch_embed``)
+# Each pattern may capture the vision block index in group 1 (then it becomes a
+# row in the vision sheet); patterns without a capture group map to global
+# tensors (patch_embed, pos_embed, projector) that land in the "global" row.
+# Rules are ordered most-specific first; first match wins.
+_VISION_RULES: list[tuple[re.Pattern[str], str]] = [
+    # GGUF llama.cpp vision tower (v.blk.N.*)
+    (re.compile(r"^v\.blk\.(\d+)\.attn_q\."), "v_attn_q"),
+    (re.compile(r"^v\.blk\.(\d+)\.attn_k\."), "v_attn_k"),
+    (re.compile(r"^v\.blk\.(\d+)\.attn_v\."), "v_attn_v"),
+    (re.compile(r"^v\.blk\.(\d+)\.attn_out\."), "v_attn_o"),
+    (re.compile(r"^v\.blk\.(\d+)\.attn_o\."), "v_attn_o"),
+    (re.compile(r"^v\.blk\.(\d+)\.ln1\."), "v_attn_norm"),
+    (re.compile(r"^v\.blk\.(\d+)\.ln2\."), "v_mlp_norm"),
+    (re.compile(r"^v\.blk\.(\d+)\.mlp\.ffn_gate\."), "v_mlp_gate"),
+    (re.compile(r"^v\.blk\.(\d+)\.mlp\.ffn_up\."), "v_mlp_up"),
+    (re.compile(r"^v\.blk\.(\d+)\.mlp\.ffn_down\."), "v_mlp_down"),
+    (re.compile(r"^v\.blk\.(\d+)\.mlp\.fc[12]\."), "v_mlp"),
+    (re.compile(r"^v\.blk\.(\d+)\.mlp\."), "v_mlp"),
+    (re.compile(r"^v\.blk\.(\d+)\.conv"), "v_conv"),
+    (re.compile(r"^v\.blk\.(\d+)\."), "v_other"),
+    (re.compile(r"^v\.patch_embed"), "v_patch_embed"),
+    (re.compile(r"^v\.pos_embed"), "v_pos_emb"),
+    (re.compile(r"^v\.cls"), "v_cls"),
+    (re.compile(r"^v\.conv"), "v_conv"),
+    (re.compile(r"^v\."), "v_other"),
+    # Multimodal projector (GGUF mm.*, HF mm_projector / multi_modal_projector)
+    (re.compile(r"mm\.model\.mlp\.\d+"), "mm_projector"),
+    (re.compile(r"mm\.\d+"), "mm_projector"),
+    (re.compile(r"mm_projector"), "mm_projector"),
+    (re.compile(r"multi_modal_projector"), "mm_projector"),
+    # HF Qwen3-VL / CLIP-style vision_model
+    (re.compile(r"vision_model\.encoder\.layers\.(\d+)\.self_attn\.q_proj"), "v_attn_q"),
+    (re.compile(r"vision_model\.encoder\.layers\.(\d+)\.self_attn\.k_proj"), "v_attn_k"),
+    (re.compile(r"vision_model\.encoder\.layers\.(\d+)\.self_attn\.v_proj"), "v_attn_v"),
+    (re.compile(r"vision_model\.encoder\.layers\.(\d+)\.self_attn\.o_proj"), "v_attn_o"),
+    (re.compile(r"vision_model\.encoder\.layers\.(\d+)\.self_attn\.qkv"), "v_attn_qkv"),
+    (re.compile(r"vision_model\.encoder\.layers\.(\d+)\.layer_norm1"), "v_attn_norm"),
+    (re.compile(r"vision_model\.encoder\.layers\.(\d+)\.layer_norm2"), "v_mlp_norm"),
+    (re.compile(r"vision_model\.encoder\.layers\.(\d+)\.mlp\.fc[12]"), "v_mlp"),
+    (re.compile(r"vision_model\.encoder\.layers\.(\d+)\.mlp\."), "v_mlp"),
+    (re.compile(r"vision_model\.encoder\.layers\.(\d+)\."), "v_other"),
+    (re.compile(r"vision_model\.embeddings\.patch_embedding"), "v_patch_embed"),
+    (re.compile(r"vision_model\.embeddings\.position_embedding"), "v_pos_emb"),
+    (re.compile(r"vision_model\.embeddings\.class_embedding"), "v_cls"),
+    (re.compile(r"vision_model\.post_layernorm"), "v_mlp_norm"),
+    (re.compile(r"vision_model\."), "v_other"),
+    # HF Qwen2-VL visual tower
+    (re.compile(r"visual\.blocks\.(\d+)\.attn\.qkv"), "v_attn_qkv"),
+    (re.compile(r"visual\.blocks\.(\d+)\.attn\.proj"), "v_attn_o"),
+    (re.compile(r"visual\.blocks\.(\d+)\.norm1"), "v_attn_norm"),
+    (re.compile(r"visual\.blocks\.(\d+)\.norm2"), "v_mlp_norm"),
+    (re.compile(r"visual\.blocks\.(\d+)\.mlp\.fc[12]"), "v_mlp"),
+    (re.compile(r"visual\.blocks\.(\d+)\.mlp\."), "v_mlp"),
+    (re.compile(r"visual\.blocks\.(\d+)\."), "v_other"),
+    (re.compile(r"visual\.patch_embed"), "v_patch_embed"),
+    (re.compile(r"visual\.rot_pos_emb"), "v_pos_emb"),
+    (re.compile(r"visual\.merger\.\d+"), "mm_projector"),
+    (re.compile(r"visual\."), "v_other"),
+    # Kimi K3 vision tower
+    (re.compile(r"vision_tower\.encoder\.blocks\.(\d+)\.wqkv"), "v_attn_qkv"),
+    (re.compile(r"vision_tower\.encoder\.blocks\.(\d+)\.wo"), "v_attn_o"),
+    (re.compile(r"vision_tower\.encoder\.blocks\.(\d+)\.norm0"), "v_attn_norm"),
+    (re.compile(r"vision_tower\.encoder\.blocks\.(\d+)\.norm1"), "v_mlp_norm"),
+    (re.compile(r"vision_tower\.encoder\.blocks\.(\d+)\.mlp\.fc[01]"), "v_mlp"),
+    (re.compile(r"vision_tower\.encoder\.blocks\.(\d+)\.mlp\."), "v_mlp"),
+    (re.compile(r"vision_tower\.encoder\.blocks\.(\d+)\."), "v_other"),
+    (re.compile(r"vision_tower\.encoder\.final_layernorm"), "v_mlp_norm"),
+    (re.compile(r"vision_tower\.patch_embed\.pos_emb"), "v_pos_emb"),
+    (re.compile(r"vision_tower\.patch_embed"), "v_patch_embed"),
+    (re.compile(r"vision_tower\."), "v_other"),
 ]
 
 # Layer index extraction patterns
@@ -175,17 +228,42 @@ _GGUF_LAYER_RE = re.compile(r"blk\.(\d+)")
 _EXPERT_RE = re.compile(r"mlp\.experts\.(\d+)\.(gate|up|down)_proj")
 
 
+def map_vision(name: str) -> tuple[int | None, str] | None:
+    """Map a VLM tensor to ``(vision_block_index, vision_slot)``.
+
+    ``vision_block_index`` is the block index for per-block tensors (e.g.
+    ``v.blk.3.attn_q`` → 3) and ``None`` for global tensors (patch_embed,
+    pos_embed, multimodal projector). Returns ``None`` for tensors that are
+    not part of a vision tower / multimodal projector.
+    """
+    for pat, slot in _VISION_RULES:
+        m = pat.search(name)
+        if m:
+            block: int | None = None
+            if m.lastindex and m.group(1) is not None:
+                block = int(m.group(1))
+            return block, slot
+    return None
+
+
+def is_vision_tensor(name: str) -> bool:
+    """True if the tensor belongs to a vision tower or multimodal projector."""
+    return map_vision(name) is not None
+
+
 def map_name(name: str) -> tuple[int | None, str]:
     """Return (layer_index, slot) for a tensor name.
 
-    ``layer_index`` is ``None`` for non-layer tensors (embed, lm_head, VLM
-    vision/projector). Supports HuggingFace, GGUF, and MoE naming conventions.
+    ``layer_index`` is ``None`` for non-layer tensors (embed, lm_head) and
+    for vision-tower/projector tensors, which are mapped to their vision
+    slots (``v_*``/``mm_*``) but never populate the transformer raster.
+    Supports HuggingFace, GGUF, MoE, and VLM naming conventions.
     """
     # VLM (vision-language) tensors first: they are non-layer, so the vision
     # tower (v.blk.N.*) never collides with language-model layers in the raster.
-    for pat, slot in _VLM_RULES:
-        if pat.search(name):
-            return None, slot
+    vision = map_vision(name)
+    if vision is not None:
+        return None, vision[1]
 
     # Try HuggingFace layer pattern first
     m = _LAYER_RE.search(name)

@@ -80,6 +80,28 @@ class SpectralNorm:
         return float(s[0])
 
 
+@register_stat("kernel_norm")
+class KernelNorm:
+    """Mean per-output-channel L2 norm of a conv kernel; Frobenius otherwise.
+
+    Conv kernels are 4-D ``(C_out, C_in, kh, kw)``. The spectral norm of their
+    2-D flattening mixes the output-channel axis with the spatial axes, which
+    does not reflect how convolution kernels are structured. Reporting the
+    mean per-output-channel norm gives a magnitude signature matched to the
+    convolution layout (vision towers use Conv kernels instead of attention
+    projections). Non-4-D tensors fall back to the Frobenius norm.
+    """
+
+    stat_id = "kernel_norm"
+
+    def compute(self, t: TensorHandle) -> float:
+        x = t.load()
+        if x.ndim == 4:
+            norms = np.sqrt(np.square(x, dtype=np.float64).sum(axis=(1, 2, 3)))
+            return float(norms.mean())
+        return float(np.sqrt(np.square(x, dtype=np.float64).sum()))
+
+
 @register_stat("effective_rank")
 class EffectiveRank:
     """Effective rank = exp(-sum(p_i * log p_i)) where p = s / sum(s).

@@ -128,14 +128,19 @@ class MatplotlibSheet:
             ax.set_yticklabels(field.row_labels, fontsize=7)
 
         # Title: model · channel · transformation
+        display_channel = field.channel
         ch_spec = spec.channels.get(field.channel, {})
+        if not ch_spec and field.channel.startswith("vision_"):
+            # Vision sheets use the vision slot taxonomy and its own channels.
+            display_channel = f"vision:{field.channel[len('vision_'):]}"
+            ch_spec = spec.vision_channels.get(field.channel[len('vision_'):], {})
         transform_parts = []
         if ch_spec.get("pre"):
             transform_parts.append(ch_spec["pre"])
         if ch_spec.get("scale", {}).get("type"):
             transform_parts.append(ch_spec["scale"]["type"])
         transform_str = " → ".join(transform_parts) if transform_parts else "raw"
-        title = f"{field.channel}: {transform_str}"
+        title = f"{display_channel}: {transform_str}"
         if field.model_name:
             title = f"{field.model_name}: {title}"
         ax.set_title(title, fontsize=12, fontweight="bold")

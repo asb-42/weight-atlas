@@ -32,5 +32,16 @@
     "subsample_scatter": 5000,
     "seeds": {"pca": 0, "umap": 0}
   },
-  "seeds": {"svd": 0}
+  "seeds": {"svd": 0},
+  "vision_slots": [
+    "v_attn_q", "v_attn_k", "v_attn_v", "v_attn_qkv", "v_attn_o",
+    "v_attn_norm", "v_mlp_norm", "v_mlp_gate", "v_mlp_up", "v_mlp_down", "v_mlp",
+    "v_patch_embed", "v_pos_emb", "v_cls", "v_conv", "v_other",
+    "mm_projector", "mm_other"
+  ],
+  "vision_channels": {
+    "height": {"stat": "kernel_norm", "pre": "log1p", "scale": {"type": "rank_scale", "per_column": true}},
+    "tint":   {"stat": "kurtosis",    "scale": {"type": "robust_scale", "lower": 0.01, "upper": 0.99}},
+    "rough":  {"stat": "sparsity",    "scale": {"type": "rank_scale", "per_column": true}}
+  }
 }

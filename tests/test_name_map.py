@@ -53,16 +53,20 @@ def test_slot_mapping(name, expected_slot):
 @pytest.mark.parametrize(
     "name,expected_slot",
     [
-        ("v.blk.0.attn_out.weight", "vision_o"),
-        ("v.blk.0.attn_out.bias", "vision_o"),
-        ("v.blk.0.ln1.weight", "vision_norm"),
-        ("v.blk.0.ln2.bias", "vision_norm"),
-        ("v.blk.5.mlp.fc0.weight", "vision_mlp"),
-        ("v.blk.5.other.weight", "vision"),
-        ("v.patch_embed.weight", "vision_patch_embed"),
-        ("v.pos_embed.weight", "vision_pos_emb"),
+        ("v.blk.0.attn_out.weight", "v_attn_o"),
+        ("v.blk.0.attn_out.bias", "v_attn_o"),
+        ("v.blk.0.ln1.weight", "v_attn_norm"),
+        ("v.blk.0.ln2.bias", "v_mlp_norm"),
+        ("v.blk.5.mlp.fc0.weight", "v_mlp"),
+        ("v.blk.5.other.weight", "v_other"),
+        ("v.patch_embed.weight", "v_patch_embed"),
+        ("v.pos_embed.weight", "v_pos_emb"),
         ("mm.0.weight", "mm_projector"),
         ("mm.2.weight", "mm_projector"),
+        ("mm.model.mlp.1.weight", "mm_projector"),
+        ("model.vision_model.encoder.layers.5.self_attn.q_proj.weight", "v_attn_q"),
+        ("model.visual.blocks.2.attn.qkv.weight", "v_attn_qkv"),
+        ("model.multi_modal_projector.layers.0.linear_1.weight", "mm_projector"),
     ],
 )
 def test_vlm_mapping(name, expected_slot):

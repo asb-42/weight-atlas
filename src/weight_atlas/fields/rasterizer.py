@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -14,10 +15,36 @@ from weight_atlas.core.name_map import (
     is_expert_tensor,
     is_shared_expert,
     map_name,
+    map_vision,
 )
 from weight_atlas.core.types import AtlasSpec, ExpertPanel, Field2D, TensorStats
 from weight_atlas.fields.scaling import apply_scale
 from weight_atlas.fields.tif_io import read_tif
+
+
+def _vision_row_labels(out_dir: Path, n_logical_rows: int) -> list[str]:
+    """Reconstruct vision-sheet row labels from the fingerprint.
+
+    Vision rows are the block indices 0..n_blocks-1 plus a final ``"global"``
+    row when the scan had global vision tensors (patch_embed, pos_embed,
+    projector). Without a fingerprint (or an old scan), fall back to plain
+    numeric labels.
+    """
+    fp_path = out_dir / "fingerprint.json"
+    fp: dict[str, Any] = {}
+    if fp_path.exists():
+        try:
+            fp = json.loads(fp_path.read_text())
+        except (OSError, ValueError):
+            fp = {}
+    vision = fp.get("model", {}).get("vision", {})
+    n_blocks = vision.get("n_blocks") if isinstance(vision, dict) else None
+    if n_blocks is None or n_blocks > n_logical_rows:
+        return [str(i) for i in range(n_logical_rows)]
+    labels = [str(i) for i in range(n_blocks)]
+    if n_blocks < n_logical_rows:
+        labels.append("global")
+    return labels
 
 
 def load_channel_field(
@@ -35,6 +62,10 @@ def load_channel_field(
     fly. Row labels are the true layer indices and column labels the spec
     slot names, so rendered sheets stay interpretable even after upsampling.
 
+    ``vision_<ch>`` channels use the vision slot taxonomy and the vision
+    block labels from the fingerprint (block indices + an optional
+    ``"global"`` row).
+
     Returns None if neither a smooth nor a raw field exists.
     """
     smooth = out_dir / f"field_{channel}_smooth.tif"
@@ -46,21 +77,32 @@ def load_channel_field(
     else:
         return None
 
+    is_vision = channel.startswith("vision_")
+    base_channel = channel[len("vision_"):] if is_vision else channel
+
     is_smooth = path.name.endswith("_smooth.tif")
     data = read_tif(path)
     if not is_smooth:
         ch_spec = spec.channels.get(channel, {})
+        if not ch_spec:
+            ch_spec = spec.vision_channels.get(base_channel, {})
         if "scale" in ch_spec:
             data = apply_scale(data, ch_spec["scale"])
 
     upsample = max(1, int(spec.grid.get("upsample", 1)))
     n_rows, _ = data.shape
-    n_layers = n_rows // upsample if is_smooth else n_rows
+    n_logical = n_rows // upsample if is_smooth else n_rows
+    if is_vision:
+        col_labels = list(spec.vision_slots)
+        row_labels = _vision_row_labels(out_dir, n_logical)
+    else:
+        col_labels = list(spec.slots)
+        row_labels = [str(i) for i in range(n_logical)]
     return Field2D(
         channel=channel,
         data=data,
-        row_labels=[str(i) for i in range(n_layers)],
-        col_labels=list(spec.slots),
+        row_labels=row_labels,
+        col_labels=col_labels,
         spec_version=spec.spec_version,
         model_name=model_name,
     )
@@ -115,6 +157,102 @@ def rasterize(
         col_labels=col_labels,
         spec_version=spec.spec_version,
     )
+
+
+def rasterize_vision(
+    stats: Iterable[TensorStats],
+    spec: AtlasSpec,
+    stat_key: str,
+) -> Field2D | None:
+    """Rasterize a single statistic into a (vision_block × vision_slot) field.
+
+    Rows are the vision tower's block indices (e.g. ``v.blk.N`` / HF encoder
+    layers), plus a final ``"global"`` row for non-block vision tensors
+    (patch_embed, pos_embed, multimodal projector). Missing combinations are
+    ``NaN``. Returns None when the model has no vision tensors for this stat.
+    """
+    if not spec.vision_slots:
+        return None
+    slot_idx = {s: i for i, s in enumerate(spec.vision_slots)}
+    blocks: set[int] = set()
+    cells: dict[tuple[int | None, int], float] = {}
+    has_global = False
+
+    for ts in stats:
+        mapped = map_vision(ts.name)
+        if mapped is None:
+            continue
+        block, slot = mapped
+        col = slot_idx.get(slot)
+        if col is None:
+            continue  # slot not in the vision taxonomy
+        value = getattr(ts, stat_key, None)
+        if value is None or not np.isfinite(value):
+            continue
+        if block is None:
+            has_global = True
+        else:
+            blocks.add(block)
+        key = (block, col)
+        if key in cells:
+            # Multiple tensors share a cell (e.g. mm.model.mlp.0/1/2 in the
+            # global projector row): aggregate by mean, deterministically.
+            cells[key] = (cells[key] + float(value)) / 2.0
+        else:
+            cells[key] = float(value)
+
+    if not cells:
+        return None
+
+    blocks_sorted = sorted(blocks)
+    rows: list[int | None] = list(blocks_sorted)
+    if has_global:
+        rows.append(None)  # global row last
+    grid = np.full((len(rows), len(spec.vision_slots)), np.nan, dtype=np.float64)
+    row_idx = {block: i for i, block in enumerate(rows)}
+    for (block, col), value in cells.items():
+        grid[row_idx[block], col] = value
+
+    row_labels = [str(b) for b in blocks_sorted]
+    if has_global:
+        row_labels.append("global")
+    return Field2D(
+        channel=stat_key,
+        data=grid,
+        row_labels=row_labels,
+        col_labels=list(spec.vision_slots),
+        spec_version=spec.spec_version,
+    )
+
+
+def detect_vision(stats: Iterable[TensorStats]) -> dict[str, Any] | None:
+    """Summarize the vision subsystem of a model, if present.
+
+    Returns a dict with ``present``, ``n_tensors``, ``n_blocks`` (distinct
+    vision block indices) and ``n_global`` (non-block tensors such as
+    patch_embed / pos_embed / projector), or None for text-only models.
+    """
+    blocks: set[int] = set()
+    n_global = 0
+    n_tensors = 0
+    for ts in stats:
+        mapped = map_vision(ts.name)
+        if mapped is None:
+            continue
+        n_tensors += 1
+        block, _slot = mapped
+        if block is None:
+            n_global += 1
+        else:
+            blocks.add(block)
+    if n_tensors == 0:
+        return None
+    return {
+        "present": True,
+        "n_tensors": n_tensors,
+        "n_blocks": len(blocks),
+        "n_global": n_global,
+    }
 
 
 def rasterize_expert_panels(

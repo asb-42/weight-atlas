@@ -55,6 +55,10 @@ weight-atlas render ./artefacts --renderer sheet
 - **Compare**: Quantitative and cartographic comparison with strict or aligned modes
 - **Embedding Sheet**: PCA/UMAP projection of token embeddings as density fields
 - **MoE Expert Panels**: Layer × Expert visualization for Mixture-of-Experts models
+- **Vision Tower Sheet (VLM)**: multimodal models get a separate vision panel
+  (vision blocks × `v_attn_*`/`mm_projector` slots) with conv-aware statistics
+  (kernel norm), so a vision tower is a visible fingerprint difference instead
+  of an unmapped blind spot
 - **Activity Mode ("fMRI")**: Forward-pass activation capture over a versioned stimulus protocol
 - **Web UI**: Browse models, submit jobs, view artifacts via browser (HTMX + FastAPI)
 

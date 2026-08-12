@@ -385,6 +385,36 @@ GGUF stores MoE expert tensors as 3D arrays (hidden, hidden, n_experts). The loa
 - Sheet PNGs via existing sheet renderer (generic over Field2D)
 - Delta panel sheets via existing delta renderer
 
+## VLM Vision Tower (multimodal models)
+
+### Design decision
+
+Vision towers are **not excluded** from the fingerprint to inflate mapping
+coverage — they are mapped into their own slot taxonomy and rasterized into a
+separate sheet, so a vision tower present in a multimodal model (and absent in
+a text-only model) becomes a visible fingerprint difference.
+
+- `map_vision()` (in `core/name_map.py`) maps vision tensors to
+  `(vision_block_index, vision_slot)` for the major naming families: GGUF
+  llama.cpp (`v.blk.N.*`, `mm.model.mlp.N`), HF Qwen3-VL / CLIP
+  (`vision_model.encoder.layers.N.*`), HF Qwen2-VL (`visual.blocks.N.*`) and
+  Kimi K3 (`vision_tower.encoder.blocks.N.*`).
+- `map_name()` delegates to `map_vision` and returns `(None, slot)`, so vision
+  tensors never collide with transformer layers in the main raster.
+- Spec blocks: `vision_slots` (own column taxonomy: `v_attn_*`, `v_mlp_*`,
+  `v_patch_embed`, `v_pos_emb`, `mm_projector`, ...) and `vision_channels`
+  (own statistics; `height` uses `kernel_norm` — mean per-output-channel L2
+  norm of a conv kernel — instead of spectral norm, since vision towers are
+  Conv/ViT-structured, not attention-matrix structured).
+- `rasterize_vision()` builds a `vision_block × vision_slot` field; global
+  tensors (patch_embed, pos_embed, projector) land in a final `"global"` row
+  and are mean-aggregated per slot cell.
+- Artefacts: `field_vision_<channel>_{raw,smooth}.tif`, rendered as
+  `vision_<channel>_raw.png` sheets next to the transformer sheets.
+- Fingerprint: `model.vision = {present, n_tensors, n_blocks, n_global}` and
+  `mapping_coverage.vision_tensors`. Text-only models have no `model.vision`
+  block and no vision artefacts.
+
 ## Extras (lazy)
 
 `umap` is declared but empty – imports must stay out of core.
