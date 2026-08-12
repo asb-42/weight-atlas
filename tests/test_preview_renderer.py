@@ -94,3 +94,18 @@ class TestPreviewRenderer:
         paths = renderer.render(field, spec, tmp_out)
         assert len(paths) == 1
         assert paths[0].exists()
+
+    def test_render_upsampled_sparse_labels(self, spec: AtlasSpec, tmp_out: Path):
+        """Fewer slot/layer labels than columns/rows must not raise."""
+        renderer = PreviewRenderer()
+        n_rows, n_cols = 32, 120  # 4 layers × 8, 15 slots × 8 (upsampled)
+        field = Field2D(
+            channel="height",
+            data=np.random.default_rng(42).normal(0, 1, (n_rows, n_cols)),
+            row_labels=[str(i) for i in range(4)],
+            col_labels=list(spec.slots),
+            model_name="Bonsai-8B",
+        )
+        paths = renderer.render(field, spec, tmp_out)
+        assert len(paths) == 1
+        assert paths[0].exists()

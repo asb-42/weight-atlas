@@ -56,11 +56,36 @@ class PreviewRenderer:
 
         ax.set_xlabel("slot")
         ax.set_ylabel("layer")
-        ax.set_xticks(range(n_cols))
-        ax.set_xticklabels(field.col_labels, rotation=90, fontsize=6)
-        ax.set_yticks(range(n_rows))
-        ax.set_yticklabels(field.row_labels, fontsize=6)
-        ax.set_title(f"{field.channel} — preview (auto-levels, γ=2.2)")
+
+        # Slot labels: dense when labels match the column count, otherwise
+        # spread the (fewer) slot names across the upsampled columns.
+        if field.col_labels:
+            if len(field.col_labels) == n_cols:
+                step = max(1, n_cols // 20)
+                ax.set_xticks(range(0, n_cols, step))
+                ax.set_xticklabels([field.col_labels[i] for i in range(0, n_cols, step)],
+                                   rotation=90, fontsize=6, ha="center")
+            else:
+                n_labels = len(field.col_labels)
+                positions = [i * n_cols // n_labels for i in range(n_labels)]
+                ax.set_xticks(positions)
+                ax.set_xticklabels(field.col_labels, rotation=90, fontsize=6, ha="center")
+
+        if field.row_labels:
+            if len(field.row_labels) == n_rows:
+                step = max(1, n_rows // 20)
+                ax.set_yticks(range(0, n_rows, step))
+                ax.set_yticklabels([field.row_labels[i] for i in range(0, n_rows, step)], fontsize=6)
+            else:
+                n_labels = len(field.row_labels)
+                positions = [i * n_rows // n_labels for i in range(n_labels)]
+                ax.set_yticks(positions)
+                ax.set_yticklabels(field.row_labels, fontsize=6)
+
+        title = f"{field.channel} — preview (auto-levels, γ=2.2)"
+        if field.model_name:
+            title = f"{field.model_name}: {title}"
+        ax.set_title(title)
 
         raw_path = out / f"preview_{field.channel}.png"
         fig.savefig(raw_path, dpi=150, bbox_inches="tight", metadata=_PNG_METADATA)

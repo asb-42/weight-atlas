@@ -49,6 +49,8 @@ class DeltaSheet:
         row_labels: list[str] | None = None,
         col_labels: list[str] | None = None,
         mode: str = "strict",
+        model_a: str = "",
+        model_b: str = "",
         render_profile: bool = True,
     ) -> list[Path]:
         """Render a delta field as a diverging colormap.
@@ -61,6 +63,7 @@ class DeltaSheet:
             row_labels: labels for rows (layers)
             col_labels: labels for columns (slots)
             mode: alignment mode for title
+            model_a, model_b: model display names for the title
             render_profile: if True, also render 1×L profile strip
         """
         out.mkdir(parents=True, exist_ok=True)
@@ -77,12 +80,12 @@ class DeltaSheet:
             vmax = 1.0
 
         # Render main delta sheet
-        sheet_path = self._render_sheet(data, spec, out, channel, row_labels, col_labels, mode, vmax)
+        sheet_path = self._render_sheet(data, spec, out, channel, row_labels, col_labels, mode, vmax, model_a, model_b)
         produced.append(sheet_path)
 
         # Render profile strip if requested
         if render_profile:
-            profile_path = self._render_profile(data, spec, out, channel, mode, vmax)
+            profile_path = self._render_profile(data, spec, out, channel, mode, vmax, model_a, model_b)
             produced.append(profile_path)
 
         return produced
@@ -97,6 +100,8 @@ class DeltaSheet:
         col_labels: list[str] | None,
         mode: str,
         vmax: float,
+        model_a: str = "",
+        model_b: str = "",
     ) -> Path:
         """Render the main delta sheet."""
         dpi = int(spec.sheet["dpi"])
@@ -140,7 +145,10 @@ class DeltaSheet:
         else:
             ax.set_yticks(range(n_rows))
 
-        ax.set_title(f"Δ {channel} – {mode}")
+        title = f"Δ {channel} – {mode}"
+        if model_a and model_b:
+            title += f" ({model_a} vs {model_b})"
+        ax.set_title(title)
 
         delta_path = out / f"delta_sheet_{channel}.png"
         fig.savefig(delta_path, dpi=dpi, bbox_inches="tight", metadata=_PNG_METADATA)
@@ -155,6 +163,8 @@ class DeltaSheet:
         channel: str,
         mode: str,
         vmax: float,
+        model_a: str = "",
+        model_b: str = "",
     ) -> Path:
         """Render a 1×L profile strip (per-layer relative L2) — the 'ablitation bar'."""
         dpi = int(spec.sheet["dpi"])
@@ -185,7 +195,10 @@ class DeltaSheet:
 
         ax.set_xlabel("slot")
         ax.set_yticks([])
-        ax.set_title(f"Δ profile {channel} – {mode}")
+        title = f"Δ profile {channel} – {mode}"
+        if model_a and model_b:
+            title += f" ({model_a} vs {model_b})"
+        ax.set_title(title)
 
         profile_path = out / f"delta_profile_{channel}.png"
         fig.savefig(profile_path, dpi=dpi, bbox_inches="tight", metadata=_PNG_METADATA)

@@ -91,9 +91,20 @@ weight-atlas compare ./artefacts/model_a ./artefacts/model_b --out ./compare_out
 
 ```bash
 pip install -e ".[web]"
+weight-atlas serve               # LAN-reachable on http://0.0.0.0:8000
+# Open http://<machine-ip>:8000 (or http://localhost:8000 on this machine)
+```
+
+For localhost-only access:
+
+```bash
 uvicorn weight_atlas.api.main:app --reload
 # Open http://localhost:8000
 ```
+
+> **Security**: the web UI has no authentication. `weight-atlas serve` binds
+> `0.0.0.0` and exposes the job/import/artefact API to the LAN. Run only on a
+> trusted network or behind a firewall/VPN.
 
 ---
 
@@ -220,10 +231,18 @@ weight-atlas activity <model_path> --out <dir> [options]
 
 ```bash
 pip install -e ".[web]"
-uvicorn weight_atlas.api.main:app --reload
+weight-atlas serve               # LAN-reachable on http://0.0.0.0:8000
 ```
 
-Open http://localhost:8000 in your browser.
+Open http://localhost:8000 in your browser (or `http://<machine-ip>:8000` from
+another machine on the LAN).
+
+For localhost-only access use `weight-atlas serve --host 127.0.0.1` or run
+`uvicorn weight_atlas.api.main:app --reload` directly.
+
+> **Security**: the web UI has no authentication. Serving on `0.0.0.0` exposes
+> the job/import/artefact API to the LAN. Run only on a trusted network or
+> behind a firewall/VPN.
 
 ### Model List (`/`)
 

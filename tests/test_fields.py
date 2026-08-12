@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from weight_atlas.core.types import AtlasSpec, TensorStats
-from weight_atlas.fields.rasterizer import rasterize
+from weight_atlas.fields.rasterizer import load_channel_field, rasterize
 from weight_atlas.fields.scaling import log1p, quantile_clip, rank_scale
 from weight_atlas.fields.smoothing import smooth, upsample
 from weight_atlas.fields.tif_io import read_tif, write_tif
@@ -179,3 +179,51 @@ def test_tif_deterministic():
         write_tif(p1, arr)
         write_tif(p2, arr)
         assert p1.read_bytes() == p2.read_bytes()
+
+
+def _make_scan_dir(tmp: Path, spec) -> Path:
+    """Write a scan-like out dir: 4 layers, upsample 8, all channels."""
+    out = tmp / "scan"
+    out.mkdir(exist_ok=True)
+    ups = int(spec.grid["upsample"])
+    n_rows, n_cols = 4 * ups, len(spec.slots) * ups
+    raw = np.random.default_rng(0).uniform(0.1, 2.0, (4, len(spec.slots)))
+    smooth = np.random.default_rng(1).uniform(0.0, 1.0, (n_rows, n_cols))
+    for ch in spec.channels:
+        write_tif(out / f"field_{ch}_raw.tif", raw)
+        write_tif(out / f"field_{ch}_smooth.tif", smooth)
+    return out
+
+
+def test_load_channel_field_smooth_labels(spec, tmp_path):
+    """Smooth field should carry slot names + true layer indices + model name."""
+    out = _make_scan_dir(tmp_path, spec)
+    field = load_channel_field(out, "height", spec, model_name="Bonsai-8B")
+    assert field is not None
+    assert field.model_name == "Bonsai-8B"
+    # Slot names, not upsampled column indices.
+    assert field.col_labels == list(spec.slots)
+    # True layer count, not upsampled rows.
+    assert field.row_labels == ["0", "1", "2", "3"]
+    ups = int(spec.grid["upsample"])
+    assert field.data.shape == (4 * ups, len(spec.slots) * ups)
+
+
+def test_load_channel_field_raw_fallback_scales(spec, tmp_path):
+    """Raw-only fallback should apply the channel scale and use row count as layers."""
+    out = _make_scan_dir(tmp_path, spec)
+    for ch in spec.channels:
+        (out / f"field_{ch}_smooth.tif").unlink()
+    field = load_channel_field(out, "height", spec, model_name="m")
+    assert field is not None
+    assert field.row_labels == ["0", "1", "2", "3"]
+    assert field.data.shape == (4, len(spec.slots))
+    # height uses rank_scale → values in [0, 1]
+    assert np.nanmin(field.data) >= -1e-9
+    assert np.nanmax(field.data) <= 1.0 + 1e-9
+
+
+def test_load_channel_field_missing_returns_none(spec, tmp_path):
+    out = tmp_path / "empty"
+    out.mkdir(exist_ok=True)
+    assert load_channel_field(out, "height", spec) is None

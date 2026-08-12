@@ -102,9 +102,20 @@ weight-atlas compare ./pre ./post --out ./lesion_map --mode strict
 
 ```bash
 pip install -e ".[web]"
+weight-atlas serve               # LAN-reachable on http://0.0.0.0:8000
+# localhost-only alternative:
 uvicorn weight_atlas.api.main:app --reload
 # Open http://localhost:8000
 ```
+
+`weight-atlas serve` binds all interfaces (`0.0.0.0`), so the UI is reachable
+from other machines on the LAN at `http://<machine-ip>:8000`. For localhost-only
+access use `weight-atlas serve --host 127.0.0.1` (or run uvicorn directly).
+
+> **Security**: the web UI has no authentication. Serving on `0.0.0.0` exposes
+> the job/import/artefact API (which reads scan directories and serves
+> artefacts) to anyone on the network. Run only on a trusted network or behind
+> a firewall/VPN.
 
 ## What weight-atlas is / is not
 

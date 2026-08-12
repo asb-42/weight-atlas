@@ -20,6 +20,14 @@ def test_scan_subcommand_in_help(capsys):
     assert "--out" in out
 
 
+def test_serve_subcommand_in_help(capsys):
+    with pytest.raises(SystemExit):
+        main(["serve", "--help"])
+    out = capsys.readouterr().out
+    assert "--host" in out
+    assert "--port" in out
+
+
 def test_no_command_returns_zero(capsys):
     rc = main([])
     assert rc == 0

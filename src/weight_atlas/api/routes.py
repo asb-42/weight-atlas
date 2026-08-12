@@ -315,9 +315,8 @@ def create_router(
             raise HTTPException(status_code=404, detail="output directory not found")
 
         from weight_atlas.core.registry import get_renderer
-        from weight_atlas.core.types import AtlasSpec, Field2D
-        from weight_atlas.fields.scaling import apply_scale
-        from weight_atlas.fields.tif_io import read_tif
+        from weight_atlas.core.types import AtlasSpec
+        from weight_atlas.fields.rasterizer import load_channel_field
 
         spec = AtlasSpec.from_json(Path("specs/atlas_spec.v2.1.json"))
         renderer_cls = get_renderer(renderer)
@@ -325,6 +324,8 @@ def create_router(
 
         render_dir = out_dir / "render"
         render_dir.mkdir(exist_ok=True)
+
+        model_name = Path(job.model_path).name or out_dir.name
 
         # Discover channels
         channels: set[str] = set()
@@ -337,29 +338,9 @@ def create_router(
 
         produced: list[str] = []
         for channel in channels:
-            smooth_path = out_dir / f"field_{channel}_smooth.tif"
-            raw_path = out_dir / f"field_{channel}_raw.tif"
-            # Use smooth TIFF if available (already scaled by scan pipeline)
-            # Only fall back to raw TIFF if smooth doesn't exist
-            if smooth_path.exists():
-                data = read_tif(smooth_path)
-            elif raw_path.exists():
-                data = read_tif(raw_path)
-                # Apply channel scaling on-the-fly for raw TIFFs
-                ch_spec = spec.channels.get(channel, {})
-                if "scale" in ch_spec:
-                    data = apply_scale(data, ch_spec["scale"])
-            else:
+            field = load_channel_field(out_dir, channel, spec, model_name=model_name)
+            if field is None:
                 continue
-
-            n_rows, n_cols = data.shape
-            field = Field2D(
-                channel=channel,
-                data=data,
-                row_labels=[str(i) for i in range(n_rows)],
-                col_labels=list(spec.slots)[:n_cols] if n_cols <= len(spec.slots) else [str(i) for i in range(n_cols)],
-                spec_version=spec.spec_version,
-            )
             try:
                 paths = renderer_obj.render(field, spec, render_dir)
                 produced.extend(str(p.name) for p in paths)
@@ -371,26 +352,9 @@ def create_router(
             from weight_atlas.render.preview import PreviewRenderer
             preview_renderer = PreviewRenderer()
             for channel in channels:
-                smooth_path = out_dir / f"field_{channel}_smooth.tif"
-                raw_path = out_dir / f"field_{channel}_raw.tif"
-                if smooth_path.exists():
-                    data = read_tif(smooth_path)
-                elif raw_path.exists():
-                    data = read_tif(raw_path)
-                    ch_spec_prev = spec.channels.get(channel, {})
-                    if "scale" in ch_spec_prev:
-                        data = apply_scale(data, ch_spec_prev["scale"])
-                else:
+                field = load_channel_field(out_dir, channel, spec, model_name=model_name)
+                if field is None:
                     continue
-
-                n_rows, n_cols = data.shape
-                field = Field2D(
-                    channel=channel,
-                    data=data,
-                    row_labels=[str(i) for i in range(n_rows)],
-                    col_labels=list(spec.slots)[:n_cols] if n_cols <= len(spec.slots) else [str(i) for i in range(n_cols)],
-                    spec_version=spec.spec_version,
-                )
                 try:
                     paths = preview_renderer.render(field, spec, render_dir)
                     produced.extend(str(p.name) for p in paths)

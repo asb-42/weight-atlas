@@ -398,9 +398,8 @@ class JobQueue:
         if auto_render:
             try:
                 from weight_atlas.core.registry import get_renderer
-                from weight_atlas.core.types import AtlasSpec, Field2D
-                from weight_atlas.fields.scaling import apply_scale
-                from weight_atlas.fields.tif_io import read_tif
+                from weight_atlas.core.types import AtlasSpec
+                from weight_atlas.fields.rasterizer import load_channel_field
 
                 spec = AtlasSpec.from_json(Path("specs/atlas_spec.v2.1.json"))
                 renderer = get_renderer("sheet")()
@@ -416,31 +415,9 @@ class JobQueue:
 
                 render_dir = scan_dir / "render"
                 for channel in channels:
-                    smooth_path = scan_dir / f"field_{channel}_smooth.tif"
-                    raw_path = scan_dir / f"field_{channel}_raw.tif"
-                    # Use smooth TIFF if available (already scaled by scan pipeline)
-                    if smooth_path.exists():
-                        data = read_tif(smooth_path)
-                    elif raw_path.exists():
-                        data = read_tif(raw_path)
-                        # Apply channel scaling on-the-fly for raw TIFFs
-                        ch_spec = spec.channels.get(channel, {})
-                        if "scale" in ch_spec:
-                            data = apply_scale(data, ch_spec["scale"])
-                    else:
+                    field = load_channel_field(scan_dir, channel, spec, model_name=model_path or scan_dir.name)
+                    if field is None:
                         continue
-
-                    n_rows, n_cols = data.shape
-                    row_labels = [str(i) for i in range(n_rows)]
-                    col_labels = list(spec.slots)
-
-                    field = Field2D(
-                        channel=channel,
-                        data=data,
-                        row_labels=row_labels,
-                        col_labels=col_labels,
-                        spec_version=spec.spec_version,
-                    )
                     renderer.render(field, spec, render_dir)
             except Exception:
                 pass  # Rendering is best-effort
@@ -503,9 +480,7 @@ class JobQueue:
     def _auto_render_sheets(self, out_dir: Path, spec: Any) -> list[str]:
         """Auto-render sheet PNGs from scan artefacts (best-effort)."""
         from weight_atlas.core.registry import get_renderer
-        from weight_atlas.core.types import Field2D
-        from weight_atlas.fields.scaling import apply_scale
-        from weight_atlas.fields.tif_io import read_tif
+        from weight_atlas.fields.rasterizer import load_channel_field
 
         renderer = get_renderer("sheet")()
         render_dir = out_dir / "render"
@@ -522,29 +497,9 @@ class JobQueue:
 
         rendered: list[str] = []
         for channel in channels:
-            smooth_path = out_dir / f"field_{channel}_smooth.tif"
-            raw_path = out_dir / f"field_{channel}_raw.tif"
-            # Use smooth TIFF if available (already scaled by scan pipeline)
-            # Only fall back to raw TIFF if smooth doesn't exist
-            if smooth_path.exists():
-                data = read_tif(smooth_path)
-            elif raw_path.exists():
-                data = read_tif(raw_path)
-                # Apply channel scaling on-the-fly for raw TIFFs
-                ch_spec = spec.channels.get(channel, {})
-                if "scale" in ch_spec:
-                    data = apply_scale(data, ch_spec["scale"])
-            else:
+            field = load_channel_field(out_dir, channel, spec, model_name=out_dir.name)
+            if field is None:
                 continue
-
-            n_rows, n_cols = data.shape
-            field = Field2D(
-                channel=channel,
-                data=data,
-                row_labels=[str(i) for i in range(n_rows)],
-                col_labels=list(spec.slots)[:n_cols] if n_cols <= len(spec.slots) else [str(i) for i in range(n_cols)],
-                spec_version=spec.spec_version,
-            )
             renderer.render(field, spec, render_dir)
 
         # Collect rendered PNGs

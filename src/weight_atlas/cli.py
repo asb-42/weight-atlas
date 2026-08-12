@@ -66,6 +66,12 @@ def build_parser() -> argparse.ArgumentParser:
     diagnose.add_argument("--threshold", type=float, default=0.8,
                           help="Warning threshold for in_slots ratio (default: 0.8)")
 
+    serve = sub.add_parser("serve", help="Run the web UI (LAN-reachable by default)")
+    serve.add_argument("--host", default="0.0.0.0",
+                       help="Interface to bind (default: 0.0.0.0 = all interfaces / LAN; use 127.0.0.1 for localhost-only)")
+    serve.add_argument("--port", type=int, default=8000, help="Port (default: 8000)")
+    serve.add_argument("--reload", action="store_true", help="Enable auto-reload (development)")
+
     return parser
 
 
@@ -133,8 +139,7 @@ def _cmd_render(args: argparse.Namespace) -> int:
     renderer_cls = get_renderer(args.renderer)
     renderer = renderer_cls()
 
-    from weight_atlas.core.types import Field2D
-    from weight_atlas.fields.tif_io import read_tif
+    from weight_atlas.fields.rasterizer import load_channel_field
 
     # Discover channels from manifest (source of truth)
     manifest = json.loads(manifest_path.read_text())
@@ -142,26 +147,10 @@ def _cmd_render(args: argparse.Namespace) -> int:
 
     produced: list[Path] = []
     for channel in channels:
-        # Render the smooth version if available, otherwise raw
-        smooth_path = out_dir / f"field_{channel}_smooth.tif"
-        raw_path = out_dir / f"field_{channel}_raw.tif"
-        tif = smooth_path if smooth_path.exists() else raw_path
-        if not tif.exists():
+        field = load_channel_field(out_dir, channel, spec, model_name=out_dir.name)
+        if field is None:
             continue
 
-        data = read_tif(tif)
-
-        # Apply channel scaling for better visualization
-        from weight_atlas.fields.scaling import apply_scale
-        ch_spec = spec.channels.get(channel, {})
-        if "scale" in ch_spec:
-            data = apply_scale(data, ch_spec["scale"])
-
-        field = Field2D(
-            channel=channel,
-            data=data,
-            spec_version=spec.spec_version,
-        )
         # Add scatter overlay for embedding density field
         scatter_path = out_dir / "embedding_scatter.npy"
         if args.renderer == "blender":
@@ -247,6 +236,8 @@ def _cmd_compare(args: argparse.Namespace) -> int:
                 row_labels=summary.aligned_row_labels,
                 col_labels=summary.aligned_col_labels,
                 mode=args.mode,
+                model_a=args.dir_a.name,
+                model_b=args.dir_b.name,
             )
             all_artefacts.extend(rendered)
         except KeyError:
@@ -354,6 +345,33 @@ def _cmd_activity(args: argparse.Namespace) -> int:
     print(f"States: {metadata['states']}")
     return 0
 
+
+def _cmd_serve(args: argparse.Namespace) -> int:
+    """Run the web UI on the given interface."""
+    try:
+        import uvicorn
+    except ImportError:
+        print(
+            "uvicorn is required for the web UI. Install with: pip install -e '.[web]'",
+            file=sys.stderr,
+        )
+        return 1
+
+    loopback = args.host in ("127.0.0.1", "localhost", "::1")
+    if not loopback:
+        print(
+            f"WARNING: serving on {args.host} exposes the web UI to the LAN. "
+            "Weight Atlas has no authentication and its API can read scan "
+            "directories and serve artefacts. Run only on a trusted network "
+            "or behind a firewall/VPN.",
+            file=sys.stderr,
+        )
+
+    url_host = "127.0.0.1" if loopback else "<this-machine-lan-ip>"
+    print(f"Web UI: http://{url_host}:{args.port}  (Ctrl+C to stop)")
+    uvicorn.run("weight_atlas.api.main:app", host=args.host, port=args.port, reload=args.reload)
+    return 0
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -370,6 +388,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_activity(args)
     if args.command == "diagnose":
         return _cmd_diagnose(args)
+    if args.command == "serve":
+        return _cmd_serve(args)
     parser.print_help()
     return 0
 

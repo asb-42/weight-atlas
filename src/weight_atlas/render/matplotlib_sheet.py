@@ -1,4 +1,8 @@
-"""Matplotlib sheet renderer: hillshade, hypsometric tint, contours."""
+"""Matplotlib sheet renderer: direct colormap + contours.
+
+Renders a field as a topographic-style sheet. Uses a direct diverging
+colormap (no hillshade) for contrast on rank-scaled data.
+"""
 
 from __future__ import annotations
 
@@ -15,9 +19,11 @@ from matplotlib.colors import LinearSegmentedColormap
 from weight_atlas.core.registry import register_renderer
 from weight_atlas.core.types import AtlasSpec, Field2D
 
-# Fixed hypsometric palette: green → brown → white
+# Diverging blue-white-red palette (RdBu family) for rank-scaled [0,1] fields.
+# Replaces the original green→brown→white hypsometric terrain scale, which
+# washed out uniformly distributed rank data (commit 6067626).
 _HYPSO_COLORS = ['#2166ac', '#4393c3', '#92c5de', '#f7f7f7', '#fddbc7', '#f4a582', '#d6604d', '#b2182b']
-_HYPSO = LinearSegmentedColormap.from_list("hypsometric", _HYPSO_COLORS, N=256)
+_HYPSO = LinearSegmentedColormap.from_list("sheet_diverging", _HYPSO_COLORS, N=256)
 
 # Fixed PNG metadata per spec: Software + Creation Time (epoch zero for determinism)
 _PNG_METADATA = {
@@ -32,7 +38,7 @@ _MIN_VALID_FRACTION = 0.1
 
 @register_renderer("sheet")
 class MatplotlibSheet:
-    """Renders a field as a topographic sheet: hillshade + hypsometric tint + contours."""
+    """Renders a field as a topographic-style sheet: direct colormap + contours."""
 
     renderer_id = "sheet"
 
@@ -121,7 +127,7 @@ class MatplotlibSheet:
             ax.set_yticks(tick_positions)
             ax.set_yticklabels(field.row_labels, fontsize=7)
 
-        # Title with channel and transformation info
+        # Title: model · channel · transformation
         ch_spec = spec.channels.get(field.channel, {})
         transform_parts = []
         if ch_spec.get("pre"):
@@ -129,19 +135,33 @@ class MatplotlibSheet:
         if ch_spec.get("scale", {}).get("type"):
             transform_parts.append(ch_spec["scale"]["type"])
         transform_str = " → ".join(transform_parts) if transform_parts else "raw"
-        ax.set_title(f"{field.channel}: {transform_str}", fontsize=12, fontweight="bold")
+        title = f"{field.channel}: {transform_str}"
+        if field.model_name:
+            title = f"{field.model_name}: {title}"
+        ax.set_title(title, fontsize=12, fontweight="bold")
 
-        # Colorbar with actual percentile values
+        # Colorbar with real percentile values mapped onto the display scale.
+        # The image shows filled_norm(data) (q02–q98 min-max to [0,1]); place
+        # p10/p50/p90 of the underlying data at their actual display positions
+        # so the scale reads in real values, not bare normalized ranks.
         if finite.any():
             vals = data[finite]
             p10 = float(np.quantile(vals, 0.1))
             p50 = float(np.quantile(vals, 0.5))
             p90 = float(np.quantile(vals, 0.9))
+            vmin = float(np.quantile(vals, 0.02))
+            vmax = float(np.quantile(vals, 0.98))
             sm = plt.cm.ScalarMappable(cmap=_HYPSO, norm=plt.Normalize(vmin=0, vmax=1))
             sm.set_array([])
             cbar = fig.colorbar(sm, ax=ax, fraction=0.046, pad=0.04)
-            cbar.set_label(f"p10={p10:.3f}  p50={p50:.3f}  p90={p90:.3f}", fontsize=8)
             cbar.ax.tick_params(labelsize=6)
+            if vmax > vmin:
+                positions = [float(np.clip((p - vmin) / (vmax - vmin), 0.0, 1.0)) for p in (p10, p50, p90)]
+                cbar.set_ticks(positions)
+                cbar.set_ticklabels([f"{v:.3g}" for v in (p10, p50, p90)])
+                cbar.set_label("p10 / p50 / p90", fontsize=8)
+            else:
+                cbar.set_label(f"constant ({p50:.3g})", fontsize=8)
 
         # Degenerate channel banner on PNG
         if is_degenerate:

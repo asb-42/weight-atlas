@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -15,6 +16,54 @@ from weight_atlas.core.name_map import (
     map_name,
 )
 from weight_atlas.core.types import AtlasSpec, ExpertPanel, Field2D, TensorStats
+from weight_atlas.fields.scaling import apply_scale
+from weight_atlas.fields.tif_io import read_tif
+
+
+def load_channel_field(
+    out_dir: Path,
+    channel: str,
+    spec: AtlasSpec,
+    *,
+    prefer_smooth: bool = True,
+    model_name: str = "",
+) -> Field2D | None:
+    """Build a Field2D for rendering from a scan output directory.
+
+    Uses the smooth TIFF when present (already channel-scaled by the scan
+    pipeline), otherwise the raw TIFF with the channel scale applied on the
+    fly. Row labels are the true layer indices and column labels the spec
+    slot names, so rendered sheets stay interpretable even after upsampling.
+
+    Returns None if neither a smooth nor a raw field exists.
+    """
+    smooth = out_dir / f"field_{channel}_smooth.tif"
+    raw = out_dir / f"field_{channel}_raw.tif"
+    if prefer_smooth and smooth.exists():
+        path = smooth
+    elif raw.exists():
+        path = raw
+    else:
+        return None
+
+    is_smooth = path.name.endswith("_smooth.tif")
+    data = read_tif(path)
+    if not is_smooth:
+        ch_spec = spec.channels.get(channel, {})
+        if "scale" in ch_spec:
+            data = apply_scale(data, ch_spec["scale"])
+
+    upsample = max(1, int(spec.grid.get("upsample", 1)))
+    n_rows, _ = data.shape
+    n_layers = n_rows // upsample if is_smooth else n_rows
+    return Field2D(
+        channel=channel,
+        data=data,
+        row_labels=[str(i) for i in range(n_layers)],
+        col_labels=list(spec.slots),
+        spec_version=spec.spec_version,
+        model_name=model_name,
+    )
 
 
 def rasterize(

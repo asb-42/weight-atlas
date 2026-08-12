@@ -58,6 +58,7 @@ class Field2D:
     row_labels: list[str] = field(default_factory=list)
     col_labels: list[str] = field(default_factory=list)
     spec_version: int = 1
+    model_name: str = ""  # display name shown in sheet titles
 
 
 @dataclass
