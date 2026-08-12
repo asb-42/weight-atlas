@@ -78,3 +78,10 @@ def create_app(
     app.include_router(router)
 
     return app
+
+
+# Module-level app so both `uvicorn weight_atlas.api.main:app` and the
+# `weight-atlas serve` factory mode work. The background job worker is NOT
+# started here — it starts inside the lifespan context manager — so importing
+# this module has no thread side effects (safe under `--reload`).
+app = create_app()
