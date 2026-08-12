@@ -40,6 +40,71 @@ _MOE_RULES: list[tuple[re.Pattern[str], str | None]] = [
     (re.compile(r"shared_expert_gate"), "other"),  # Shared expert gate → other
     (re.compile(r"shared_expert\.(gate|up|down)_proj"), None),  # Shared expert → mlp slots (handled specially)
     (re.compile(r"mlp\.experts\.(\d+)\.(gate|up|down)_proj"), None),  # Expert tensors (handled specially)
+    # Kimi K3 / DeepSeek-style block_sparse_moe MoE
+    (re.compile(r"block_sparse_moe\.shared_experts"), None),  # → shared_expert slot (handled specially)
+    (re.compile(r"block_sparse_moe\.experts\.\d+\.w[123]"), None),  # → expert slot (handled specially)
+    (re.compile(r"block_sparse_moe\.gate"), "router"),  # Kimi router (before generic fallbacks)
+]
+
+# Qwen3-Next / hybrid Mamba-aware HF rules (applied after _RULES, before fallback).
+# The Mamba/SSM branch and the attention gate use distinct sub-block names.
+_HF_HYBRID_RULES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"self_attn\.attn_gate"), "attn_gate"),
+    (re.compile(r"self_attn\.gating"), "attn_gate"),
+    (re.compile(r"post_attention_norm"), "norm_mlp"),
+    (re.compile(r"ssm\.a\b"), "ssm_a"),
+    (re.compile(r"ssm\.alpha"), "ssm_alpha"),
+    (re.compile(r"ssm\.beta"), "ssm_beta"),
+    (re.compile(r"ssm\.conv1d"), "ssm_conv1d"),
+    (re.compile(r"ssm\.dt"), "ssm_dt"),
+    (re.compile(r"ssm\.norm"), "ssm_norm"),
+    (re.compile(r"ssm\.out_proj"), "ssm_out"),
+]
+
+# Kimi K3 (language_model.model.layers.N.*) rules — applied after base HF rules.
+# Covers MLA (q_a/q_b/kv_a/kv_b), linear-attention/KDA (conv1d, f_a/f_b, b, A_log,
+# dt), hybrid residual branches, the vision tower (blocks.N, non-layer) and the
+# multimodal projector. Ordered so the more specific self_attn sub-branch names win.
+_KIMI_RULES: list[tuple[re.Pattern[str], str]] = [
+    # MLA (multi-head latent attention) projections
+    (re.compile(r"self_attn\.q_a_proj"), "attn_q_a"),
+    (re.compile(r"self_attn\.q_a_layernorm"), "attn_q_a_norm"),
+    (re.compile(r"self_attn\.q_b_proj"), "attn_q_b"),
+    (re.compile(r"self_attn\.kv_a_proj_with_mqa"), "attn_kv_a"),
+    (re.compile(r"self_attn\.kv_a_layernorm"), "attn_kv_a_norm"),
+    (re.compile(r"self_attn\.kv_b_proj"), "attn_kv_b"),
+    (re.compile(r"self_attn\.o_norm"), "attn_o_norm"),
+    # Latent-MoE routed-expert projections
+    (re.compile(r"block_sparse_moe\.routed_expert_norm"), "moe_routed_norm"),
+    (re.compile(r"block_sparse_moe\.routed_expert_up_proj"), "moe_routed_up"),
+    (re.compile(r"block_sparse_moe\.routed_expert_down_proj"), "moe_routed_down"),
+    # Linear-attention (KDA) convolution filters and projections
+    (re.compile(r"self_attn\.q_conv1d"), "attn_q_conv"),
+    (re.compile(r"self_attn\.k_conv1d"), "attn_k_conv"),
+    (re.compile(r"self_attn\.v_conv1d"), "attn_v_conv"),
+    (re.compile(r"self_attn\.f_a_proj"), "attn_f_a"),
+    (re.compile(r"self_attn\.f_b_proj"), "attn_f_b"),
+    (re.compile(r"self_attn\.b_proj"), "attn_b"),
+    (re.compile(r"self_attn\.g_proj"), "attn_gate"),
+    (re.compile(r"self_attn\.A_log"), "attn_a_log"),
+    (re.compile(r"self_attn\.dt_bias"), "attn_dt"),
+    # Hybrid linear-attention residual branches
+    (re.compile(r"self_attention_res_proj"), "attn_res_proj"),
+    (re.compile(r"self_attention_res_norm"), "attn_res_norm"),
+    (re.compile(r"mlp_res_proj"), "mlp_res_proj"),
+    (re.compile(r"mlp_res_norm"), "mlp_res_norm"),
+    (re.compile(r"output_attn_res_proj"), "attn_res_proj"),
+    (re.compile(r"output_attn_res_norm"), "attn_res_norm"),
+    # Vision tower (blocks.N → non-layer)
+    (re.compile(r"vision_tower\.encoder\.blocks\.\d+\.wqkv"), "vision_qkv"),
+    (re.compile(r"vision_tower\.encoder\.blocks\.\d+\.wo"), "vision_o"),
+    (re.compile(r"vision_tower\.encoder\.blocks\.\d+\.norm[01]"), "vision_norm"),
+    (re.compile(r"vision_tower\.encoder\.blocks\.\d+\.mlp\.fc[01]"), "vision_mlp"),
+    (re.compile(r"vision_tower\.encoder\.final_layernorm"), "vision_norm"),
+    (re.compile(r"vision_tower\.patch_embed\.pos_emb"), "vision_pos_emb"),
+    (re.compile(r"vision_tower\.patch_embed\.proj"), "vision_patch_embed"),
+    # Multimodal projector
+    (re.compile(r"mm_projector"), "mm_projector"),
 ]
 
 # GGUF-specific rules (applied after HF rules, before fallback)
@@ -58,6 +123,21 @@ _GGUF_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"token_embd"), "embed"),
     (re.compile(r"output\.weight"), "lm_head"),
     (re.compile(r"output_norm"), "norm_mlp"),
+]
+
+# Qwen3-Next / hybrid Mamba-aware GGUF rules (applied after base GGUF rules).
+# Order matters within this group: more specific ssm patterns first,
+# and ``ssm_a`` (a plain suffix) must come AFTER ``ssm_alpha``/``ssm_beta``.
+_GGUF_HYBRID_RULES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"blk\.\d+\.attn_gate"), "attn_gate"),
+    (re.compile(r"blk\.\d+\.post_attention_norm"), "norm_mlp"),
+    (re.compile(r"blk\.\d+\.ssm_alpha"), "ssm_alpha"),
+    (re.compile(r"blk\.\d+\.ssm_beta"), "ssm_beta"),
+    (re.compile(r"blk\.\d+\.ssm_conv1d"), "ssm_conv1d"),
+    (re.compile(r"blk\.\d+\.ssm_dt"), "ssm_dt"),
+    (re.compile(r"blk\.\d+\.ssm_norm"), "ssm_norm"),
+    (re.compile(r"blk\.\d+\.ssm_out"), "ssm_out"),
+    (re.compile(r"blk\.\d+\.ssm_a"), "ssm_a"),
 ]
 
 # GGUF MoE-specific rules
@@ -100,6 +180,14 @@ def map_name(name: str) -> tuple[int | None, str]:
         for pat, slot in _RULES:
             if pat.search(name):
                 return layer, slot
+        # Then Qwen3-Next hybrid rules
+        for pat, slot in _HF_HYBRID_RULES:
+            if pat.search(name):
+                return layer, slot
+        # Then Kimi K3 rules
+        for pat, slot in _KIMI_RULES:
+            if pat.search(name):
+                return layer, slot
         return layer, "other"
 
     # Try GGUF layer pattern
@@ -117,13 +205,26 @@ def map_name(name: str) -> tuple[int | None, str]:
         for pat, slot in _GGUF_RULES:
             if pat.search(name):
                 return layer, slot
+        # Then Qwen3-Next hybrid rules
+        for pat, slot in _GGUF_HYBRID_RULES:
+            if pat.search(name):
+                return layer, slot
         return layer, "other"
 
     # Non-layer tensors (embed, lm_head)
     for pat, slot in _RULES:
         if pat.search(name):
             return None, slot
+    for pat, slot in _HF_HYBRID_RULES:
+        if pat.search(name):
+            return None, slot
+    for pat, slot in _KIMI_RULES:
+        if pat.search(name):
+            return None, slot
     for pat, slot in _GGUF_RULES:
+        if pat.search(name):
+            return None, slot
+    for pat, slot in _GGUF_HYBRID_RULES:
         if pat.search(name):
             return None, slot
     return None, "other"
@@ -136,8 +237,13 @@ def _handle_moe_hf(name: str, layer: int) -> tuple[int, str]:
     if m:
         slot_map = {"gate": "mlp_gate", "up": "mlp_up", "down": "mlp_down"}
         return layer, slot_map[m.group(1)]
-    # Expert tensors → expert slot
+    # Kimi K3 shared experts (block_sparse_moe.shared_experts.*) → shared_expert
+    if re.search(r"block_sparse_moe\.shared_experts", name):
+        return layer, "shared_expert"
+    # Expert tensors → expert slot (both HF mlp.experts and Kimi block_sparse_moe)
     if re.search(r"mlp\.experts\.\d+\.(gate|up|down)_proj", name):
+        return layer, "expert"
+    if re.search(r"block_sparse_moe\.experts\.\d+\.w[123]", name):
         return layer, "expert"
     return layer, "other"
 
@@ -152,6 +258,10 @@ def extract_expert_id(name: str) -> int | None:
     m = re.search(r"mlp\.experts\.(\d+)\.(gate|up|down)_proj", name)
     if m:
         return int(m.group(1))
+    # Kimi K3: block_sparse_moe.experts.{e}.w[123]
+    m = re.search(r"block_sparse_moe\.experts\.(\d+)\.w[123]", name)
+    if m:
+        return int(m.group(1))
     # GGUF: handled differently (3D stacked tensor name doesn't contain expert ID)
     return None
 
@@ -161,6 +271,9 @@ def is_expert_tensor(name: str) -> bool:
     # HF: mlp.experts.{e}.(gate|up|down)_proj
     if re.search(r"mlp\.experts\.\d+\.(gate|up|down)_proj", name):
         return True
+    # Kimi K3: block_sparse_moe.experts.{e}.w[123]
+    if re.search(r"block_sparse_moe\.experts\.\d+\.w[123]", name):
+        return True
     # GGUF: ffn_(gate|up|down)_exps
     return bool(re.search(r"blk\.\d+\.ffn_(gate|up|down)_exps", name))
 
@@ -168,6 +281,9 @@ def is_expert_tensor(name: str) -> bool:
 def is_shared_expert(name: str) -> bool:
     """Check if a tensor is a shared expert tensor."""
     if re.search(r"shared_expert", name):
+        return True
+    # Kimi K3: block_sparse_moe.shared_experts.*
+    if re.search(r"block_sparse_moe\.shared_experts", name):
         return True
     return bool(re.search(r"blk\.\d+\.ffn_(gate|up|down)_shexp", name))
 
@@ -178,6 +294,10 @@ def get_moe_slot(name: str) -> str | None:
     m = re.search(r"mlp\.experts\.\d+\.(gate|up|down)_proj", name)
     if m:
         return m.group(1)
+    # Kimi K3: w1=gate, w2=up, w3=down
+    m = re.search(r"block_sparse_moe\.experts\.\d+\.w([123])", name)
+    if m:
+        return {"1": "gate", "2": "up", "3": "down"}[m.group(1)]
     # GGUF
     m = re.search(r"blk\.\d+\.ffn_(gate|up|down)_exps", name)
     if m:

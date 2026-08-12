@@ -84,7 +84,7 @@ class ExpertPanel:
 
 @dataclass
 class AtlasSpec:
-    """Versioned cartography convention loaded from atlas_spec.v2.1.json."""
+    """Versioned cartography convention loaded from atlas_spec.v2.3.json."""
     spec_version: int
     slots: list[str]
     channels: dict[str, Any]

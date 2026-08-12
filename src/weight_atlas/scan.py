@@ -142,10 +142,11 @@ def scan(
         subsample = embedding_spec.get('subsample_scatter', 5000)
         seeds = embedding_spec.get('seeds', {'pca': 0, 'umap': 0})
 
-        # Find embedding tensor
+        # Find embedding tensor (handle HF, GGUF, and prefixed VLM naming e.g.
+        # Kimi K3's ``language_model.model.embed_tokens.weight``).
         embed_tensor = None
         for h in handles:
-            if h.name in ('model.embed_tokens.weight', 'token_embd.weight'):
+            if h.name.endswith(('model.embed_tokens.weight', 'token_embd.weight')):
                 embed_tensor = h
                 break
 

@@ -1,29 +1,119 @@
-"""Safetensors loader: mmap, sharded, registry-ID ``safetensors``."""
+"""Safetensors loader: mmap, sharded, registry-ID ``safetensors``.
+
+Reads tensor payloads at the byte level (rather than via ``safetensors``'
+``get_tensor``) so that BF16 tensors load reliably without relying on the
+numpy backend's dtype registry, and so that MXFP4 ``weight_packed`` +
+``weight_scale`` pairs can be dequantized into a single float32 weight
+(see :mod:`weight_atlas.loaders.mxfp4`).
+"""
 
 from __future__ import annotations
 
 import json
+import re
 import struct
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-from safetensors import safe_open
 
 from weight_atlas.core.registry import register_loader
 from weight_atlas.core.types import TensorHandle
+from weight_atlas.loaders.mxfp4 import (
+    dequantize_mxfp4,
+    is_packed_tensor,
+    scale_name_for_packed,
+    weight_name_for_packed,
+)
 
 _HEADER_SIZE_FMT = "<Q"
 _HEADER_SIZE_SIZE = 8
 
+# safetensors dtype string -> little-endian numpy dtype.
+_DTYPE_MAP: dict[str, np.dtype] = {
+    "F64": np.dtype("<f8"),
+    "F32": np.dtype("<f4"),
+    "F16": np.dtype("<f2"),
+    "I64": np.dtype("<i8"),
+    "U64": np.dtype("<u8"),
+    "I32": np.dtype("<i4"),
+    "U32": np.dtype("<u4"),
+    "I16": np.dtype("<i2"),
+    "U16": np.dtype("<u2"),
+    "I8": np.dtype("i1"),
+    "U8": np.dtype("u1"),
+    "BOOL": np.dtype("?"),
+    "C64": np.dtype("<c8"),
+}
+_BF16 = "BF16"
+
+# Kimi-K3 MoE expert id extraction for dequantized handles.
+_KIMI_EXPERT_RE = re.compile(r"block_sparse_moe\.experts\.(\d+)")
+
 
 def _read_header(path: Path) -> dict[str, dict[str, Any]]:
     """Read the safetensors JSON header without loading tensor data."""
+    header, _ = _read_header_full(path)
+    return header
+
+
+def _read_header_full(path: Path) -> tuple[dict[str, dict[str, Any]], int]:
+    """Return ``(header, data_section_offset)`` for a safetensors file.
+
+    ``data_section_offset`` is the absolute file offset where tensor payloads
+    begin (immediately after the 8-byte length + JSON header).
+    """
     with open(path, "rb") as f:
         size = struct.unpack(_HEADER_SIZE_FMT, f.read(_HEADER_SIZE_SIZE))[0]
         data = json.loads(f.read(size))
-    return {k: v for k, v in data.items() if isinstance(v, dict)}
+    header = {k: v for k, v in data.items() if isinstance(v, dict)}
+    return header, _HEADER_SIZE_SIZE + size
+
+
+def _read_tensor_raw(path: Path, header: dict, name: str, data_offset: int) -> bytes:
+    """Read the raw little-endian payload bytes for a single tensor."""
+    start, end = header[name]["data_offsets"]
+    with open(path, "rb") as f:
+        f.seek(data_offset + start)
+        return f.read(end - start)
+
+
+def _read_tensor_uint8(path: Path, header: dict, name: str, data_offset: int) -> np.ndarray:
+    """Read a tensor's payload as a uint8 array (used for MXFP4 pairs)."""
+    raw = _read_tensor_raw(path, header, name, data_offset)
+    shape = tuple(int(x) for x in header[name]["shape"])
+    return np.frombuffer(raw, dtype=np.uint8).reshape(shape)
+
+
+def _from_raw(raw: bytes, dtype: str, shape: tuple[int, ...]) -> np.ndarray:
+    """Interpret raw little-endian bytes as a float32 array (BF16 aware).
+
+    BF16 (16-bit: sign|8-bit exp|7-bit mantissa) widens to float32 by shifting
+    the bit pattern left 16 — no bf16 numpy dtype registration required.
+    """
+    if dtype == _BF16:
+        bits = np.frombuffer(raw, dtype=np.dtype("<u2"))
+        f32 = (bits.astype(np.uint32) << np.uint32(16)).view(np.float32)
+        return f32.reshape(shape).copy()
+    np_dtype = _DTYPE_MAP.get(dtype)
+    if np_dtype is None:
+        raise ValueError(f"unsupported safetensors dtype {dtype!r}")
+    arr = np.frombuffer(raw, dtype=np_dtype)
+    return arr.reshape(shape).astype(np.float32, copy=False)
+
+
+def _load_tensor(path: Path, name: str) -> np.ndarray:
+    """Materialise a single tensor as float32 (self-contained, header re-read)."""
+    header, data_offset = _read_header_full(path)
+    raw = _read_tensor_raw(path, header, name, data_offset)
+    return _from_raw(raw, str(header[name]["dtype"]), tuple(int(x) for x in header[name]["shape"]))
+
+
+def _load_mxfp4_pair(path: Path, header: dict, packed_name: str, scale_name: str, data_offset: int) -> np.ndarray:
+    """Dequantize an MXFP4 ``weight_packed`` + ``weight_scale`` pair to float32."""
+    packed = _read_tensor_uint8(path, header, packed_name, data_offset)
+    scale = _read_tensor_uint8(path, header, scale_name, data_offset)
+    return dequantize_mxfp4(packed, scale)
 
 
 def _discover_files(path: Path) -> list[Path]:
@@ -45,40 +135,65 @@ class SafetensorsLoader:
     def open(self, path: Path) -> list[TensorHandle]:
         files = _discover_files(path)
         seen: dict[str, Path] = {}
-        entries: list[tuple[Path, str, tuple[int, ...], str]] = []
+
+        handles: list[TensorHandle] = []
         for f in files:
-            header = _read_header(f)
+            header, data_offset = _read_header_full(f)
+            entries: list[tuple[str, tuple[int, ...], str, int, int]] = []
             for name, info in header.items():
                 if name == "__metadata__":
                     continue
                 if name in seen:
-                    raise ValueError(
-                        f"duplicate tensor name {name!r} in {f} and {seen[name]}"
-                    )
+                    raise ValueError(f"duplicate tensor name {name!r} in {f} and {seen[name]}")
                 seen[name] = f
                 shape = tuple(int(x) for x in info["shape"])
                 dtype = str(info["dtype"])
-                entries.append((f, name, shape, dtype))
+                start, end = info["data_offsets"]
+                entries.append((name, shape, dtype, start, end))
 
-        handles: list[TensorHandle] = []
-        for f, name, shape, dtype in entries:
-            handles.append(
-                TensorHandle(
-                    name=name,
-                    shape=shape,
-                    dtype=dtype,
-                    loader=_make_loader(f, name),
+            # Names in this file for MXFP4 pair resolution.
+            names_in_file = {e[0] for e in entries}
+            consumed: set[str] = set()
+
+            for name, shape, dtype, _start, _end in entries:
+                if name in consumed:
+                    continue  # already merged into a dequantized MXFP4 handle
+                # MXFP4 packed tensor with a scale sibling in the same shard.
+                if is_packed_tensor(name):
+                    base = weight_name_for_packed(name)
+                    scale_name = scale_name_for_packed(name)
+                    if scale_name in names_in_file:
+                        m, k2 = shape[0], shape[1]
+                        handles.append(
+                            TensorHandle(
+                                name=base,
+                                shape=(m, k2 * 2),
+                                dtype="FP4_MXFP4",
+                                expert_id=_kimi_expert_id(base),
+                                loader=lambda f=f, n=name, s=scale_name, h=header, o=data_offset: _load_mxfp4_pair(f, h, n, s, o),
+                            )
+                        )
+                        consumed.add(name)
+                        consumed.add(scale_name)
+                        continue
+
+                handles.append(
+                    TensorHandle(
+                        name=name,
+                        shape=shape,
+                        dtype=dtype,
+                        loader=lambda f=f, n=name, h=header, o=data_offset, d=dtype, s=shape: _load_named(f, h, n, o, d, s),
+                    )
                 )
-            )
+
         return handles
 
 
-def _make_loader(f_path: Path, t_name: str) -> Callable[[], np.ndarray]:
-    return lambda: _load_tensor(f_path, t_name)
+def _load_named(path: Path, header: dict, name: str, data_offset: int, dtype: str, shape: tuple[int, ...]) -> np.ndarray:
+    raw = _read_tensor_raw(path, header, name, data_offset)
+    return _from_raw(raw, dtype, shape)
 
 
-def _load_tensor(path: Path, name: str) -> np.ndarray:
-    """Materialise a single tensor as float32 via the mmap-backed file."""
-    with safe_open(path, framework="np") as fp:
-        arr = fp.get_tensor(name)
-        return np.asarray(arr, dtype=np.float32)
+def _kimi_expert_id(name: str) -> int | None:
+    m = _KIMI_EXPERT_RE.search(name)
+    return int(m.group(1)) if m else None

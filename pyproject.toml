@@ -11,6 +11,7 @@ dependencies = [
     "scipy>=1.10",
     "matplotlib>=3.7",
     "tifffile>=2024.2",
+    "ml-dtypes>=0.5.4",
 ]
 
 [project.optional-dependencies]
@@ -54,3 +55,8 @@ no_implicit_optional = true
 warn_redundant_casts = true
 warn_unused_configs = true
 disallow_any_generics = false
+
+[dependency-groups]
+dev = [
+    "ruff>=0.16.1",
+]
