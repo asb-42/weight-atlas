@@ -54,38 +54,43 @@ class _SharedExpertDequant:
     full dequantization instead of ``n_experts`` (previously each sub-handle
     re-dequantized the whole 3D tensor on every ``load()`` — quadratic for MoE).
 
-    Shape convention: the gguf library reports ``tensor.shape`` with the expert
-    axis LAST (e.g. ``(hidden, hidden, n_experts)``) while ``tensor.data.shape``
-    (the actual memory layout) has the expert axis FIRST (e.g.
-    ``(n_experts, hidden, hidden)``). Everything here is derived from
-    ``actual_shape`` (the data layout) and experts are sliced along axis 0, so
-    slicing stays correct regardless of the header/report shape ordering.
+    Shape convention: GGUF reports the *logical* shape via ``tensor.shape`` with
+    the expert axis LAST (e.g. ``(hidden, hidden, n_experts)``). Quantized
+    tensors report a different ``tensor.data.shape`` (the byte layout, e.g.
+    ``(n_blocks, ..., block_bytes)``), so we must reshape the dequantized float
+    output to the LOGICAL ``tensor.shape`` and slice the last (expert) axis —
+    the gguf dequantizer returns elements in logical-shape order.
     """
 
     def __init__(
         self,
         data: np.ndarray,
         ggml_type: int,
-        actual_shape: tuple[int, ...],
+        logical_shape: tuple[int, ...],
     ) -> None:
-        if len(actual_shape) != 3:
+        if len(logical_shape) != 3:
             raise ValueError(
-                f"expected a 3D stacked expert tensor, got shape {actual_shape}"
+                f"expected a 3D stacked expert tensor, got shape {logical_shape}"
             )
         self._data = data
         self._ggml_type = ggml_type
-        self._shape = tuple(actual_shape)
+        self._shape = tuple(logical_shape)
         self._arr: np.ndarray | None = None
 
     def _ensure(self) -> np.ndarray:
         if self._arr is None:
             arr = dequantize(self._data.tobytes(), self._ggml_type)
+            if arr.size != int(np.prod(self._shape)):
+                raise ValueError(
+                    f"dequantized element count {arr.size} does not match logical "
+                    f"shape {self._shape}"
+                )
             self._arr = arr.reshape(self._shape).astype(np.float32)
         return self._arr
 
     def slice(self, expert_id: int) -> np.ndarray:
-        """Return the 2D float32 slice for one expert (axis 0 = expert axis)."""
-        return self._ensure()[expert_id, :, :]
+        """Return the 2D float32 slice for one expert (last axis = expert axis)."""
+        return self._ensure()[:, :, expert_id]
 
 
 @register_loader("gguf")
@@ -115,18 +120,19 @@ class GGUFLoader:
             reader = GGUFReader(str(f))
             for tensor in reader.tensors:
                 name = tensor.name
+                # Logical shape as reported by gguf (experts LAST for 3D MoE).
                 shape = tuple(int(x) for x in tensor.shape)
                 ggml_type = tensor.tensor_type.value
-                data = tensor.data  # This is the raw bytes or memmap
+                data = tensor.data  # raw bytes / memmap (byte layout for quantized)
 
-                # Check if this is a 3D MoE expert tensor
-                # Use data.shape since GGUF may report shape differently from memory layout
-                actual_shape = data.shape if hasattr(data, 'shape') else shape
-                if _is_moe_exps_tensor(name) and len(actual_shape) == 3:
-                    # Split into per-expert sub-handles sharing one dequantization
-                    n_experts = actual_shape[0]
-                    expert_shape = actual_shape[1:]  # (hidden, hidden)
-                    shared = _SharedExpertDequant(data, ggml_type, actual_shape)
+                # Check if this is a 3D MoE expert tensor using the LOGICAL shape
+                # (tensor.shape), NOT data.shape which is the quantized byte layout.
+                if _is_moe_exps_tensor(name) and len(shape) == 3:
+                    # Split into per-expert sub-handles sharing one dequantization.
+                    # Expert axis is the LAST dim of the logical shape.
+                    n_experts = shape[-1]
+                    expert_shape = shape[:-1]  # (hidden, hidden)
+                    shared = _SharedExpertDequant(data, ggml_type, shape)
                     for expert_id in range(n_experts):
                         handles.append(
                             TensorHandle(
