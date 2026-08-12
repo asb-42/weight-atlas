@@ -22,7 +22,7 @@
 {% if mc.in_slots < 0.8 or mc.unmapped > 0 %}
 <section class="banner banner--warning">
     <strong>Mapping Coverage:</strong>
-    {{ "%.1%" | format(mc.in_slots) }} in slots
+    {{ "%.1f%%" | format(mc.in_slots * 100) }} in slots
     ({{ mc.unmapped }} unmapped{% if mc.unmapped_tensors %}: {{ mc.unmapped_tensors | join(', ') }}{% endif %})
 </section>
 {% endif %}
@@ -32,7 +32,7 @@
 {% if ratio < 0.8 %}
 <section class="banner banner--warning">
     <strong>Mapping Coverage:</strong>
-    {{ "%.1%" | format(ratio) }} in slots
+    {{ "%.1f%%" | format(ratio * 100) }} in slots
     ({{ mc.total - mc.in_slots }} unmapped)
 </section>
 {% endif %}
@@ -58,6 +58,12 @@
 <section class="detail-section">
     <h3>Operations</h3>
     <div class="operations">
+        <form class="model-path-form" hx-post="/api/jobs/{{ job.job_id }}/model-path" hx-target="#model-path-status" hx-swap="innerHTML">
+            <label for="model_path">Model path</label>
+            <input type="text" id="model_path" name="model_path" value="{{ job.model_path }}" placeholder="/path/to/model.gguf">
+            <button type="submit">Set model path</button>
+        </form>
+        <span id="model-path-status"></span>
         <button hx-post="/api/jobs/{{ job.job_id }}/render/sheet" hx-target="#render-status" hx-swap="innerHTML" hx-indicator="#render-spinner">
             Render Sheets
         </button>
@@ -70,7 +76,7 @@
         <span id="render-spinner" class="htmx-indicator"><span class="spinner"></span> Working...</span>
         <span id="render-status"></span>
     </div>
-    <p class="hint">Sheets: hillshade + hypsometric tint + contours. Previews: auto-leveled 8-bit PNG for quick inspection. Re-scan: re-run full scan pipeline with current spec (overwrites existing artefacts).</p>
+    <p class="hint">Sheets: hillshade + hypsometric tint + contours. Previews: auto-leveled 8-bit PNG for quick inspection. Re-scan: re-run full scan pipeline with current spec (overwrites existing artefacts). Imported scans need the original model path set above before re-scanning.</p>
 </section>
 
 <section class="detail-section">

@@ -379,6 +379,43 @@ def create_router(
             content="",
         )
 
+    @router.post("/api/jobs/{job_id}/model-path")
+    async def set_model_path(job_id: str, request: Request) -> Response:
+        """Set/update the model path recorded on a job (enables re-scan of imports).
+
+        Imported scans often have ``model_path`` pointing at the artefacts
+        directory; this lets the user correct it so "Re-scan Model" can run.
+        """
+        job = job_queue.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="job not found")
+
+        payload = await _read_body(request)
+        model_path_str = payload.get("model_path", "").strip()
+        if not model_path_str:
+            raise HTTPException(status_code=400, detail="model_path required")
+
+        model_path = Path(model_path_str).resolve()
+        from weight_atlas.core.types import detect_loader
+        try:
+            detect_loader(model_path)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"not a scannable model: {exc}",
+            ) from exc
+        _require_allowed(model_path)
+
+        job_queue.update_model_path(job_id, str(model_path))
+        return Response(
+            status_code=200,
+            media_type="text/html",
+            content=(
+                f'<span class="hint">Model path updated to <code>{model_path}</code>. '
+                "You can now Re-scan.</span>"
+            ),
+        )
+
     @router.post("/api/import")
     async def import_scan(request: Request) -> JSONResponse:
         """Import an existing scan directory into the job database."""

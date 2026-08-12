@@ -617,6 +617,16 @@ class JobQueue:
         self._save(job)
         return job
 
+    def update_model_path(self, job_id: str, model_path: str) -> Job:
+        """Update the model path recorded on a job (e.g. for re-scanning an import)."""
+        job = self._load(job_id)
+        if job is None:
+            raise KeyError(f"job not found: {job_id}")
+        job.model_path = str(model_path)
+        job.updated_at = self._now()
+        self._save(job)
+        return job
+
     def get(self, job_id: str) -> Job | None:
         return self._load(job_id)
 

@@ -357,3 +357,37 @@ class TestRescan:
         r = client.post(f"/api/jobs/{job_id}/rescan")
         assert r.status_code == 202
         assert r.headers.get("HX-Redirect", "").startswith("/jobs/")
+
+    def test_set_model_path_enables_rescan_of_import(self, client, tmp_path: Path) -> None:
+        """Setting a scannable model path on an imported job lets rescan proceed."""
+        import numpy as np
+        from safetensors.numpy import save_file
+
+        scan_dir = tmp_path / "scan_mp"
+        scan_dir.mkdir(exist_ok=True)
+        with open(scan_dir / "fingerprint.json", "w") as f:
+            json.dump({"spec_version": 2, "model": {"n_tensors": 1, "n_layers": 1}, "tensors": {}}, f)
+        resp = client.post("/api/import", json={"scan_dir": str(scan_dir)})
+        assert resp.status_code == 200
+        job_id = resp.json()["job_id"]
+
+        # Rescan of the imported job (model_path = scan_dir) must be rejected.
+        r = client.post(f"/api/jobs/{job_id}/rescan")
+        assert r.status_code == 400
+
+        # Invalid model path rejected.
+        r = client.post(f"/api/jobs/{job_id}/model-path", json={"model_path": "/nonexistent/does-not-exist"})
+        assert r.status_code == 400
+
+        # Valid model file accepted; job.model_path updated.
+        model = tmp_path / "m.safetensors"
+        save_file({"model.layers.0.self_attn.q_proj.weight": np.zeros((4, 4), dtype=np.float32)}, str(model))
+        r = client.post(f"/api/jobs/{job_id}/model-path", json={"model_path": str(model)})
+        assert r.status_code == 200
+        job = client.get(f"/api/jobs/{job_id}").json()
+        assert job["model_path"] == str(model.resolve())
+
+        # Now rescan passes validation and redirects to the progress page.
+        r = client.post(f"/api/jobs/{job_id}/rescan")
+        assert r.status_code == 202
+        assert r.headers.get("HX-Redirect", "").startswith("/jobs/")
