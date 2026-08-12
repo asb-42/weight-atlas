@@ -316,8 +316,8 @@ def create_router(
 
         from weight_atlas.core.registry import get_renderer
         from weight_atlas.core.types import AtlasSpec, Field2D
-        from weight_atlas.fields.tif_io import read_tif
         from weight_atlas.fields.scaling import apply_scale
+        from weight_atlas.fields.tif_io import read_tif
 
         spec = AtlasSpec.from_json(Path("specs/atlas_spec.v2.1.json"))
         renderer_cls = get_renderer(renderer)

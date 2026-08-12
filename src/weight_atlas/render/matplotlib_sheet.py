@@ -10,7 +10,7 @@ matplotlib.use("Agg")  # noqa: E402 – must be set before pyplot import
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.colors import LightSource, LinearSegmentedColormap
+from matplotlib.colors import LinearSegmentedColormap
 
 from weight_atlas.core.registry import register_renderer
 from weight_atlas.core.types import AtlasSpec, Field2D
@@ -40,8 +40,6 @@ class MatplotlibSheet:
         out.mkdir(parents=True, exist_ok=True)
         sheet = spec.sheet
         dpi = int(sheet["dpi"])
-        azdeg = float(sheet["light_azdeg"])
-        altdeg = float(sheet["light_altdeg"])
         contour_levels = int(sheet.get("contour_levels", 12))
 
         data = field.data

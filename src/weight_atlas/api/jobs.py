@@ -399,8 +399,8 @@ class JobQueue:
             try:
                 from weight_atlas.core.registry import get_renderer
                 from weight_atlas.core.types import AtlasSpec, Field2D
-                from weight_atlas.fields.tif_io import read_tif
                 from weight_atlas.fields.scaling import apply_scale
+                from weight_atlas.fields.tif_io import read_tif
 
                 spec = AtlasSpec.from_json(Path("specs/atlas_spec.v2.1.json"))
                 renderer = get_renderer("sheet")()
@@ -504,8 +504,8 @@ class JobQueue:
         """Auto-render sheet PNGs from scan artefacts (best-effort)."""
         from weight_atlas.core.registry import get_renderer
         from weight_atlas.core.types import Field2D
-        from weight_atlas.fields.tif_io import read_tif
         from weight_atlas.fields.scaling import apply_scale
+        from weight_atlas.fields.tif_io import read_tif
 
         renderer = get_renderer("sheet")()
         render_dir = out_dir / "render"
