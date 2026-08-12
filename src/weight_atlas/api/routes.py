@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from weight_atlas.api.jobs import JobQueue, JobStatus
@@ -311,12 +311,13 @@ def create_router(
         )
 
     @router.post("/api/jobs/{job_id}/rescan")
-    async def rescan_job(job_id: str) -> JSONResponse:
+    async def rescan_job(job_id: str) -> Response:
         """Re-run the full scan pipeline for a job.
 
         Enqueues a rescan job on the worker thread instead of running the
         (potentially very slow) scan inline on the event loop, so other
-        requests keep being served.
+        requests keep being served. The HTMX client is redirected to the new
+        job's live progress page.
         """
         job = job_queue.get(job_id)
         if job is None:
@@ -326,14 +327,37 @@ def create_router(
         if not out_dir.exists():
             raise HTTPException(status_code=404, detail="output directory not found")
 
+        # Validate the model path is actually scannable before enqueuing. An
+        # imported scan's model_path often points at the artefacts directory
+        # (not a model), in which case the re-scan would silently fail in the
+        # worker and leave a stale fingerprint on disk.
+        from weight_atlas.core.types import detect_loader
+        model_path = Path(job.model_path)
+        try:
+            detect_loader(model_path)
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"cannot re-scan: {exc}. This job was imported and its model "
+                    "path is not a scannable model. Re-import the scan with the "
+                    "original model path, or submit a new scan."
+                ),
+            ) from exc
+
         new_job = job_queue.submit_rescan(job_id)
-        return JSONResponse(
-            {"status": "queued", "job_id": new_job.job_id, "job": new_job.to_dict()}
+        return Response(
+            status_code=202,
+            headers={"HX-Redirect": f"/jobs/{new_job.job_id}"},
+            content="",
         )
 
     @router.post("/api/jobs/{job_id}/render/{renderer:path}")
-    async def render_job(job_id: str, renderer: str) -> JSONResponse:
-        """Trigger rendering for a job (enqueued on the worker thread)."""
+    async def render_job(job_id: str, renderer: str) -> Response:
+        """Trigger rendering for a job (enqueued on the worker thread).
+
+        Redirects the HTMX client to the new job's live progress page.
+        """
         job = job_queue.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="job not found")
@@ -349,8 +373,10 @@ def create_router(
             raise HTTPException(status_code=404, detail=f"unknown renderer: {renderer}") from None
 
         new_job = job_queue.submit_render(job_id, renderer)
-        return JSONResponse(
-            {"status": "queued", "job_id": new_job.job_id, "job": new_job.to_dict()}
+        return Response(
+            status_code=202,
+            headers={"HX-Redirect": f"/jobs/{new_job.job_id}"},
+            content="",
         )
 
     @router.post("/api/import")

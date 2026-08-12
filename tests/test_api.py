@@ -325,3 +325,35 @@ class TestPathConfinement:
         with TestClient(app) as client:
             resp = client.post("/api/import", json={"scan_dir": str(scan_dir), "model_path": str(fake_model)})
             assert resp.status_code == 403
+
+
+class TestRescan:
+    def test_rescan_rejects_unscannable_model_path(self, client, tmp_path: Path) -> None:
+        """An imported scan whose model_path points at a non-model dir must fail loudly.
+
+        Regression: rescan used to enqueue a job that silently failed, leaving a
+        stale fingerprint (e.g. a Qwen3-Next model stuck at 47% coverage from an
+        old scan) with no explanation.
+        """
+        scan_dir = tmp_path / "scan_no_model"
+        scan_dir.mkdir(exist_ok=True)
+        with open(scan_dir / "fingerprint.json", "w") as f:
+            json.dump({"spec_version": 2, "model": {"n_tensors": 1, "n_layers": 1}, "tensors": {}}, f)
+
+        resp = client.post("/api/import", json={"scan_dir": str(scan_dir)})
+        assert resp.status_code == 200
+        job_id = resp.json()["job_id"]
+
+        r = client.post(f"/api/jobs/{job_id}/rescan")
+        assert r.status_code == 400
+        assert "not a scannable model" in r.text
+
+    def test_rescan_valid_model_redirects_to_progress(self, client, fake_model: Path) -> None:
+        """A rescan with a valid model path returns 202 + an HX-Redirect."""
+        resp = client.post("/api/jobs", json={"model_path": str(fake_model)})
+        assert resp.status_code == 200
+        job_id = resp.json()["job_id"]
+
+        r = client.post(f"/api/jobs/{job_id}/rescan")
+        assert r.status_code == 202
+        assert r.headers.get("HX-Redirect", "").startswith("/jobs/")
