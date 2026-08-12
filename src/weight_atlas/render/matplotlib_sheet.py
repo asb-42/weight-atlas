@@ -94,38 +94,53 @@ class MatplotlibSheet:
                 extent=(-0.5, n_cols - 0.5, n_rows - 0.5, -0.5),
             )
 
-        ax.set_xlabel("slot")
-        ax.set_ylabel("layer")
+        # Axis labels
+        ax.set_xlabel("slot", fontsize=10, fontweight="bold")
+        ax.set_ylabel("layer", fontsize=10, fontweight="bold")
+
         # Handle upsampled data: col_labels may have fewer entries than n_cols
         if len(field.col_labels) == n_cols:
-            ax.set_xticks(range(n_cols))
-            ax.set_xticklabels(field.col_labels, rotation=90, fontsize=6)
+            step = max(1, n_cols // 20)
+            ax.set_xticks(range(0, n_cols, step))
+            ax.set_xticklabels([field.col_labels[i] for i in range(0, n_cols, step)],
+                             rotation=90, fontsize=7, ha="center")
         elif len(field.col_labels) > 0:
-            # Upsampled: show ticks at original positions
             n_labels = len(field.col_labels)
             tick_positions = [i * n_cols // n_labels for i in range(n_labels)]
             ax.set_xticks(tick_positions)
-            ax.set_xticklabels(field.col_labels, rotation=90, fontsize=6)
+            ax.set_xticklabels(field.col_labels, rotation=90, fontsize=7, ha="center")
+
         if len(field.row_labels) == n_rows:
-            ax.set_yticks(range(n_rows))
-            ax.set_yticklabels(field.row_labels, fontsize=6)
+            step = max(1, n_rows // 20)
+            ax.set_yticks(range(0, n_rows, step))
+            ax.set_yticklabels([field.row_labels[i] for i in range(0, n_rows, step)],
+                             fontsize=7)
         elif len(field.row_labels) > 0:
             n_labels = len(field.row_labels)
             tick_positions = [i * n_rows // n_labels for i in range(n_labels)]
             ax.set_yticks(tick_positions)
-            ax.set_yticklabels(field.row_labels, fontsize=6)
-        ax.set_title(f"{field.channel} – raw")
+            ax.set_yticklabels(field.row_labels, fontsize=7)
 
-        # Colorbar/legend showing actual data range
+        # Title with channel and transformation info
+        ch_spec = spec.channels.get(field.channel, {})
+        transform_parts = []
+        if ch_spec.get("pre"):
+            transform_parts.append(ch_spec["pre"])
+        if ch_spec.get("scale", {}).get("type"):
+            transform_parts.append(ch_spec["scale"]["type"])
+        transform_str = " → ".join(transform_parts) if transform_parts else "raw"
+        ax.set_title(f"{field.channel}: {transform_str}", fontsize=12, fontweight="bold")
+
+        # Colorbar with actual percentile values
         if finite.any():
             vals = data[finite]
-            vmin = float(np.min(vals))
-            vmax = float(np.max(vals))
-            # Create a scalar mappable for the colorbar
+            p10 = float(np.quantile(vals, 0.1))
+            p50 = float(np.quantile(vals, 0.5))
+            p90 = float(np.quantile(vals, 0.9))
             sm = plt.cm.ScalarMappable(cmap=_HYPSO, norm=plt.Normalize(vmin=0, vmax=1))
             sm.set_array([])
             cbar = fig.colorbar(sm, ax=ax, fraction=0.046, pad=0.04)
-            cbar.set_label(f"Value range: {vmin:.2f} – {vmax:.2f}", fontsize=8)
+            cbar.set_label(f"p10={p10:.3f}  p50={p50:.3f}  p90={p90:.3f}", fontsize=8)
             cbar.ax.tick_params(labelsize=6)
 
         # Degenerate channel banner on PNG
