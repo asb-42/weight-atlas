@@ -14,7 +14,11 @@ import numpy as np
 class TensorHandle:
     """Lazy handle to a tensor inside a model file.
 
-    ``load()`` materialises the tensor as float32 only when called.
+    ``load()`` materialises the tensor as float32 on first call and memoizes
+    the result, so computing N statistics from the same handle performs a
+    single load/dequantization instead of N (the scan pipeline computes 6-7
+    stats per tensor — without memoization that multiplies I/O and runtime by
+    the stat count).
     """
 
     def __init__(
@@ -30,10 +34,14 @@ class TensorHandle:
         self.dtype = dtype
         self._loader = loader
         self.expert_id = expert_id  # For MoE expert tensors
+        self._cache: np.ndarray | None = None
+        self._loaded = False
 
     def load(self) -> np.ndarray:
-        arr = self._loader()
-        return arr.astype(np.float32, copy=False)
+        if not self._loaded:
+            self._cache = self._loader().astype(np.float32, copy=False)
+            self._loaded = True
+        return self._cache
 
 
 @dataclass

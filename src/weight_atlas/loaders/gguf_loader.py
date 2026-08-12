@@ -46,6 +46,37 @@ def _is_moe_exps_tensor(name: str) -> bool:
     return any(pattern in name for pattern in _MOE_EXPS_PATTERNS)
 
 
+class _SharedExpertDequant:
+    """Dequantize a 3D stacked GGUF expert tensor exactly once, then slice.
+
+    All per-expert sub-handles of one stacked tensor share a single
+    ``_SharedExpertDequant``, so a layer with ``n_experts`` experts performs one
+    full dequantization instead of ``n_experts`` (previously each sub-handle
+    re-dequantized the whole 3D tensor on every ``load()`` — quadratic for MoE).
+    """
+
+    def __init__(
+        self,
+        data: np.ndarray,
+        ggml_type: int,
+        shape: tuple[int, ...],
+    ) -> None:
+        self._data = data
+        self._ggml_type = ggml_type
+        self._shape = tuple(shape)
+        self._arr: np.ndarray | None = None
+
+    def _ensure(self) -> np.ndarray:
+        if self._arr is None:
+            arr = dequantize(self._data.tobytes(), self._ggml_type)
+            self._arr = arr.reshape(self._shape).astype(np.float32)
+        return self._arr
+
+    def slice(self, expert_id: int) -> np.ndarray:
+        """Return the 2D float32 slice for one expert (last axis)."""
+        return self._ensure()[:, :, expert_id]
+
+
 @register_loader("gguf")
 class GGUFLoader:
     """Memory-mapped GGUF loader with lazy dequantization.
@@ -74,16 +105,17 @@ class GGUFLoader:
                 # Use data.shape since GGUF may report shape differently from memory layout
                 actual_shape = data.shape if hasattr(data, 'shape') else shape
                 if _is_moe_exps_tensor(name) and len(actual_shape) == 3:
-                    # Split into per-expert sub-handles
+                    # Split into per-expert sub-handles sharing one dequantization
                     n_experts = actual_shape[0]
                     expert_shape = actual_shape[1:]  # (hidden, hidden)
+                    shared = _SharedExpertDequant(data, ggml_type, shape)
                     for expert_id in range(n_experts):
                         handles.append(
                             TensorHandle(
                                 name=f"{name}[{expert_id}]",
                                 shape=expert_shape,
                                 dtype=f"ggml_{ggml_type}",
-                                loader=self._make_expert_loader(data, ggml_type, shape, expert_id),
+                                loader=lambda s=shared, e=expert_id: s.slice(e),
                                 expert_id=expert_id,
                             )
                         )
@@ -104,26 +136,7 @@ class GGUFLoader:
     ) -> Callable[[], np.ndarray]:
         return lambda: self._load_tensor(data, ggml_type, shape)
 
-    def _make_expert_loader(
-        self, data: np.ndarray, ggml_type: int, shape: tuple[int, ...], expert_id: int
-    ) -> Callable[[], np.ndarray]:
-        return lambda: self._load_expert_tensor(data, ggml_type, shape, expert_id)
-
     def _load_tensor(self, data: np.ndarray, ggml_type: int, shape: tuple[int, ...]) -> np.ndarray:
         """Materialise a single tensor as float32."""
         arr = dequantize(data.tobytes(), ggml_type)
         return arr.reshape(shape).astype(np.float32)
-
-    def _load_expert_tensor(
-        self, data: np.ndarray, ggml_type: int, shape: tuple[int, ...], expert_id: int
-    ) -> np.ndarray:
-        """Materialise a single expert slice from a 3D stacked tensor.
-
-        GGUF stores 3D expert tensors as (hidden, hidden, n_experts) where
-        the last dimension is the expert index.
-        """
-        # Load the full 3D tensor
-        arr = dequantize(data.tobytes(), ggml_type)
-        arr_3d = arr.reshape(shape)
-        # Return the 2D slice for this expert (last dimension)
-        return arr_3d[:, :, expert_id].astype(np.float32)

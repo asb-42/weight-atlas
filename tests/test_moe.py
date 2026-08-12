@@ -313,6 +313,83 @@ class TestGGUF3DSplit:
         # 4 layers × 24 = 96 expert sub-handles
         assert len(expert_handles) == 4 * 3 * 8
 
+    def test_gguf_moe_detect_moe_uses_expert_id(self, gguf_moe_model):
+        """detect_moe must use TensorStats.expert_id for GGUF-split names.
+
+        GGUF expert sub-handles are named ``blk.N.ffn_*_exps.weight[E]`` where the
+        expert id is NOT parseable from the name string (HF-style). Regression test
+        for Qwen3.6-35B-A3B (qwen35moe) detection.
+        """
+        from weight_atlas.loaders.gguf_loader import GGUFLoader
+
+        loader = GGUFLoader()
+        handles = loader.open(gguf_moe_model)
+        stats = [TensorStats(name=h.name, shape=h.shape, spectral_norm=1.0, expert_id=h.expert_id) for h in handles]
+
+        moe_info = detect_moe(stats)
+        assert moe_info["num_experts"] == 8
+        assert moe_info["shared_expert"] is True
+        assert moe_info["num_layers"] == 4
+
+    def test_gguf_moe_panels_use_expert_id(self, gguf_moe_model):
+        """Expert panels must rasterize GGUF-split expert handles."""
+        from weight_atlas.core.types import AtlasSpec
+        from weight_atlas.fields.rasterizer import rasterize_expert_panels
+        from weight_atlas.loaders.gguf_loader import GGUFLoader
+
+        spec = AtlasSpec(
+            spec_version=1,
+            slots=["embed", "attn_q", "attn_k", "attn_v", "attn_o", "mlp_gate", "mlp_up", "mlp_down"],
+            channels={"height": {"stat": "spectral_norm", "scale": {"type": "log1p"}}},
+            grid={"upsample": 2, "smooth_sigma": 1.0},
+            sheet={"contour_levels": 4, "light_azdeg": 315, "light_altdeg": 45, "dpi": 72},
+            seeds={"svd": 0},
+        )
+
+        loader = GGUFLoader()
+        handles = loader.open(gguf_moe_model)
+        stats = [TensorStats(name=h.name, shape=h.shape, spectral_norm=1.0, expert_id=h.expert_id) for h in handles]
+
+        panels = rasterize_expert_panels(stats, spec, "spectral_norm")
+        assert len(panels) == 3
+        for panel in panels:
+            assert panel.n_layers == 4
+            assert panel.n_experts == 8
+
+    def test_gguf_moe_full_scan_produces_panels_and_moe_meta(self, gguf_moe_model, tmp_path):
+        """Full scan() of a GGUF MoE model must emit expert-panel TIFFs and MoE metadata.
+
+        Regression test for the silent data-loss bug where GGUF MoE expert
+        panels (field_expert_*) and ``model.moe`` were dropped even though the
+        loader produces expert sub-handles.
+        """
+        import json
+
+        from weight_atlas.core.types import AtlasSpec
+        from weight_atlas.scan import scan as run_scan
+
+        spec = AtlasSpec(
+            spec_version=1,
+            slots=["embed", "attn_q", "attn_k", "attn_v", "attn_o", "mlp_gate", "mlp_up", "mlp_down"],
+            channels={"height": {"stat": "spectral_norm", "scale": {"type": "log1p"}}},
+            grid={"upsample": 2, "smooth_sigma": 1.0},
+            sheet={"contour_levels": 4, "light_azdeg": 315, "light_altdeg": 45, "dpi": 72},
+            seeds={"svd": 0},
+        )
+
+        out = tmp_path / "scan_out"
+        run_scan(gguf_moe_model, out, spec)
+
+        # Expert panel TIFFs must exist for every slot × channel.
+        for slot in ("mlp_gate", "mlp_up", "mlp_down"):
+            assert (out / f"field_expert_{slot}_height_raw.tif").exists(), f"missing panel {slot}"
+
+        # Fingerprint must carry MoE metadata.
+        fp = json.loads((out / "fingerprint.json").read_text())
+        assert fp["model"]["moe"]["num_experts"] == 8
+        assert fp["model"]["moe"]["shared_expert"] is True
+        assert fp["model"]["moe"]["num_layers"] == 4
+
     def test_expert_subhandle_has_expert_id(self, gguf_moe_model):
         """Expert sub-handles should have expert_id set."""
         from weight_atlas.loaders.gguf_loader import GGUFLoader

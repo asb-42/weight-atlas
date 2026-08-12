@@ -262,3 +262,40 @@ class TestArtefactRoute:
 
         resp = client.get(f"/models/{imported_job_id}/artifacts/malicious.exe")
         assert resp.status_code == 403
+
+
+class TestPathConfinement:
+    """When model_roots is configured, paths outside the allowlist are rejected."""
+
+    def test_create_job_rejects_path_outside_roots(self, tmp_path: Path, spec_path: Path, fake_model: Path) -> None:
+        output_root = tmp_path / "output"
+        output_root.mkdir(exist_ok=True)
+
+        app = create_app(
+            db_path=tmp_path / "jobs.db",
+            spec_path=spec_path,
+            output_root=output_root,
+            model_roots=[output_root],  # fake_model lives outside output_root
+        )
+        with TestClient(app) as client:
+            resp = client.post("/api/jobs", json={"model_path": str(fake_model)})
+            assert resp.status_code == 403
+
+    def test_import_rejects_path_outside_roots(self, tmp_path: Path, spec_path: Path, fake_model: Path) -> None:
+        output_root = tmp_path / "output"
+        output_root.mkdir(exist_ok=True)
+        # A valid-looking scan dir OUTSIDE the allowed roots.
+        scan_dir = tmp_path / "external_scan"
+        scan_dir.mkdir(exist_ok=True)
+        with open(scan_dir / "fingerprint.json", "w") as f:
+            json.dump({"spec_version": 2, "model": {"n_tensors": 1, "n_layers": 1}, "tensors": {}}, f)
+
+        app = create_app(
+            db_path=tmp_path / "jobs.db",
+            spec_path=spec_path,
+            output_root=output_root,
+            model_roots=[output_root],
+        )
+        with TestClient(app) as client:
+            resp = client.post("/api/import", json={"scan_dir": str(scan_dir), "model_path": str(fake_model)})
+            assert resp.status_code == 403

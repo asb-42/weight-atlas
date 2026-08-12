@@ -166,11 +166,20 @@ class JobQueue:
         job.updated_at = now
 
         # Determine job type from message field
-        job_type = job.message if job.message in ("compare", "scan") else "scan"
+        message = job.message
+        if message == "compare":
+            job_type = "compare"
+        elif message.startswith("render:"):
+            job_type = "render"
+        else:
+            job_type = "scan"
+        renderer_id = message.split(":", 1)[1] if job_type == "render" else None
         if job_type == "scan":
             job.message = "Starting scan..."
-        else:
+        elif job_type == "compare":
             job.message = "Starting compare..."
+        else:
+            job.message = "Starting render..."
 
         self._save(job)
         self._on_job(job)
@@ -190,6 +199,9 @@ class JobQueue:
             if job_type == "compare":
                 progress_cb(0.2, "Comparing models...")
                 artefacts = self._run_compare(job, spec, progress_cb)
+            elif job_type == "render":
+                progress_cb(0.2, "Rendering sheets...")
+                artefacts = self._render_job(job, spec, renderer_id or "sheet", progress_cb)
             else:
                 from weight_atlas.scan import scan as run_scan
                 progress_cb(0.1, "Loading model...")
@@ -305,6 +317,60 @@ class JobQueue:
 
         return all_artefacts
 
+    def _render_job(
+        self,
+        job: Job,
+        spec: Any,
+        renderer_id: str,
+        progress_cb: Callable[[float, str], None],
+    ) -> list[str]:
+        """Render all channels of a completed scan (runs on the worker thread)."""
+        from weight_atlas.core.registry import get_renderer
+        from weight_atlas.fields.rasterizer import load_channel_field
+
+        out_dir = Path(job.out_dir)
+        render_dir = out_dir / "render"
+        render_dir.mkdir(exist_ok=True)
+
+        model_name = Path(job.model_path).name or out_dir.name
+        renderer_obj = get_renderer(renderer_id)()
+
+        channels: set[str] = set()
+        for tif in out_dir.glob("field_*.tif"):
+            core = tif.name[len("field_"):-len(".tif")]
+            if core.endswith("_raw"):
+                channels.add(core[:-len("_raw")])
+            elif core.endswith("_smooth"):
+                channels.add(core[:-len("_smooth")])
+
+        produced: list[str] = []
+        total = max(1, len(channels))
+        for i, channel in enumerate(sorted(channels)):
+            progress_cb(0.2 + 0.6 * i / total, f"Rendering {channel}...")
+            field = load_channel_field(out_dir, channel, spec, model_name=model_name)
+            if field is None:
+                continue
+            try:
+                paths = renderer_obj.render(field, spec, render_dir)
+                produced.extend(str(p.name) for p in paths)
+            except Exception as e:  # noqa: BLE001 — per-channel render is best-effort
+                produced.append(f"Error rendering {channel}: {e}")
+
+        if renderer_id == "sheet":
+            from weight_atlas.render.preview import PreviewRenderer
+            preview_renderer = PreviewRenderer()
+            for channel in sorted(channels):
+                field = load_channel_field(out_dir, channel, spec, model_name=model_name)
+                if field is None:
+                    continue
+                try:
+                    paths = preview_renderer.render(field, spec, render_dir)
+                    produced.extend(str(p.name) for p in paths)
+                except Exception as e:  # noqa: BLE001
+                    produced.append(f"Error rendering preview {channel}: {e}")
+
+        return produced
+
     def _discover_channels_from_manifest(self, manifest: dict[str, str]) -> list[str]:
         """Discover channel names from manifest keys."""
         channels: set[str] = set()
@@ -360,6 +426,50 @@ class JobQueue:
             created_at=now,
             updated_at=now,
             message="compare",
+        )
+        self._save(job)
+        self._queue.put(job.job_id)
+        return job
+
+    def submit_rescan(self, job_id: str) -> Job:
+        """Enqueue a re-scan of an existing job into the same output directory.
+
+        Offloads the (potentially very slow) full scan off the event loop onto
+        the single worker thread, like a normal scan job.
+        """
+        original = self._load(job_id)
+        if original is None:
+            raise KeyError(f"job not found: {job_id}")
+        now = self._now()
+        job = Job(
+            job_id=str(uuid.uuid4()),
+            model_path=original.model_path,
+            out_dir=original.out_dir,
+            spec_path=original.spec_path,
+            status=JobStatus.QUEUED,
+            created_at=now,
+            updated_at=now,
+            message="scan",
+        )
+        self._save(job)
+        self._queue.put(job.job_id)
+        return job
+
+    def submit_render(self, job_id: str, renderer: str) -> Job:
+        """Enqueue a render of a completed scan (worker thread, not event loop)."""
+        original = self._load(job_id)
+        if original is None:
+            raise KeyError(f"job not found: {job_id}")
+        now = self._now()
+        job = Job(
+            job_id=str(uuid.uuid4()),
+            model_path=original.model_path,
+            out_dir=original.out_dir,
+            spec_path=original.spec_path,
+            status=JobStatus.QUEUED,
+            created_at=now,
+            updated_at=now,
+            message=f"render:{renderer}",
         )
         self._save(job)
         self._queue.put(job.job_id)

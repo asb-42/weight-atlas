@@ -19,6 +19,7 @@ def create_router(
     templates: Jinja2Templates,
     spec_path: Path,
     output_root: Path,
+    model_roots: list[Path] | None = None,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -29,6 +30,27 @@ def create_router(
             return await request.json()
         form = await request.form()
         return {key: str(value) for key, value in form.items()}
+
+    def _require_allowed(path: Path) -> None:
+        """Reject paths outside the configured allowlist.
+
+        When ``model_roots`` is None the check is a no-op (local-only,
+        backward-compatible default). Operators exposing the UI beyond
+        loopback should pass an allowlist of model/scan root directories.
+        """
+        if model_roots is None:
+            return
+        resolved = path.resolve()
+        for root in model_roots:
+            try:
+                resolved.relative_to(root.resolve())
+                return
+            except ValueError:
+                continue
+        raise HTTPException(
+            status_code=403,
+            detail=f"path outside allowed roots: {path}",
+        )
 
     @router.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
@@ -63,6 +85,7 @@ def create_router(
             raise HTTPException(
                 status_code=404, detail=f"model path not found: {model_path}"
             )
+        _require_allowed(model_path)
 
         out_dir = output_root / model_path.name
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -229,6 +252,8 @@ def create_router(
             raise HTTPException(status_code=404, detail=f"dir_a not found: {dir_a}")
         if not dir_b.exists():
             raise HTTPException(status_code=404, detail=f"dir_b not found: {dir_b}")
+        _require_allowed(dir_a)
+        _require_allowed(dir_b)
 
         out_dir = output_root / f"compare_{dir_a.name}_vs_{dir_b.name}"
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -277,7 +302,12 @@ def create_router(
 
     @router.post("/api/jobs/{job_id}/rescan")
     async def rescan_job(job_id: str) -> JSONResponse:
-        """Re-run the full scan pipeline for a job."""
+        """Re-run the full scan pipeline for a job.
+
+        Enqueues a rescan job on the worker thread instead of running the
+        (potentially very slow) scan inline on the event loop, so other
+        requests keep being served.
+        """
         job = job_queue.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="job not found")
@@ -286,35 +316,14 @@ def create_router(
         if not out_dir.exists():
             raise HTTPException(status_code=404, detail="output directory not found")
 
-        from weight_atlas.core.types import AtlasSpec
-        from weight_atlas.scan import scan as run_scan
-
-        # Load spec from job spec_path, or fallback to canonical default
-        spec_path = Path(job.spec_path) if job.spec_path else None
-        if spec_path is not None and spec_path.exists():
-            spec = AtlasSpec.from_json(spec_path)
-        else:
-            spec = load_default_spec()
-
-        # Re-run scan (overwrites existing artefacts)
-        model_path = Path(job.model_path)
-        if not model_path.exists():
-            raise HTTPException(status_code=404, detail=f"model path not found: {model_path}")
-
-        artefacts = [str(a) for a in run_scan(model_path, out_dir, spec)]
-
-        # Auto-render sheets after scan
-        try:
-            render_artefacts = job_queue._auto_render_sheets(out_dir, spec)
-            artefacts.extend(render_artefacts)
-        except Exception:
-            pass  # Rendering is best-effort
-
-        return JSONResponse({"status": "ok", "artefacts": artefacts})
+        new_job = job_queue.submit_rescan(job_id)
+        return JSONResponse(
+            {"status": "queued", "job_id": new_job.job_id, "job": new_job.to_dict()}
+        )
 
     @router.post("/api/jobs/{job_id}/render/{renderer:path}")
     async def render_job(job_id: str, renderer: str) -> JSONResponse:
-        """Trigger rendering for a job."""
+        """Trigger rendering for a job (enqueued on the worker thread)."""
         job = job_queue.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="job not found")
@@ -324,53 +333,15 @@ def create_router(
             raise HTTPException(status_code=404, detail="output directory not found")
 
         from weight_atlas.core.registry import get_renderer
-        from weight_atlas.core.types import load_default_spec
-        from weight_atlas.fields.rasterizer import load_channel_field
+        try:
+            get_renderer(renderer)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"unknown renderer: {renderer}") from None
 
-        spec = load_default_spec()
-        renderer_cls = get_renderer(renderer)
-        renderer_obj = renderer_cls()
-
-        render_dir = out_dir / "render"
-        render_dir.mkdir(exist_ok=True)
-
-        model_name = Path(job.model_path).name or out_dir.name
-
-        # Discover channels
-        channels: set[str] = set()
-        for tif in out_dir.glob("field_*.tif"):
-            core = tif.name[len("field_"):-len(".tif")]
-            if core.endswith("_raw"):
-                channels.add(core[:-len("_raw")])
-            elif core.endswith("_smooth"):
-                channels.add(core[:-len("_smooth")])
-
-        produced: list[str] = []
-        for channel in channels:
-            field = load_channel_field(out_dir, channel, spec, model_name=model_name)
-            if field is None:
-                continue
-            try:
-                paths = renderer_obj.render(field, spec, render_dir)
-                produced.extend(str(p.name) for p in paths)
-            except Exception as e:
-                produced.append(f"Error rendering {channel}: {e}")
-
-        # Also render preview for each channel
-        if renderer == "sheet":
-            from weight_atlas.render.preview import PreviewRenderer
-            preview_renderer = PreviewRenderer()
-            for channel in channels:
-                field = load_channel_field(out_dir, channel, spec, model_name=model_name)
-                if field is None:
-                    continue
-                try:
-                    paths = preview_renderer.render(field, spec, render_dir)
-                    produced.extend(str(p.name) for p in paths)
-                except Exception as e:
-                    produced.append(f"Error rendering preview {channel}: {e}")
-
-        return JSONResponse({"status": "ok", "renderer": renderer, "produced": produced})
+        new_job = job_queue.submit_render(job_id, renderer)
+        return JSONResponse(
+            {"status": "queued", "job_id": new_job.job_id, "job": new_job.to_dict()}
+        )
 
     @router.post("/api/import")
     async def import_scan(request: Request) -> JSONResponse:
@@ -383,6 +354,7 @@ def create_router(
         scan_dir = Path(scan_dir_str).resolve()
         if not scan_dir.exists():
             raise HTTPException(status_code=404, detail=f"scan_dir not found: {scan_dir}")
+        _require_allowed(scan_dir)
         if not (scan_dir / "fingerprint.json").exists():
             raise HTTPException(status_code=400, detail="Not a valid scan directory (missing fingerprint.json)")
 

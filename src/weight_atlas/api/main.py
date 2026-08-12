@@ -21,6 +21,7 @@ def create_app(
     db_path: Path | None = None,
     spec_path: Path | None = None,
     output_root: Path | None = None,
+    model_roots: list[Path] | None = None,
 ) -> FastAPI:
     """Create the FastAPI application.
 
@@ -29,6 +30,9 @@ def create_app(
         spec_path: Path to atlas spec JSON. Defaults to the canonical
             ``get_default_spec_path()`` (atlas_spec.v2.3.json).
         output_root: Root directory for scan outputs. Defaults to ./output
+        model_roots: Optional allowlist of directories from which scan/import/
+            compare paths are accepted. When None (default) any existing path is
+            accepted — only safe for localhost/LAN-trusted deployments.
     """
     base = Path(__file__).resolve().parent.parent.parent.parent
     _db_path = db_path or base / "data" / "jobs.db"
@@ -38,6 +42,7 @@ def create_app(
         load_default_spec()
     _spec_path = spec_path or get_default_spec_path()
     _output_root = output_root or base / "output"
+    _model_roots = [r.resolve() for r in model_roots] if model_roots else None
 
     _db_path.parent.mkdir(parents=True, exist_ok=True)
     _output_root.mkdir(parents=True, exist_ok=True)
@@ -62,7 +67,7 @@ def create_app(
     from fastapi.templating import Jinja2Templates
     templates = Jinja2Templates(directory=str(templates_dir))
 
-    router = create_router(job_queue, templates, _spec_path, _output_root)
+    router = create_router(job_queue, templates, _spec_path, _output_root, _model_roots)
     app.include_router(router)
 
     @app.on_event("shutdown")

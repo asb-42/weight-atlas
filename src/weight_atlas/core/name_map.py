@@ -262,6 +262,10 @@ def extract_expert_id(name: str) -> int | None:
     m = re.search(r"block_sparse_moe\.experts\.(\d+)\.w[123]", name)
     if m:
         return int(m.group(1))
+    # GGUF expert sub-handles: blk.N.ffn_gate_exps.weight[3] → 3
+    m = re.search(r"\[(\d+)\]$", name)
+    if m:
+        return int(m.group(1))
     # GGUF: handled differently (3D stacked tensor name doesn't contain expert ID)
     return None
 
