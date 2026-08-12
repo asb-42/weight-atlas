@@ -91,7 +91,12 @@ def create_router(
         out_dir.mkdir(parents=True, exist_ok=True)
 
         job = job_queue.submit(model_path, out_dir, spec_path)
-        return JSONResponse(job.to_dict())
+        # Keep the job JSON for the API, but have HTMX navigate the browser to
+        # the job's live progress page.
+        return JSONResponse(
+            job.to_dict(),
+            headers={"HX-Redirect": f"/jobs/{job.job_id}"},
+        )
 
     @router.get("/api/jobs/{job_id}")
     async def get_job(job_id: str) -> JSONResponse:
@@ -262,7 +267,11 @@ def create_router(
         out_dir.mkdir(parents=True, exist_ok=True)
 
         job = job_queue.submit_compare(dir_a, dir_b, out_dir, spec_path)
-        return JSONResponse(job.to_dict())
+        # Keep the job JSON for the API; HTMX navigates to the compare progress page.
+        return JSONResponse(
+            job.to_dict(),
+            headers={"HX-Redirect": f"/jobs/{job.job_id}"},
+        )
 
     @router.get("/compare/{job_id}", response_class=HTMLResponse)
     async def compare_report(request: Request, job_id: str) -> HTMLResponse:
@@ -432,7 +441,11 @@ def create_router(
             raise HTTPException(status_code=400, detail="Not a valid scan directory (missing fingerprint.json)")
 
         job = job_queue.import_scan(scan_dir, model_path)
-        return JSONResponse(job.to_dict())
+        # Import is immediate (job is already done) → go straight to the detail page.
+        return JSONResponse(
+            job.to_dict(),
+            headers={"HX-Redirect": f"/models/{job.job_id}"},
+        )
 
     # Allowlist of safe file extensions for serving
     _artefact_allowlist = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp",
