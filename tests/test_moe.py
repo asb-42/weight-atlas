@@ -485,6 +485,73 @@ class TestComparePanels:
 
 
 # ---------------------------------------------------------------------------
+# Expert panel channels (spec v2.4: expert_channels = cheap O(n) stats)
+# ---------------------------------------------------------------------------
+
+
+class TestExpertChannels:
+    def test_spec_v24_has_expert_channels(self):
+        from weight_atlas.core.types import DEFAULT_SPEC_VERSION, load_default_spec
+
+        spec = load_default_spec()
+        assert spec.spec_version == DEFAULT_SPEC_VERSION
+        assert set(spec.expert_channels) == {"height", "tint", "rough"}
+        assert spec.expert_channels["height"]["stat"] == "frobenius"
+        assert spec.expert_channels["tint"]["stat"] == "kurtosis"
+        assert spec.expert_channels["rough"]["stat"] == "sparsity"
+
+    def test_scan_moe_writes_expert_panel_fields(self, moe_model, tmp_path):
+        """Expert panel TIFFs (raw + smooth) are written and in the manifest."""
+        import json
+
+        from weight_atlas.core.types import load_default_spec
+        from weight_atlas.scan import scan
+
+        spec = load_default_spec()
+        out = tmp_path / "out"
+        scan(moe_model, out, spec)
+
+        manifest = json.loads((out / "manifest.json").read_text())
+        for slot in ("mlp_gate", "mlp_up", "mlp_down"):
+            for ch in ("height", "tint", "rough"):
+                assert f"field_expert_{slot}_{ch}_raw.tif" in manifest
+                assert f"field_expert_{slot}_{ch}_smooth.tif" in manifest
+
+    def test_panel_field_uses_frobenius_not_spectral(self, moe_model, tmp_path):
+        """Expert panels rasterize the expert_channels stat, not the main one."""
+        from weight_atlas.core.types import load_default_spec
+        from weight_atlas.fields.rasterizer import rasterize_expert_panels
+        from weight_atlas.fields.tif_io import read_tif
+        from weight_atlas.loaders.safetensors_loader import SafetensorsLoader
+        from weight_atlas.scan import _make_handles, scan
+
+        spec = load_default_spec()
+        out = tmp_path / "out"
+        scan(moe_model, out, spec)
+
+        stats = [_make_handles(h) for h in SafetensorsLoader().open(moe_model)]
+        expected = rasterize_expert_panels(stats, spec, "frobenius")
+        gate_panel = [p for p in expected if p.slot == "mlp_gate"][0]
+        written = read_tif(out / "field_expert_mlp_gate_height_raw.tif")
+        np.testing.assert_allclose(written, gate_panel.data, rtol=1e-6)
+
+    def test_load_channel_field_expert_labels(self, moe_model, tmp_path):
+        """Expert fields render with expert-id columns and layer rows."""
+        from weight_atlas.core.types import load_default_spec
+        from weight_atlas.fields.rasterizer import load_channel_field
+        from weight_atlas.scan import scan
+
+        spec = load_default_spec()
+        out = tmp_path / "out"
+        scan(moe_model, out, spec)
+
+        field = load_channel_field(out, "expert_mlp_gate_height", spec, model_name="moe")
+        assert field is not None
+        assert field.col_labels == [str(i) for i in range(8)]  # expert ids
+        assert field.row_labels == [str(i) for i in range(4)]  # layers
+
+
+# ---------------------------------------------------------------------------
 # MoE Localization test
 # ---------------------------------------------------------------------------
 

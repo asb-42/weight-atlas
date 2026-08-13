@@ -106,7 +106,7 @@ class ExpertPanel:
 
 @dataclass
 class AtlasSpec:
-    """Versioned cartography convention loaded from atlas_spec.v2.3.json."""
+    """Versioned cartography convention loaded from atlas_spec.v2.4.json."""
     spec_version: int
     slots: list[str]
     channels: dict[str, Any]
@@ -118,6 +118,7 @@ class AtlasSpec:
     embedding: dict[str, Any] = field(default_factory=dict)
     vision_slots: list[str] = field(default_factory=list)
     vision_channels: dict[str, Any] = field(default_factory=dict)
+    expert_channels: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_json(cls, path: Path) -> AtlasSpec:
@@ -134,6 +135,7 @@ class AtlasSpec:
             compare=dict(raw.get("compare", {})),
             vision_slots=list(raw.get("vision_slots", [])),
             vision_channels=dict(raw.get("vision_channels", {})),
+            expert_channels=dict(raw.get("expert_channels", {})),
         )
 
     def channel_stat(self, channel: str) -> str:
@@ -147,8 +149,8 @@ class AtlasSpec:
 # CLI and the web UI. All shipped spec files must agree with this version or
 # scans produced by one entrypoint can never be compared against the other
 # (compare/align.py hard-rejects spec_version mismatches).
-DEFAULT_SPEC_NAME = "atlas_spec.v2.3.json"
-DEFAULT_SPEC_VERSION = 3
+DEFAULT_SPEC_NAME = "atlas_spec.v2.4.json"
+DEFAULT_SPEC_VERSION = 4
 
 
 def get_default_spec_path() -> Path:

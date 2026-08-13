@@ -135,7 +135,7 @@ access use `weight-atlas serve --host 127.0.0.1` (or run uvicorn directly).
 
 ## Determinism
 
-Every RNG is seeded from `specs/atlas_spec.v2.1.json`. Artifacts contain no timestamps. A second `scan` over the same input yields byte-identical `manifest.json` (SHA-256 per artefact).
+Every RNG is seeded from `specs/atlas_spec.v2.4.json`. Artifacts contain no timestamps. A second `scan` over the same input yields byte-identical `manifest.json` (SHA-256 per artefact).
 
 ## Layout
 
@@ -152,7 +152,7 @@ src/weight_atlas/
    api/       FastAPI app, job queue, routes (M3)
    ui/        Jinja2 templates + static CSS (M3)
    cli.py
-specs/atlas_spec.v2.1.json
+specs/atlas_spec.v2.4.json
 tests/       seeded fixtures, hand-computed + determinism tests
 docs/        ARCHITECTURE.md, BACKLOG.md, ROADMAP.md, CHANGELOG.md
 ```

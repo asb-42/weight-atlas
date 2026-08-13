@@ -134,6 +134,11 @@ class MatplotlibSheet:
             # Vision sheets use the vision slot taxonomy and its own channels.
             display_channel = f"vision:{field.channel[len('vision_'):]}"
             ch_spec = spec.vision_channels.get(field.channel[len('vision_'):], {})
+        if not ch_spec and field.channel.startswith("expert_"):
+            # MoE expert panels use the cheap expert_channels statistics.
+            panel_slot, base = field.channel[len("expert_"):].split("_", 1)
+            display_channel = f"expert:{panel_slot}:{base}"
+            ch_spec = (spec.expert_channels or spec.channels).get(base, {})
         transform_parts = []
         if ch_spec.get("pre"):
             transform_parts.append(ch_spec["pre"])

@@ -30,7 +30,7 @@ def create_app(
     Args:
         db_path: Path to SQLite job database. Defaults to ./data/jobs.db
         spec_path: Path to atlas spec JSON. Defaults to the canonical
-            ``get_default_spec_path()`` (atlas_spec.v2.3.json).
+            ``get_default_spec_path()`` (atlas_spec.v2.4.json).
         output_root: Root directory for scan outputs. Defaults to ./output
         model_roots: Optional allowlist of directories from which scan/import/
             compare paths are accepted. When None (default) any existing path is

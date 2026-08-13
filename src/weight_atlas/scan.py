@@ -209,8 +209,14 @@ def scan(
         write_tif(smooth_path, smoothed)
         artefacts.append(smooth_path)
 
-        # MoE expert panels
-        _report(chan_lo + 0.80 * (chan_hi - chan_lo), f"Generating {channel} expert panels...")
+    # MoE expert panels. Expert tensors are the vast majority of a MoE model's
+    # tensors, so the panels use the spec's ``expert_channels`` (cheap O(n)
+    # statistics: frobenius/kurtosis/sparsity) instead of the SVD-based main
+    # channels — the shared spectrum is reserved for the (few) dense tensors.
+    panel_channels = spec.expert_channels if spec.expert_channels else spec.channels
+    for channel, ch_spec in panel_channels.items():
+        stat_key = ch_spec["stat"]
+        _report(0.93, f"Generating expert panels ({stat_key})...")
         expert_panels = rasterize_expert_panels(stats, spec, stat_key)
         for panel in expert_panels:
             panel_raw_path = out / f"field_expert_{panel.slot}_{channel}_raw.tif"
@@ -218,6 +224,7 @@ def scan(
             artefacts.append(panel_raw_path)
 
             # v2.1 pipeline: apply pre-transform then robust_scale
+            pre = ch_spec.get("pre")
             panel_data = panel.data
             if pre == "log1p":
                 panel_data = log1p(panel_data)

@@ -29,7 +29,7 @@ Weight Atlas is a tool for **LLM weight fingerprinting and topographic visualiza
 
 ### Three Core Guarantees
 
-1. **Artifacts are renderer-independent and canonical**: All outputs follow a versioned specification (`atlas_spec.v2.1.json`). Renderers never access raw weights.
+1. **Artifacts are renderer-independent and canonical**: All outputs follow a versioned specification (`atlas_spec.v2.4.json`). Renderers never access raw weights.
 2. **Render/Compare never read weights**: The entire visualization and comparison pipeline operates on artifacts (statistics, fields, projections).
 3. **Determinism is part of the measurement protocol**: All RNGs are seeded from the spec. Byte-identical outputs guaranteed on the same machine.
 
@@ -147,7 +147,7 @@ Model → TensorHandle (lazy) → Statistics → Rasterize → Field2D → Rende
 
 ### Determinism
 
-All random number generators are seeded from `specs/atlas_spec.v2.1.json`. A second scan over the same input yields byte-identical artifacts (verified by SHA-256 manifest).
+All random number generators are seeded from `specs/atlas_spec.v2.4.json`. A second scan over the same input yields byte-identical artifacts (verified by SHA-256 manifest).
 
 ---
 
@@ -170,7 +170,7 @@ weight-atlas scan <path> --out <dir> [options]
 |----------|------|----------|-------------|
 | `path` | Path | Yes | Path to model file or directory |
 | `--out` | Path | Yes | Output directory |
-| `--spec` | Path | No | Path to atlas spec JSON (default: `specs/atlas_spec.v2.1.json`) |
+| `--spec` | Path | No | Path to atlas spec JSON (default: `specs/atlas_spec.v2.4.json`) |
 | `--loader` | choice | No | `safetensors` or `gguf` (default: auto-detect) |
 
 **Output**: `fingerprint.json`, `field_<channel>_raw.tif`, `field_<channel>_smooth.tif`, `embedding_pca.npy`, `embedding_meta.json`, `manifest.json`

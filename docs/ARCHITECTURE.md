@@ -351,6 +351,7 @@ Expert Tensors ─► rasterize_expert_panels ─► ExpertPanel (Layer × Exper
 - **Main raster unchanged**: Expert tensors are excluded from the main raster; they flow into separate ExpertPanel fields
 - **Shared expert decision**: Shared expert tensors occupy the mlp slots (mlp_gate/mlp_up/mlp_down) in the main raster
 - **Expert panel = own field class**: `ExpertPanel` with shape (Layer × Expert IDs), same channel definitions as main raster
+- **Expert panels use cheap channels (`expert_channels`, spec v2.4)**: expert tensors are the vast majority of a MoE model's tensors, so the panels consume the spec's `expert_channels` block — O(n) statistics only (height=frobenius, tint=kurtosis, rough=sparsity) — instead of the SVD-based main channels. The shared spectrum (spectral_norm/stable_rank) is reserved for the few dense tensors, keeping MoE scans practical (measured: ~8.4 min for the 24.6k expert tensors of a 35B-A3B model with 8 parallel workers). Specs without `expert_channels` fall back to the main channels.
 - **Fingerprint**: model block includes `moe: {num_experts, shared_expert}` — derived from tensor presence (safetensors) or metadata (GGUF)
 - **Blender**: `--field expert_mlp_down` renders terrain from expert panel
 

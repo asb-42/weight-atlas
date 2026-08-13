@@ -78,26 +78,40 @@ def load_channel_field(
         return None
 
     is_vision = channel.startswith("vision_")
-    base_channel = channel[len("vision_"):] if is_vision else channel
+    is_expert = channel.startswith("expert_")
+    if is_vision:
+        base_channel = channel[len("vision_"):]
+    elif is_expert:
+        # expert_<slot>_<channel>  (slot ∈ {mlp_gate, mlp_up, mlp_down})
+        _panel_slot, base_channel = channel[len("expert_"):].split("_", 1)
+    else:
+        base_channel = channel
 
     is_smooth = path.name.endswith("_smooth.tif")
     data = read_tif(path)
     if not is_smooth:
         ch_spec = spec.channels.get(channel, {})
-        if not ch_spec:
+        if not ch_spec and is_vision:
             ch_spec = spec.vision_channels.get(base_channel, {})
+        if not ch_spec and is_expert:
+            ch_spec = (spec.expert_channels or spec.channels).get(base_channel, {})
         if "scale" in ch_spec:
             data = apply_scale(data, ch_spec["scale"])
 
     upsample = max(1, int(spec.grid.get("upsample", 1)))
-    n_rows, _ = data.shape
-    n_logical = n_rows // upsample if is_smooth else n_rows
+    n_rows, n_cols = data.shape
+    n_logical_rows = n_rows // upsample if is_smooth else n_rows
     if is_vision:
         col_labels = list(spec.vision_slots)
-        row_labels = _vision_row_labels(out_dir, n_logical)
+        row_labels = _vision_row_labels(out_dir, n_logical_rows)
+    elif is_expert:
+        # Expert panels: rows are transformer layers, columns are expert ids.
+        n_experts = n_cols // upsample if is_smooth else n_cols
+        col_labels = [str(i) for i in range(n_experts)]
+        row_labels = [str(i) for i in range(n_logical_rows)]
     else:
         col_labels = list(spec.slots)
-        row_labels = [str(i) for i in range(n_logical)]
+        row_labels = [str(i) for i in range(n_logical_rows)]
     return Field2D(
         channel=channel,
         data=data,
