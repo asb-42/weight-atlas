@@ -141,3 +141,31 @@ class TestParallelScan:
         assert _resolve_jobs(None) >= 1
         assert _resolve_jobs(2) == 2
         assert _resolve_jobs(0) >= 1
+
+    def test_parallel_scan_many_experts_completes(self, tmp_path):
+        """Parallel scan over many small expert tensors must complete.
+
+        Deadlock regression: small expert tensors hit the exact-SVD path
+        (min dim <= SMALL), and concurrent ``np.linalg.svd`` calls from several
+        worker threads used to deadlock inside OpenBLAS. The spectrum lock +
+        single global BLAS cap must keep jobs>1 scans both safe and byte
+        identical to a serial scan.
+        """
+        from tests.test_moe import make_gguf_moe_file
+        from weight_atlas.scan import scan
+
+        model = tmp_path / "moe.gguf"
+        make_gguf_moe_file(model, n_layers=6, n_experts=8, shared=True)
+        spec = load_default_spec()
+
+        out_par = tmp_path / "out_par"
+        scan(model, out_par, spec, jobs=4)  # must not deadlock
+        assert (out_par / "fingerprint.json").exists()
+        assert list(out_par.glob("field_expert_*_raw.tif"))
+
+        # Parallel results are identical to serial (determinism guarantee).
+        out_ser = tmp_path / "out_ser"
+        scan(model, out_ser, spec, jobs=1)
+        assert (out_par / "fingerprint.json").read_bytes() == (
+            out_ser / "fingerprint.json"
+        ).read_bytes()

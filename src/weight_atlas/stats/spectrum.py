@@ -17,6 +17,7 @@ statistics on the same handle pay one SVD.
 
 from __future__ import annotations
 
+import threading
 import weakref
 
 import numpy as np
@@ -31,6 +32,16 @@ Q = 2
 
 _cache: weakref.WeakKeyDictionary[TensorHandle, np.ndarray] = weakref.WeakKeyDictionary()
 
+# OpenBLAS's LAPACK SVD/QR routines are not safe for concurrent invocation from
+# multiple Python threads: they can deadlock inside OpenBLAS's internal thread
+# pool. The scan pipeline computes statistics in parallel, and models with small
+# expert tensors (min dim <= SMALL) hit the exact-SVD path tens of thousands of
+# times, so concurrent calls deadlock reliably. Every spectrum computation is
+# therefore serialized behind this lock. The SVDs are cheap (~ms each), so the
+# lock is not a bottleneck; the heavier load/dequantization happens *outside*
+# the lock and stays fully parallel.
+_spectrum_lock = threading.Lock()
+
 
 def to_matrix(x: np.ndarray) -> np.ndarray:
     """Flatten a tensor to a 2D matrix (rows=first dim, cols=rest)."""
@@ -44,21 +55,30 @@ def truncated_spectrum(t: TensorHandle, seed: int = 0) -> np.ndarray:
 
     1-D tensors return a single-element array with the L2 norm (consistent
     with the historical spectral-norm convention for vectors).
+
+    The LAPACK part (exact/randomized SVD, QR) is serialized behind
+    ``_spectrum_lock`` because concurrent ``np.linalg.svd``/``qr`` calls from
+    several threads can deadlock inside OpenBLAS. The tensor payload is loaded
+    *before* the lock is acquired, so dequantization still runs in parallel.
     """
     cached = _cache.get(t)
     if cached is not None:
         return cached
     x = t.load()
-    if x.ndim == 1:
-        s = np.array([float(np.linalg.norm(x.astype(np.float64)))])
-    else:
-        m = to_matrix(x)
-        if min(m.shape) <= SMALL:
-            s = np.linalg.svd(m.astype(np.float64), compute_uv=False)
+    with _spectrum_lock:
+        cached = _cache.get(t)  # re-check under the lock
+        if cached is not None:
+            return cached
+        if x.ndim == 1:
+            s = np.array([float(np.linalg.norm(x.astype(np.float64)))])
         else:
-            s = _randomized_singular_values(m, seed=seed)
-    _cache[t] = s
-    return s
+            m = to_matrix(x)
+            if min(m.shape) <= SMALL:
+                s = np.linalg.svd(m.astype(np.float64), compute_uv=False)
+            else:
+                s = _randomized_singular_values(m, seed=seed)
+        _cache[t] = s
+        return s
 
 
 def _randomized_singular_values(m: np.ndarray, seed: int) -> np.ndarray:

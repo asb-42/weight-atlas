@@ -68,23 +68,16 @@ def _resolve_jobs(jobs: int | None) -> int:
     return max(1, min(8, os.cpu_count() or 1))
 
 
-def _stats_for_handle(h: TensorHandle, cap_blas: bool) -> TensorStats:
-    """Compute all statistics for one tensor (optionally single-threaded BLAS).
+def _stats_for_handle(h: TensorHandle) -> TensorStats:
+    """Compute all statistics for one tensor.
 
-    ``cap_blas`` matters only in the threaded path: with one Python thread per
-    tensor, each numpy op must stay single-threaded or the threads thrash for
-    BLAS cores. Falls back to the default thread settings if threadpoolctl is
-    unavailable or no supported BLAS is loaded.
+    BLAS threading is capped once by ``scan()`` around the whole parallel
+    section (see ``scan``), never per tensor: resizing OpenBLAS's internal
+    thread pool from several worker threads at once can deadlock inside
+    OpenBLAS (observed on large MoE scans), so the limit must be applied a
+    single time before the pool starts, not re-entered for every tensor.
     """
-    if not cap_blas:
-        return _make_handles(h)
-    try:
-        from threadpoolctl import threadpool_limits  # type: ignore[import-untyped]
-
-        with threadpool_limits(limits=1):
-            return _make_handles(h)
-    except (ImportError, RuntimeError):  # pragma: no cover - optional dep
-        return _make_handles(h)
+    return _make_handles(h)
 
 
 def scan(
@@ -141,10 +134,20 @@ def scan(
     jobs_n = _resolve_jobs(jobs)
 
     def _work(h: TensorHandle) -> TensorStats:
-        return _stats_for_handle(h, cap_blas=jobs_n > 1)
+        return _stats_for_handle(h)
 
-    stats: list[TensorStats] = []
-    if jobs_n > 1 and n_total > 1:
+    def _serial_stats() -> None:
+        for i, h in enumerate(handles):
+            ts = _make_handles(h)
+            h.clear()
+            stats.append(ts)
+            if i % report_every == 0 or i == n_total - 1:
+                _report(
+                    0.04 + 0.36 * ((i + 1) / n_total),
+                    f"Computing statistics ({i + 1}/{n_total})...",
+                )
+
+    def _parallel_stats() -> None:
         from concurrent.futures import ThreadPoolExecutor
 
         with ThreadPoolExecutor(max_workers=jobs_n) as ex:
@@ -156,16 +159,31 @@ def scan(
                         0.04 + 0.36 * ((i + 1) / n_total),
                         f"Computing statistics ({i + 1}/{n_total})...",
                     )
+
+    stats: list[TensorStats] = []
+    if jobs_n > 1 and n_total > 1:
+        # The stats thread pool runs numpy/BLAS concurrently. Cap the BLAS
+        # thread pool ONCE around the whole section: entering/exiting
+        # ``threadpool_limits`` from several worker threads at once resizes
+        # OpenBLAS's internal pool concurrently and can deadlock inside
+        # OpenBLAS (observed on large MoE scans). A single cap keeps every
+        # BLAS call single-threaded with no pool resizing mid-flight.
+        try:
+            from threadpoolctl import threadpool_limits  # type: ignore[import-untyped]
+
+            with threadpool_limits(limits=1):
+                _parallel_stats()
+        except ImportError:  # pragma: no cover - optional dep
+            # No threadpoolctl → cannot cap BLAS. Concurrent multithreaded
+            # OpenBLAS calls from several Python threads risk the same
+            # deadlock, so stats run serially (safe, deterministic).
+            _serial_stats()
+        except RuntimeError:
+            # threadpoolctl present but no supported BLAS loaded → there is no
+            # shared thread pool to resize, so parallel numpy is safe.
+            _parallel_stats()
     else:
-        for i, h in enumerate(handles):
-            ts = _make_handles(h)
-            h.clear()
-            stats.append(ts)
-            if i % report_every == 0 or i == n_total - 1:
-                _report(
-                    0.04 + 0.36 * ((i + 1) / n_total),
-                    f"Computing statistics ({i + 1}/{n_total})...",
-                )
+        _serial_stats()
 
     _report(0.42, "Building fingerprint...")
     fingerprint = _build_fingerprint(stats, spec, loader_id, handles)
