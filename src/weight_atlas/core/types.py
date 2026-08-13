@@ -28,6 +28,7 @@ class TensorHandle:
         dtype: str,
         loader: Callable[[], np.ndarray],
         expert_id: int | None = None,
+        on_clear: Callable[[], None] | None = None,
     ) -> None:
         self.name = name
         self.shape = shape
@@ -36,6 +37,10 @@ class TensorHandle:
         self.expert_id = expert_id  # For MoE expert tensors
         self._cache: np.ndarray | None = None
         self._loaded = False
+        # Optional hook invoked by ``clear()``. Used by the GGUF loader so a
+        # shared 3D expert parent can release its dequantized array once the
+        # last of its per-expert sub-handles has been cleared (bounds RAM).
+        self._on_clear = on_clear
 
     def load(self) -> np.ndarray:
         if not self._loaded:
@@ -54,6 +59,8 @@ class TensorHandle:
         """
         self._cache = None
         self._loaded = False
+        if self._on_clear is not None:
+            self._on_clear()
 
 
 @dataclass

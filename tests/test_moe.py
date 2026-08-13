@@ -417,6 +417,47 @@ class TestGGUF3DSplit:
         assert len(arr.shape) == 2  # 2D slice
         assert arr.shape == (32, 32)
 
+    def test_shared_parent_released_after_last_clear(self):
+        """The shared 3D expert parent must release its float32 array once all
+        its sub-handles have been cleared.
+
+        A stacked parent can be ~1 GB in float32; retaining every parent for
+        the whole scan would hold the whole model in RAM (~4 bytes/param).
+        ``TensorHandle.clear()`` must therefore drive a refcount that drops
+        the parent array after the last expert sub-handle finishes.
+        """
+        from weight_atlas.core.types import TensorHandle
+        from weight_atlas.loaders.gguf_loader import _SharedExpertDequant
+
+        n_experts = 8
+        arr = np.random.default_rng(0).normal(0, 1, (32, 32, n_experts)).astype(np.float32)
+        # F32 = raw float32 bytes; the loader stores the byte layout as uint8.
+        data = np.frombuffer(arr.tobytes(), dtype=np.uint8)
+        shared = _SharedExpertDequant(data, 0, (32, 32, n_experts), n_experts)
+
+        handles = [
+            TensorHandle(
+                name=f"t[{i}]",
+                shape=(32, 32),
+                dtype="ggml_0",
+                loader=lambda i=i: shared.slice(i),
+                expert_id=i,
+                on_clear=shared.release_child,
+            )
+            for i in range(n_experts)
+        ]
+
+        for h in handles:
+            h.load()
+        assert shared._arr is not None  # dequantized once, shared by all
+
+        for h in handles[:-1]:
+            h.clear()
+        assert shared._arr is not None  # still needed by the last sub-handle
+
+        handles[-1].clear()
+        assert shared._arr is None  # released once the last child is done
+
     def test_shared_expert_maps_to_mlp_slots(self, gguf_moe_model):
         """Shared expert tensors should map to mlp slots."""
         from weight_atlas.loaders.gguf_loader import GGUFLoader

@@ -5,6 +5,7 @@ Supports MoE models with 3D stacked expert tensors (ffn_*_exps).
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
@@ -67,6 +68,7 @@ class _SharedExpertDequant:
         data: np.ndarray,
         ggml_type: int,
         logical_shape: tuple[int, ...],
+        n_children: int,
     ) -> None:
         if len(logical_shape) != 3:
             raise ValueError(
@@ -76,21 +78,42 @@ class _SharedExpertDequant:
         self._ggml_type = ggml_type
         self._shape = tuple(logical_shape)
         self._arr: np.ndarray | None = None
+        self._lock = threading.Lock()
+        self._n_children = n_children
+        self._children_done = 0
 
     def _ensure(self) -> np.ndarray:
-        if self._arr is None:
-            arr = dequantize(self._data.tobytes(), self._ggml_type)
-            if arr.size != int(np.prod(self._shape)):
-                raise ValueError(
-                    f"dequantized element count {arr.size} does not match logical "
-                    f"shape {self._shape}"
-                )
-            self._arr = arr.reshape(self._shape).astype(np.float32)
-        return self._arr
+        with self._lock:
+            if self._arr is None:
+                arr = dequantize(self._data.tobytes(), self._ggml_type)
+                if arr.size != int(np.prod(self._shape)):
+                    raise ValueError(
+                        f"dequantized element count {arr.size} does not match logical "
+                        f"shape {self._shape}"
+                    )
+                self._arr = arr.reshape(self._shape).astype(np.float32)
+            return self._arr
 
     def slice(self, expert_id: int) -> np.ndarray:
         """Return the 2D float32 slice for one expert (last axis = expert axis)."""
         return self._ensure()[:, :, expert_id]
+
+    def release_child(self) -> None:
+        """Called by each expert sub-handle's ``TensorHandle.clear()``.
+
+        A stacked parent dequantized to float32 can be ~1 GB (256 experts ×
+        2048×512); holding every parent for the whole scan would keep the
+        entire model in RAM (~4 bytes/param). Once every sub-handle has
+        finished, the 3D array is dropped so memory stays proportional to the
+        parents currently being processed. The lock guarantees the array is
+        never freed while a sub-handle is still using its slice: a handle only
+        clears after its statistics are computed, and numpy slice views keep
+        the underlying buffer alive even after ``_arr`` is reset to ``None``.
+        """
+        with self._lock:
+            self._children_done += 1
+            if self._children_done >= self._n_children:
+                self._arr = None
 
 
 @register_loader("gguf")
@@ -132,7 +155,7 @@ class GGUFLoader:
                     # Expert axis is the LAST dim of the logical shape.
                     n_experts = shape[-1]
                     expert_shape = shape[:-1]  # (hidden, hidden)
-                    shared = _SharedExpertDequant(data, ggml_type, shape)
+                    shared = _SharedExpertDequant(data, ggml_type, shape, n_experts)
                     for expert_id in range(n_experts):
                         handles.append(
                             TensorHandle(
@@ -141,6 +164,9 @@ class GGUFLoader:
                                 dtype=f"ggml_{ggml_type}",
                                 loader=self._make_shared_loader(shared, expert_id),
                                 expert_id=expert_id,
+                                # Once the last expert sub-handle is cleared, the
+                                # shared parent releases its ~1 GB float32 array.
+                                on_clear=shared.release_child,
                             )
                         )
                 else:
