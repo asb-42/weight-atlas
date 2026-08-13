@@ -35,6 +35,11 @@ from weight_atlas.stats.norms import (
 from weight_atlas.stats.shape_moments import Kurtosis, Sparsity
 from weight_atlas.stats.stable_rank import StableRank
 
+# Tensors whose float32 materialization is >= this many bytes are computed
+# serially (one at a time) during the stats phase to keep peak RAM bounded on
+# models with very large tensors (see ``scan``).
+_BIG_TENSOR_THRESHOLD_BYTES = 1 << 30  # 1 GiB
+
 
 def _sha256(path: Path) -> str:
     h = hashlib.sha256()
@@ -129,39 +134,65 @@ def scan(
     # parallel across tensors. Every handle's memoized payload is released
     # right after its statistics are computed so the whole model is never held
     # in RAM (~4 bytes/parameter for a 35B MoE would be ~140 GB).
+    #
+    # Memory bound: computing statistics materializes each tensor as float32
+    # and several stats build temporary copies (kurtosis, sparsity, SVD), so a
+    # single worker can transiently use ~3-4x the tensor's float32 size. With 8
+    # parallel workers on a model whose largest tensors are multi-GB (e.g. Kimi
+    # K3's 4.7 GB lm_head/embed_tokens), peak RSS reached ~120 GB and the
+    # process was OOM-killed. The few multi-GB tensors are therefore computed
+    # serially (one at a time) while the many small tensors still run in
+    # parallel for throughput. Per-tensor stats are deterministic regardless of
+    # processing order, so output is byte-identical to a fully serial scan.
     n_total = len(handles)
     report_every = max(1, n_total // 40) if n_total else 1
     jobs_n = _resolve_jobs(jobs)
 
-    def _work(h: TensorHandle) -> TensorStats:
-        return _stats_for_handle(h)
+    # Tensors that materialize to >= 1 GiB float32 are handled serially to keep
+    # peak RAM bounded even on models with very large tensors.
+    big_threshold = _BIG_TENSOR_THRESHOLD_BYTES
+    big_idxs = [
+        i for i, h in enumerate(handles)
+        if int(np.prod(h.shape)) * 4 >= big_threshold
+    ]
+    small_idxs = [
+        i for i, h in enumerate(handles)
+        if int(np.prod(h.shape)) * 4 < big_threshold
+    ]
 
-    def _serial_stats() -> None:
-        for i, h in enumerate(handles):
-            ts = _make_handles(h)
-            h.clear()
-            stats.append(ts)
-            if i % report_every == 0 or i == n_total - 1:
-                _report(
-                    0.04 + 0.36 * ((i + 1) / n_total),
-                    f"Computing statistics ({i + 1}/{n_total})...",
-                )
+    stats: list[TensorStats] = [None] * n_total  # type: ignore[list-item]
 
-    def _parallel_stats() -> None:
-        from concurrent.futures import ThreadPoolExecutor
+    def _report_stats(i: int) -> None:
+        if i % report_every == 0 or i == n_total - 1:
+            _report(
+                0.04 + 0.36 * ((i + 1) / n_total),
+                f"Computing statistics ({i + 1}/{n_total})...",
+            )
 
-        with ThreadPoolExecutor(max_workers=jobs_n) as ex:
-            for i, (h, ts) in enumerate(zip(handles, ex.map(_work, handles), strict=True)):
-                h.clear()
-                stats.append(ts)
-                if i % report_every == 0 or i == n_total - 1:
-                    _report(
-                        0.04 + 0.36 * ((i + 1) / n_total),
-                        f"Computing statistics ({i + 1}/{n_total})...",
-                    )
+    def _run_stats(idx_iter: Iterable[int], parallel: bool) -> None:
+        items = list(idx_iter)
+        if parallel and jobs_n > 1 and len(items) > 1:
+            from concurrent.futures import ThreadPoolExecutor
 
-    stats: list[TensorStats] = []
-    if jobs_n > 1 and n_total > 1:
+            with ThreadPoolExecutor(max_workers=jobs_n) as ex:
+                for i, ts in ex.map(lambda i: (i, _stats_for_handle(handles[i])), items):
+                    handles[i].clear()
+                    stats[i] = ts
+                    _report_stats(i)
+        else:
+            for i in items:
+                ts = _stats_for_handle(handles[i])
+                handles[i].clear()
+                stats[i] = ts
+                _report_stats(i)
+
+    # Small tensors first (parallel), then the few multi-GB tensors serially.
+    use_pool = jobs_n > 1 and n_total > 1
+    try:
+        from threadpoolctl import threadpool_limits  # type: ignore[import-untyped]
+    except ImportError:  # pragma: no cover - optional dep
+        threadpool_limits = None  # type: ignore[assignment]
+    if use_pool and threadpool_limits is not None:
         # The stats thread pool runs numpy/BLAS concurrently. Cap the BLAS
         # thread pool ONCE around the whole section: entering/exiting
         # ``threadpool_limits`` from several worker threads at once resizes
@@ -169,21 +200,22 @@ def scan(
         # OpenBLAS (observed on large MoE scans). A single cap keeps every
         # BLAS call single-threaded with no pool resizing mid-flight.
         try:
-            from threadpoolctl import threadpool_limits  # type: ignore[import-untyped]
-
             with threadpool_limits(limits=1):
-                _parallel_stats()
-        except ImportError:  # pragma: no cover - optional dep
-            # No threadpoolctl → cannot cap BLAS. Concurrent multithreaded
-            # OpenBLAS calls from several Python threads risk the same
-            # deadlock, so stats run serially (safe, deterministic).
-            _serial_stats()
+                _run_stats(small_idxs, parallel=True)
+                _run_stats(big_idxs, parallel=False)
         except RuntimeError:
             # threadpoolctl present but no supported BLAS loaded → there is no
             # shared thread pool to resize, so parallel numpy is safe.
-            _parallel_stats()
+            _run_stats(small_idxs, parallel=True)
+            _run_stats(big_idxs, parallel=False)
     else:
-        _serial_stats()
+        # jobs=1, or no threadpoolctl → cannot cap BLAS. Concurrent
+        # multithreaded OpenBLAS calls from several Python threads risk the
+        # same deadlock, so stats run serially (safe, deterministic).
+        _run_stats(small_idxs, parallel=False)
+        _run_stats(big_idxs, parallel=False)
+
+    assert all(s is not None for s in stats)
 
     _report(0.42, "Building fingerprint...")
     fingerprint = _build_fingerprint(stats, spec, loader_id, handles)

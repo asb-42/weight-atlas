@@ -169,3 +169,33 @@ class TestParallelScan:
         assert (out_par / "fingerprint.json").read_bytes() == (
             out_ser / "fingerprint.json"
         ).read_bytes()
+
+    def test_big_tensor_serial_path_deterministic(self, tmp_path, monkeypatch):
+        """Forcing tensors into the serial 'big' pass must stay deterministic.
+
+        Regression: 8 parallel workers each materializing large float32 tensors
+        OOM-killed the process on Kimi K3 (4.7 GB lm_head/embed_tokens). The
+        scan now routes tensors above a size threshold through a serial pass
+        (one at a time) while small tensors stay parallel; results must remain
+        byte-identical to a jobs=1 scan.
+        """
+        import weight_atlas.scan as scanmod
+        from tests.fixtures import make_fake_model
+        from weight_atlas.scan import scan
+
+        model = tmp_path / "m.safetensors"
+        make_fake_model(model, n_layers=6)
+        spec = load_default_spec()
+
+        # Force every tensor above 1 byte into the serial "big" pass.
+        monkeypatch.setattr(scanmod, "_BIG_TENSOR_THRESHOLD_BYTES", 1)
+
+        out_par = tmp_path / "out_par"
+        scan(model, out_par, spec, jobs=4)  # all big → serial; must complete
+        out_ser = tmp_path / "out_ser"
+        scan(model, out_ser, spec, jobs=1)
+
+        assert (out_par / "fingerprint.json").read_bytes() == (
+            out_ser / "fingerprint.json"
+        ).read_bytes()
+        assert list(out_par.glob("field_*.tif"))  # artefacts were produced
