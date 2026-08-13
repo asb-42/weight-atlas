@@ -5,7 +5,8 @@ from __future__ import annotations
 import sqlite3
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -83,9 +84,27 @@ class JobQueue:
         conn.execute("PRAGMA busy_timeout=10000")
         return conn
 
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        """Open a WAL connection that is guaranteed to be closed afterwards.
+
+        ``with sqlite3.Connection`` commits/rolls back but does NOT close the
+        connection, so ``with self._connect() as conn:`` leaked one or two file
+        descriptors per call (db + WAL) until the cyclic GC happened to run.
+        The UI polls the DB every 2 s and the worker saves progress frequently,
+        so over a long scan the leaks exhausted the process's fd limit
+        (EMFILE → ``unable to open database file``). Always close explicitly.
+        """
+        conn = self._connect()
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
     def _init_db(self) -> None:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS jobs (
                     job_id TEXT PRIMARY KEY,
@@ -107,7 +126,7 @@ class JobQueue:
 
     def _save(self, job: Job) -> None:
         import json
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO jobs
@@ -132,7 +151,7 @@ class JobQueue:
 
     def _load(self, job_id: str) -> Job | None:
         import json
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
             ).fetchone()
@@ -159,7 +178,7 @@ class JobQueue:
         jobs left as ``running`` by a crash/restart are reset to ``queued`` so
         they re-run idempotently (scan/compare overwrite their own outputs).
         """
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 "SELECT job_id, status FROM jobs WHERE status IN (?, ?)",
                 (JobStatus.QUEUED.value, JobStatus.RUNNING.value),
@@ -632,7 +651,7 @@ class JobQueue:
 
     def list_jobs(self, limit: int = 50) -> list[Job]:
         import json
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?",
                 (limit,),

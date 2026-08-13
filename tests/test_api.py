@@ -231,6 +231,33 @@ class TestJobQueueDB:
 
         assert job.job_id in ran, "queued job was not re-enqueued after restart"
 
+    def test_db_access_does_not_leak_fds(
+        self, tmp_path: Path, spec_path: Path, fake_model: Path
+    ) -> None:
+        """Repeated DB reads/writes must close their connections.
+
+        Regression: ``with sqlite3.Connection`` commits but never closes, so a
+        long scan (worker progress writes + UI polling every 2 s) leaked two
+        file descriptors per call until the process hit its fd limit and failed
+        with ``unable to open database file``.
+        """
+        import os
+
+        db_path = tmp_path / "leak.db"
+        queue = JobQueue(db_path, on_job=lambda j: None)
+        job = queue.submit(fake_model, tmp_path / "out", spec_path)
+
+        def fd_count() -> int:
+            return len(os.listdir(f"/proc/{os.getpid()}/fd"))
+
+        before = fd_count()
+        for _ in range(300):
+            queue._save(job)  # noqa: SLF001
+            queue._load(job.job_id)
+            queue.list_jobs()
+        growth = fd_count() - before
+        assert growth < 30, f"file descriptors leaked: {growth}"
+
 
 class TestArtefactRoute:
     def test_artefact_route_serves_png(self, client: TestClient, fake_model: Path, tmp_path: Path) -> None:
