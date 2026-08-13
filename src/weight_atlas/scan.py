@@ -60,6 +60,33 @@ def _make_handles(tensor: TensorHandle) -> TensorStats:
     )
 
 
+def _resolve_jobs(jobs: int | None) -> int:
+    """Resolve the stats worker count: explicit value, else min(8, cpu_count)."""
+    if jobs is not None and jobs > 0:
+        return jobs
+    import os
+    return max(1, min(8, os.cpu_count() or 1))
+
+
+def _stats_for_handle(h: TensorHandle, cap_blas: bool) -> TensorStats:
+    """Compute all statistics for one tensor (optionally single-threaded BLAS).
+
+    ``cap_blas`` matters only in the threaded path: with one Python thread per
+    tensor, each numpy op must stay single-threaded or the threads thrash for
+    BLAS cores. Falls back to the default thread settings if threadpoolctl is
+    unavailable or no supported BLAS is loaded.
+    """
+    if not cap_blas:
+        return _make_handles(h)
+    try:
+        from threadpoolctl import threadpool_limits  # type: ignore[import-untyped]
+
+        with threadpool_limits(limits=1):
+            return _make_handles(h)
+    except (ImportError, RuntimeError):  # pragma: no cover - optional dep
+        return _make_handles(h)
+
+
 def scan(
     model_path: Path,
     out: Path,
@@ -67,6 +94,7 @@ def scan(
     *,
     loader_id: str | None = None,
     progress: Callable[[float, str], None] | None = None,
+    jobs: int | None = None,
 ) -> list[Path]:
     """Run the full scan pipeline.
 
@@ -85,6 +113,9 @@ def scan(
         progress: optional ``(fraction, message)`` callback reported as each
             phase of the pipeline completes (loading, statistics, rasterizing,
             smoothing, expert panels, embedding, manifest).
+        jobs: number of parallel statistics workers (default: min(8, CPUs)).
+            Each tensor's statistics are computed independently and
+            deterministically, so results are identical for any ``jobs``.
     """
     def _report(pct: float, msg: str) -> None:
         if progress is not None:
@@ -101,17 +132,40 @@ def scan(
     _report(0.02, "Reading tensor metadata...")
     handles = list(loader.open(model_path))
 
-    # Compute per-tensor statistics incrementally (the expensive SVD steps).
+    # Compute per-tensor statistics (the expensive SVD steps), optionally in
+    # parallel across tensors. Every handle's memoized payload is released
+    # right after its statistics are computed so the whole model is never held
+    # in RAM (~4 bytes/parameter for a 35B MoE would be ~140 GB).
     n_total = len(handles)
-    stats: list[TensorStats] = []
     report_every = max(1, n_total // 40) if n_total else 1
-    for i, h in enumerate(handles):
-        stats.append(_make_handles(h))
-        if i % report_every == 0 or i == n_total - 1:
-            _report(
-                0.04 + 0.36 * ((i + 1) / n_total),
-                f"Computing statistics ({i + 1}/{n_total})...",
-            )
+    jobs_n = _resolve_jobs(jobs)
+
+    def _work(h: TensorHandle) -> TensorStats:
+        return _stats_for_handle(h, cap_blas=jobs_n > 1)
+
+    stats: list[TensorStats] = []
+    if jobs_n > 1 and n_total > 1:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=jobs_n) as ex:
+            for i, (h, ts) in enumerate(zip(handles, ex.map(_work, handles), strict=True)):
+                h.clear()
+                stats.append(ts)
+                if i % report_every == 0 or i == n_total - 1:
+                    _report(
+                        0.04 + 0.36 * ((i + 1) / n_total),
+                        f"Computing statistics ({i + 1}/{n_total})...",
+                    )
+    else:
+        for i, h in enumerate(handles):
+            ts = _make_handles(h)
+            h.clear()
+            stats.append(ts)
+            if i % report_every == 0 or i == n_total - 1:
+                _report(
+                    0.04 + 0.36 * ((i + 1) / n_total),
+                    f"Computing statistics ({i + 1}/{n_total})...",
+                )
 
     _report(0.42, "Building fingerprint...")
     fingerprint = _build_fingerprint(stats, spec, loader_id, handles)

@@ -12,6 +12,9 @@ Properties:
 - Always >= log(2) ≈ 0.693 for any non-zero matrix
 - Equal to log1p(r) for a rank-r matrix with equal singular values
 - More robust than effective_rank for noisy/quantized tensors
+
+The spectral norm is taken from the per-tensor shared spectrum (see
+:mod:`weight_atlas.stats.spectrum`), so it costs no extra SVD.
 """
 
 from __future__ import annotations
@@ -20,7 +23,8 @@ import numpy as np
 
 from weight_atlas.core.registry import register_stat
 from weight_atlas.core.types import TensorHandle
-from weight_atlas.stats.norms import FrobeniusNorm, SpectralNorm
+from weight_atlas.stats.norms import FrobeniusNorm
+from weight_atlas.stats.spectrum import truncated_spectrum
 
 
 @register_stat("stable_rank")
@@ -33,12 +37,11 @@ class StableRank:
     stat_id = "stable_rank"
 
     def __init__(self, seed: int = 0) -> None:
-        self._spectral = SpectralNorm(seed=seed)
+        self._seed = seed
 
     def compute(self, t: TensorHandle) -> float:
-
         frob = FrobeniusNorm().compute(t)
-        spec = self._spectral.compute(t)
+        spec = float(truncated_spectrum(t, seed=self._seed)[0])
         if spec == 0.0:
             return 0.0
         ratio_sq = (frob / spec) ** 2

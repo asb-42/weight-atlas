@@ -137,6 +137,10 @@ CI tests only the wrapper (dry-run, subprocess mocked, binary not required).
 ## Design decisions
 
 - **TIFF over EXR**: Blender reads Float32 TIFF natively; no C builds required. EXR deferred to M2+.
+- **Shared truncated spectrum (one SVD per tensor)**: spectral norm, effective rank and stable rank all derive from the same singular values (`stats/spectrum.py`). Computing them independently ran up to three SVDs per tensor — the dominant cost when scanning MoE models (tens of thousands of expert tensors). The spectrum is computed once per tensor (exact SVD for `min(m,n) <= 512`, else the Halko randomized SVD with `k=16, q=2` in float32, seeded from `spec.seeds.svd`). float32 matmuls differ from float64 by <1e-8 relative on the singular values.
+- **Chunked O(n) statistics**: kurtosis, frobenius, kernel norm and sparsity accumulate in float64 over 1M-element chunks of the float32 payload instead of materializing full-size float64 arrays (the old kurtosis allocated `diff`/`diff**2`/`diff**4` copies and dominated scan time). Values agree with the vectorized computation to float64 rounding.
+- **Bounded memory on large scans**: every tensor's memoized float32 payload is released (`TensorHandle.clear()`) right after its statistics are computed, so the whole model is never held in RAM (~4 bytes/parameter; a 35B MoE would otherwise be ~140 GB).
+- **Parallel statistics workers**: per-tensor statistics are independent and deterministic, so `scan(..., jobs=N)` (default `min(8, cpu_count)`) computes them in a thread pool with per-worker BLAS capped to one thread (`threadpoolctl`). Output is byte-identical for any `jobs`.
 - **Effective rank from truncated spectrum**: using `k=16` singular values introduces a small downward bias on very high-rank matrices, but keeps runtime bounded and noise low. Documented here per spec.
 - **argparse over click**: core stays dependency-minimal; flat command hierarchy doesn't need click's nesting features.
 - **1-D tensors**: spectral norm = L2, effective rank = 1. Bias vectors still computed (spec requirement).

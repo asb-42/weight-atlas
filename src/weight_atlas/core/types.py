@@ -44,6 +44,17 @@ class TensorHandle:
         assert self._cache is not None
         return self._cache
 
+    def clear(self) -> None:
+        """Release the memoized array.
+
+        Bounds memory on large scans (MoE models have tens of thousands of
+        tensors — keeping every float32 array cached would hold the whole
+        model in RAM, ~4 bytes per parameter). Call after the statistics
+        for a tensor have been computed; ``load()`` re-reads from the loader.
+        """
+        self._cache = None
+        self._loaded = False
+
 
 @dataclass
 class TensorStats:
