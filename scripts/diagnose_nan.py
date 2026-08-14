@@ -40,17 +40,22 @@ def analyze_mapping_coverage(fp: dict):
         print("[!] Kein 'mapping_coverage' in fingerprint.json gefunden.")
         return
 
+    tensors = fp.get("tensors", {})
+    total = len(tensors)
+    n_unmapped = mc.get("unmapped", total)
+    mapped = total - n_unmapped
+    pct = mc.get("in_slots", round(mapped / total, 4) if total else 0.0)
+    if isinstance(pct, float) and 0 <= pct <= 1:
+        pct = pct * 100
+
     print("\n" + "=" * 60)
     print("MAPPING COVERAGE")
     print("=" * 60)
-    total = mc.get("total_tensors", 0)
-    mapped = mc.get("mapped_tensors", 0)
-    pct = mc.get("coverage_percent", 0)
     print(f"  Tensoren gesamt:   {total}")
     print(f"  Gemappt:           {mapped}")
     print(f"  Coverage:          {pct:.1f}%")
 
-    unmapped = mc.get("unmapped_names", [])
+    unmapped = mc.get("unmapped_tensors", [])
     if unmapped:
         print(f"\n  Unmapped Tensoren ({len(unmapped)}):")
         for name in unmapped[:20]:
@@ -66,7 +71,13 @@ def analyze_mapping_coverage(fp: dict):
 
 
 def analyze_tensor_list(fp: dict):
-    """Analysiert die Tensor-Liste nach Layer × Slot."""
+    """Analysiert die Tensor-Liste nach Layer × Slot.
+
+    ``tensors`` ist ein Dict ``name -> stats``; ``layer``/``slot`` werden
+    über ``map_name`` (weight_atlas.core.name_map) aus dem Namen abgeleitet.
+    """
+    from weight_atlas.core.name_map import map_name
+
     tensors = fp.get("tensors", fp.get("stats", []))
     if not tensors:
         print("[!] Keine Tensor-Liste in fingerprint.json gefunden.")
@@ -77,12 +88,11 @@ def analyze_tensor_list(fp: dict):
     all_slots = set()
     all_layers = set()
 
-    for t in tensors:
-        layer = t.get("layer")
-        slot = t.get("slot")
-        if layer is None or slot is None:
+    for name, t in tensors.items():
+        layer, slot = map_name(name)
+        if layer is None or slot == "other":
             continue
-        by_layer_slot[layer][slot] = t
+        by_layer_slot[layer][slot] = {**t, "name": name}
         all_slots.add(slot)
         all_layers.add(layer)
 
