@@ -14,7 +14,7 @@ from weight_atlas.compare import (
     compute_compare_summary,
     hotspot_ranking,
 )
-from weight_atlas.compare.align import _resample_field
+from weight_atlas.compare.align import _resample_field, _resample_rows_nearest
 from weight_atlas.compare.delta import (
     _compute_cosine_sim,
     _compute_rel_l2,
@@ -170,6 +170,63 @@ class TestAlignNormalized:
         assert result.shape == (4, 4)
         # NaN should be preserved somewhere (dilated by zoom)
         assert np.isnan(result).any()
+
+    def test_nearest_resample_rows_uses_actual_layers(self):
+        # 10 source layers -> 5 common rows: indices round(t*9) for t in linspace
+        field = np.arange(10 * 2, dtype=float).reshape(10, 2)
+        result, layer_map = _resample_rows_nearest(field, 5)
+        # t = 0, .25, .5, .75, 1 -> round(0*9)=0, round(2.25)=2, round(4.5)=5? np.round(4.5)=4 (banker)
+        assert len(layer_map) == 5
+        # Rows must be copies of real source rows, never interpolated values.
+        for i, src in enumerate(layer_map):
+            np.testing.assert_array_equal(result[i], field[src])
+
+    def test_nearest_resample_same_count_is_copy(self):
+        field = np.arange(12, dtype=float).reshape(6, 2)
+        result, layer_map = _resample_rows_nearest(field, 6)
+        assert layer_map == [0, 1, 2, 3, 4, 5]
+        np.testing.assert_array_equal(result, field)
+
+    def test_nearest_preserves_nan_verbatim(self):
+        field = np.array([[1.0, 1.0], [np.nan, np.nan], [3.0, 3.0]])
+        result, layer_map = _resample_rows_nearest(field, 9)
+        # Any row mapped to source layer 1 must keep its NaN.
+        for i, src in enumerate(layer_map):
+            if src == 1:
+                assert np.isnan(result[i]).all()
+
+    def test_nearest_align_sets_layer_maps(self, spec):
+        a = np.zeros((4, 7))
+        b = np.zeros((8, 7))
+        result = align(a, b, spec, mode="aligned", interp="nearest")
+        assert result.interp == "nearest"
+        assert result.layer_map_a is not None
+        assert result.layer_map_b is not None
+        # Layer maps must reference real source rows only.
+        assert max(result.layer_map_a) == 3
+        assert max(result.layer_map_b) == 7
+        assert min(result.layer_map_a) == 0
+        assert min(result.layer_map_b) == 0
+
+    def test_nearest_align_warns_about_depth_matching(self, spec):
+        a = np.zeros((4, 7))
+        b = np.zeros((8, 7))
+        result = align(a, b, spec, mode="aligned", interp="nearest")
+        assert any("nearest-layer" in w for w in result.warnings)
+
+    def test_linear_align_has_no_layer_maps(self, spec):
+        a = np.zeros((4, 7))
+        b = np.zeros((8, 7))
+        result = align(a, b, spec, mode="aligned", interp="linear")
+        assert result.interp == "linear"
+        assert result.layer_map_a is None
+        assert result.layer_map_b is None
+
+    def test_unknown_interp_raises(self, spec):
+        a = np.zeros((4, 7))
+        b = np.zeros((8, 7))
+        with pytest.raises(ValueError):
+            align(a, b, spec, mode="aligned", interp="bogus")
 
 
 # ---------------------------------------------------------------------------
@@ -419,6 +476,36 @@ class TestComputeCompareSummary:
     def test_no_fingerprint_no_warnings(self, field_a, field_b, simple_spec):
         summary = compute_compare_summary(field_a, field_b, simple_spec, mode="strict")
         assert summary.warnings == []
+
+    def test_aligned_summary_exposes_alignment(self, spec):
+        a = np.zeros((4, 7))
+        b = np.zeros((8, 7))
+        summary = compute_compare_summary(a, b, spec, mode="aligned", interp="nearest")
+        assert summary.alignment["mode"] == "aligned"
+        assert summary.alignment["interp"] == "nearest"
+        assert summary.alignment["n_rows_a"] == 4
+        assert summary.alignment["n_rows_b"] == 8
+        assert summary.alignment["n_rows_common"] >= 64
+        assert summary.alignment["layer_map_a"] is not None
+        assert summary.alignment["layer_map_b"] is not None
+        assert any("nearest-layer" in w for w in summary.warnings)
+
+    def test_strict_summary_has_minimal_alignment(self, field_a, field_b, simple_spec):
+        summary = compute_compare_summary(field_a, field_b, simple_spec, mode="strict")
+        assert summary.alignment["mode"] == "strict"
+        assert "interp" not in summary.alignment
+        assert "layer_map_a" not in summary.alignment
+
+    def test_interp_defaults_to_spec(self, field_a, field_b, simple_spec):
+        # simple_spec has no compare.aligned_interp -> linear default
+        summary = compute_compare_summary(field_a, field_b, simple_spec, mode="aligned")
+        assert summary.alignment["interp"] == "linear"
+
+    def test_interp_override_beats_spec(self, spec):
+        a = np.zeros((4, 7))
+        b = np.zeros((8, 7))
+        summary = compute_compare_summary(a, b, spec, mode="aligned", interp="nearest")
+        assert summary.alignment["interp"] == "nearest"
 
 
 # ---------------------------------------------------------------------------

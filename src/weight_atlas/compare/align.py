@@ -21,6 +21,10 @@ class AlignResult:
     col_labels: list[str]
     mode: str  # "strict" or "aligned"
     warnings: list[str]
+    interp: str = "linear"  # "linear" (zoom) or "nearest" (layer matching)
+    # Original layer index of each aligned row (aligned mode only).
+    layer_map_a: list[int] | None = None
+    layer_map_b: list[int] | None = None
 
 
 def check_compatibility(
@@ -66,16 +70,24 @@ def align(
     mode: str = "strict",
     row_labels_a: list[str] | None = None,
     row_labels_b: list[str] | None = None,
+    interp: str = "linear",
 ) -> AlignResult:
     """Align two fields for comparison.
 
     Strict mode: requires same shape, identical row/col indices.
     Aligned mode: normalizes depth to t∈[0,1], resamples to common grid.
+
+    ``interp`` controls how aligned mode resamples rows:
+    - ``"linear"`` (default): bilinear interpolation via scipy zoom — smooth but
+      smears layer-local structure across interpolated rows.
+    - ``"nearest"``: maps each normalized depth to the nearest actual layer
+      index and copies that row verbatim — preserves layer structure and NaN
+      holes, at the cost of stepping behaviour.
     """
     if mode == "strict":
         return _align_strict(field_a, field_b, spec, row_labels_a, row_labels_b)
     if mode == "aligned":
-        return _align_normalized(field_a, field_b, spec, row_labels_a, row_labels_b)
+        return _align_normalized(field_a, field_b, spec, row_labels_a, row_labels_b, interp)
     raise ValueError(f"unknown align mode: {mode}")
 
 
@@ -115,6 +127,7 @@ def _align_normalized(
     spec: AtlasSpec,
     row_labels_a: list[str] | None,
     row_labels_b: list[str] | None,
+    interp: str = "linear",
 ) -> AlignResult:
     """Aligned mode: normalize depth to t∈[0,1], resample to common grid."""
     warnings: list[str] = []
@@ -132,8 +145,15 @@ def _align_normalized(
     n_cols_common = max(n_cols_a, n_cols_b, len(spec.slots))
 
     # Resample A to common grid
-    field_a_aligned = _resample_field(field_a, n_rows_common, n_cols_common)
-    field_b_aligned = _resample_field(field_b, n_rows_common, n_cols_common)
+    if interp == "nearest":
+        field_a_aligned, layer_map_a = _resample_rows_nearest(field_a, n_rows_common)
+        field_b_aligned, layer_map_b = _resample_rows_nearest(field_b, n_rows_common)
+    elif interp == "linear":
+        field_a_aligned = _resample_field(field_a, n_rows_common, n_cols_common)
+        field_b_aligned = _resample_field(field_b, n_rows_common, n_cols_common)
+        layer_map_a = layer_map_b = None
+    else:
+        raise ValueError(f"unknown interp method: {interp}")
 
     row_labels = [f"{t:.3f}" for t in np.linspace(0, 1, n_rows_common)]
 
@@ -141,6 +161,18 @@ def _align_normalized(
         warnings.append(
             f"different layer counts (A={n_rows_a}, B={n_rows_b}), "
             f"resampled to {n_rows_common} common depth grid"
+        )
+    if interp == "linear":
+        warnings.append(
+            "aligned mode uses bilinear interpolation: rows are normalized "
+            "depth t∈[0,1], NOT absolute layer indices — layer 15/40 is "
+            "compared with the t=0.375 row of B, not B layer 15."
+        )
+    else:
+        warnings.append(
+            "aligned mode uses nearest-layer matching: each row copies the "
+            "nearest real layer of A and B by normalized depth t∈[0,1], so "
+            "layer 15/40 (t=0.375) is compared with B's t=0.375 layer."
         )
 
     return AlignResult(
@@ -150,7 +182,25 @@ def _align_normalized(
         col_labels=list(spec.slots),
         mode="aligned",
         warnings=warnings,
+        interp=interp,
+        layer_map_a=layer_map_a,
+        layer_map_b=layer_map_b,
     )
+
+
+def _resample_rows_nearest(field: np.ndarray, n_rows: int) -> tuple[np.ndarray, list[int]]:
+    """Resample rows by nearest-layer matching on normalized depth.
+
+    Each target row t∈[0,1] copies the source row whose index is closest to
+    ``round(t * (n_source - 1))``. NaN cells are preserved verbatim (no
+    interpolation), and the layer mapping is returned for reporting.
+    """
+    n_src = field.shape[0]
+    if n_src == n_rows:
+        return field.copy(), list(range(n_src))
+    t = np.linspace(0, 1, n_rows)
+    src_idx = np.round(t * (n_src - 1)).astype(int)
+    return field[src_idx, :], [int(i) for i in src_idx]
 
 
 def _resample_field(field: np.ndarray, n_rows: int, n_cols: int) -> np.ndarray:

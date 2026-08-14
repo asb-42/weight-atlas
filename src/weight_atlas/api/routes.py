@@ -350,6 +350,10 @@ def create_router(
         if mode not in ("strict", "aligned"):
             raise HTTPException(status_code=400, detail=f"unknown compare mode: {mode}")
 
+        interp = payload.get("interp", "linear")
+        if interp not in ("linear", "nearest"):
+            raise HTTPException(status_code=400, detail=f"unknown interp: {interp}")
+
         dir_a = Path(dir_a_str).resolve()
         dir_b = Path(dir_b_str).resolve()
 
@@ -366,7 +370,7 @@ def create_router(
         out_dir = output_root / f"compare_{dir_a.name}_vs_{dir_b.name}_{uuid.uuid4().hex[:8]}"
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        job = job_queue.submit_compare(dir_a, dir_b, out_dir, spec_path, mode=mode)
+        job = job_queue.submit_compare(dir_a, dir_b, out_dir, spec_path, mode=mode, interp=interp)
         # Keep the job JSON for the API; HTMX navigates to the compare progress page.
         return JSONResponse(
             job.to_dict(),

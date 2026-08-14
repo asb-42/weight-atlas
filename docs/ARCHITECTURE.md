@@ -238,6 +238,11 @@ scan artefacts (B) ─┘                    │
 - **Hard-reject on spec_version mismatch**: raises ValueError, comparison not allowed.
 - **Warning on tool_version mismatch**: logs warning, comparison still allowed.
 - **Aligned mode**: normalizes depth to t∈[0,1], resamples to common grid (≥64 depth samples).
+- **Aligned row resampling** (`compare.aligned_interp`): `linear` (default, bilinear
+  interpolation via scipy zoom) or `nearest` (nearest-layer matching — each row
+  copies the nearest real layer by depth; preserves layer structure and NaN holes).
+  Rows are normalized depth, NOT absolute layer indices; layer maps per row are
+  recorded in `compare_summary.json` → `alignment`.
 - **Hotspot ranking**: top-k locations ranked by |delta|, with NaN positions filtered out.
 - **Read-only**: compare reads only artefacts (TIFF + JSON), never weights.
 - **Diverging colormap**: RdBu_r centered at zero for delta visualization.
@@ -281,15 +286,19 @@ The `atlas_spec.v2.2.json` may include a `compare` block:
     "default_mode": "strict",
     "aligned_grid": 64,
     "colormap": "RdBu_r",
-    "diverging_clip": 0.98
+    "diverging_clip": 0.98,
+    "aligned_interp": "linear"
   }
 }
 ```
 `spec_version` remains 1 (extension documented here per spec).
+`aligned_interp` accepts `"linear"` (bilinear interpolation, default) or
+`"nearest"` (nearest-layer matching by normalized depth; preserves layer
+structure and NaN holes).
 
 ### CLI
 ```bash
-weight-atlas compare DIR_A DIR_B --out DIR --mode {strict,aligned}
+weight-atlas compare DIR_A DIR_B --out DIR --mode {strict,aligned} [--interp {linear,nearest}]
 ```
 
 ### Renderer placement

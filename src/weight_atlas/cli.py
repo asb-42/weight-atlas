@@ -57,6 +57,9 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--out", type=Path, required=True, help="Output directory for comparison artefacts")
     compare.add_argument("--mode", choices=["strict", "aligned"], default="strict",
                          help="Comparison mode (default: strict)")
+    compare.add_argument("--interp", choices=["linear", "nearest"], default=None,
+                         help="Aligned-mode row resampling: linear (bilinear) or nearest "
+                              "(nearest-layer matching). Default: spec compare.aligned_interp")
     compare.add_argument("--spec", type=Path, default=None, help="Path to atlas spec JSON")
 
     activity = sub.add_parser("activity", help="Capture forward-pass activations (fMRI mode)")
@@ -222,6 +225,7 @@ def _cmd_compare(args: argparse.Namespace) -> int:
         summary = compute_compare_summary(
             field_a, field_b, spec,
             mode=args.mode,
+            interp=getattr(args, "interp", None),
             fingerprint_a=fp_a,
             fingerprint_b=fp_b,
             row_labels_a=row_labels_a,
@@ -292,6 +296,7 @@ def _cmd_compare(args: argparse.Namespace) -> int:
         "model_b": summary.model_b,
         "loaders": {"a": summary.model_a.get("loader", "unknown"), "b": summary.model_b.get("loader", "unknown")},
         "warnings": summary.warnings,
+        "alignment": summary.alignment,
         "channels": {},
     }
     for ch_name, ch_delta in summary_channels.items():

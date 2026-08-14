@@ -39,6 +39,18 @@ class CompareSummary:
     warnings: list[str] = field(default_factory=list)
     aligned_row_labels: list[str] = field(default_factory=list)
     aligned_col_labels: list[str] = field(default_factory=list)
+    # Aligned-mode metadata for the report: resampling method + layer maps.
+    alignment: dict[str, Any] = field(default_factory=dict)
+
+
+def _get_aligned_interp(spec: AtlasSpec) -> str:
+    """Return the aligned-mode row resampling method from the spec.
+
+    ``compare.aligned_interp`` accepts ``"linear"`` (default) or
+    ``"nearest"`` (nearest-layer matching by normalized depth).
+    """
+    interp = spec.compare.get("aligned_interp", "linear")
+    return interp if interp in ("linear", "nearest") else "linear"
 
 
 def compute_delta(
@@ -169,6 +181,7 @@ def compute_compare_summary(
     spec: AtlasSpec,
     *,
     mode: str = "strict",
+    interp: str | None = None,
     fingerprint_a: dict[str, Any] | None = None,
     fingerprint_b: dict[str, Any] | None = None,
     row_labels_a: list[str] | None = None,
@@ -180,6 +193,8 @@ def compute_compare_summary(
         field_a, field_b: raw fields (e.g., spectral_norm) for the same channel
         spec: atlas specification
         mode: "strict" or "aligned"
+        interp: aligned-mode row resampling ("linear" or "nearest"). Defaults to
+            the spec's ``compare.aligned_interp`` setting.
         fingerprint_a, fingerprint_b: optional fingerprints for metadata
         row_labels_a, row_labels_b: optional row labels from scan
     """
@@ -214,11 +229,14 @@ def compute_compare_summary(
             )
 
     # Align fields
+    if interp is None:
+        interp = _get_aligned_interp(spec)
     aligned = align(
         field_a, field_b, spec,
         mode=mode,
         row_labels_a=row_labels_a,
         row_labels_b=row_labels_b,
+        interp=interp,
     )
     warnings.extend(aligned.warnings)
 
@@ -226,6 +244,19 @@ def compute_compare_summary(
     channels: dict[str, ChannelDelta] = {}
     for channel in spec.channels:
         channels[channel] = compute_delta(aligned, channel, spec)
+
+    # Alignment metadata for the report: expose how rows were matched so
+    # readers never mistake aligned-mode layer indices for absolute ones.
+    alignment: dict[str, Any] = {
+        "mode": mode,
+        "n_rows_a": int(field_a.shape[0]),
+        "n_rows_b": int(field_b.shape[0]),
+        "n_rows_common": int(aligned.data_a.shape[0]),
+    }
+    if mode == "aligned":
+        alignment["interp"] = aligned.interp
+        alignment["layer_map_a"] = aligned.layer_map_a
+        alignment["layer_map_b"] = aligned.layer_map_b
 
     return CompareSummary(
         mode=mode,
@@ -236,6 +267,7 @@ def compute_compare_summary(
         warnings=warnings,
         aligned_row_labels=aligned.row_labels,
         aligned_col_labels=aligned.col_labels,
+        alignment=alignment,
     )
 
 

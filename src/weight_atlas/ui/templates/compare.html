@@ -34,8 +34,20 @@
             </label>
         </fieldset>
 
+        <fieldset>
+            <legend>Aligned row resampling</legend>
+            <label>
+                <input type="radio" name="interp" value="linear" checked>
+                Linear (bilinear interpolation — smooth)
+            </label>
+            <label>
+                <input type="radio" name="interp" value="nearest">
+                Nearest layer (copies nearest real layer per depth — preserves structure)
+            </label>
+        </fieldset>
+
         <button type="submit">Run Comparison</button>
-        <p class="hint">Strict requires identical shapes; choose <em>Aligned</em> when comparing models with different layer counts (e.g. Qwen3.6-27B 64 layers vs Qwen3.6-35B-A3B 40 layers).</p>
+        <p class="hint">Strict requires identical shapes; choose <em>Aligned</em> when comparing models with different layer counts (e.g. Qwen3.6-27B 64 layers vs Qwen3.6-35B-A3B 40 layers). In aligned mode, rows are normalized depth t∈[0,1] — layer 15 of 40 is compared with the t=0.375 row of B, not B layer 15.</p>
     </form>
     <div id="compare-result"></div>
 </section>

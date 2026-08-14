@@ -446,7 +446,8 @@ weight-atlas activity --help
     "default_mode": "strict",
     "aligned_grid": 64,
     "colormap": "RdBu_r",
-    "diverging_clip": 0.98
+    "diverging_clip": 0.98,
+    "aligned_interp": "linear"
   },
   "embedding": {
     "method": "pca",

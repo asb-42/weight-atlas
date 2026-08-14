@@ -230,10 +230,13 @@ class JobQueue:
         # Determine job type from message field
         message = job.message
         compare_mode = "strict"
+        compare_interp = "linear"
         if message == "compare" or message.startswith("compare:"):
             job_type = "compare"
             if ":" in message:
-                compare_mode = message.split(":", 1)[1]
+                parts = message.split(":", 2)
+                compare_mode = parts[1] if len(parts) > 1 else "strict"
+                compare_interp = parts[2] if len(parts) > 2 else "linear"
         elif message.startswith("render:"):
             job_type = "render"
         else:
@@ -263,7 +266,7 @@ class JobQueue:
             artefacts: list[str]
             if job_type == "compare":
                 progress_cb(0.2, "Comparing models...")
-                artefacts = self._run_compare(job, spec, progress_cb, mode=compare_mode)
+                artefacts = self._run_compare(job, spec, progress_cb, mode=compare_mode, interp=compare_interp)
             elif job_type == "render":
                 progress_cb(0.2, "Rendering sheets...")
                 artefacts = self._render_job(job, spec, renderer_id or "sheet", progress_cb)
@@ -306,6 +309,7 @@ class JobQueue:
         spec: Any,
         progress_cb: Callable[[float, str], None],
         mode: str = "strict",
+        interp: str = "linear",
     ) -> list[str]:
         """Run comparison between two scanned model directories."""
         import json
@@ -355,6 +359,7 @@ class JobQueue:
             summary = compute_compare_summary(
                 field_a, field_b, spec,
                 mode=mode,
+                interp=interp,
                 fingerprint_a=fp_a,
                 fingerprint_b=fp_b,
             )
@@ -400,6 +405,7 @@ class JobQueue:
                 "b": summary.model_b.get("loader"),
             },
             "warnings": summary.warnings,
+            "alignment": summary.alignment,
             "channels": {},
         }
         for ch_name, ch_delta in summary_channels.items():
@@ -521,6 +527,7 @@ class JobQueue:
         out_dir: Path,
         spec_path: Path,
         mode: str = "strict",
+        interp: str = "linear",
     ) -> Job:
         """Create a new compare job and enqueue it."""
         now = self._now()
@@ -534,7 +541,7 @@ class JobQueue:
             status=JobStatus.QUEUED,
             created_at=now,
             updated_at=now,
-            message=f"compare:{mode}",
+            message=f"compare:{mode}:{interp}",
         )
         self._save(job)
         self._enqueued.add(job.job_id)

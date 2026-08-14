@@ -41,6 +41,36 @@
 </section>
 {% endif %}
 
+{% if compare_summary.alignment and compare_summary.alignment.mode == "aligned" %}
+<section class="detail-section">
+    <h3>Alignment</h3>
+    <div class="banner banner--info">
+        <p>
+            <strong>Aligned mode:</strong>
+            rows are normalized depth t∈[0,1] and resampled to a common grid of
+            {{ compare_summary.alignment.n_rows_common }} rows —
+            they are <strong>not</strong> absolute layer indices.
+            Model A has {{ compare_summary.alignment.n_rows_a }} layers, model B
+            {{ compare_summary.alignment.n_rows_b }} layers.
+        </p>
+        {% if compare_summary.alignment.interp == "nearest" %}
+        <p>
+            <strong>Nearest-layer matching:</strong> each row copies the nearest
+            real layer of each model by depth. Layer A#{{ compare_summary.alignment.layer_map_a[0] }}
+            (top) aligns with layer B#{{ compare_summary.alignment.layer_map_b[0] }}; the
+            layer maps are recorded per row in <code>compare_summary.json</code>.
+        </p>
+        {% else %}
+        <p>
+            <strong>Bilinear interpolation:</strong> values are smoothed between
+            real layers. Layer 15 of 40 (t=0.375) is compared with B's t=0.375
+            row — not with B layer 15.
+        </p>
+        {% endif %}
+    </div>
+</section>
+{% endif %}
+
 {% if compare_summary.channels %}
 <section class="detail-section">
     <h3>Summary Metrics</h3>
