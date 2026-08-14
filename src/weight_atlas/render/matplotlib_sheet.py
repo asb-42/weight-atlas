@@ -35,6 +35,13 @@ _PNG_METADATA = {
 _EPS = 1e-6
 _MIN_VALID_FRACTION = 0.1
 
+# Cap on the long edge of the rendered raster (pixels). Fields like large MoE
+# expert panels (Kimi K3: 736x7168 after upsampling) would otherwise produce a
+# figure sized in inches proportional to the field — 7168 x 0.5 in at 150 dpi
+# is 537,600 px wide, a ~95 GB RGBA buffer that OOM-kills the worker. The
+# aspect ratio is preserved and only the resolution is bounded.
+_MAX_RENDER_LONG_PX = 4096
+
 
 @register_renderer("sheet")
 class MatplotlibSheet:
@@ -50,7 +57,17 @@ class MatplotlibSheet:
 
         data = field.data
         n_rows, n_cols = data.shape
-        figsize = (max(6, n_cols * 0.5), max(4, n_rows * 0.4))
+        # Bound the raster: keep the field's aspect ratio but cap the long edge
+        # so the dpi-scaled RGBA buffer stays small even for huge panels (see
+        # ``_MAX_RENDER_LONG_PX``). Without this, rendering a 736x7168 expert
+        # panel allocates ~95 GB and is OOM-killed.
+        if n_cols >= n_rows:
+            px_w = _MAX_RENDER_LONG_PX
+            px_h = max(1, int(round(_MAX_RENDER_LONG_PX * n_rows / n_cols)))
+        else:
+            px_h = _MAX_RENDER_LONG_PX
+            px_w = max(1, int(round(_MAX_RENDER_LONG_PX * n_cols / n_rows)))
+        figsize = (max(2.0, px_w / dpi), max(2.0, px_h / dpi))
 
         # Check for degenerate channel
         is_degenerate, degen_reason = _check_degenerate(data)
