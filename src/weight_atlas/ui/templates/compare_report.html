@@ -146,8 +146,10 @@
     <div class="image-grid">
         {% for png in delta_pngs %}
         <figure>
-            <img src="/static/outputs/{{ out_dir }}/render/{{ png }}" alt="{{ png }}">
-            <figcaption>{{ png }}</figcaption>
+            <a href="/static/outputs/{{ out_dir }}/render/{{ png }}" target="_blank" rel="noopener" title="Open full size">
+                <img src="/static/outputs/{{ out_dir }}/render/{{ png }}" alt="{{ png }}">
+            </a>
+            <figcaption>{{ png }} — click to open full size</figcaption>
         </figure>
         {% endfor %}
     </div>

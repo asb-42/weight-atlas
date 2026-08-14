@@ -195,8 +195,12 @@ def compute_compare_summary(
         loader_b = fingerprint_b.get("loader", "unknown")
         if loader_a != loader_b:
             warnings.append(
-                f"loader mismatch: A={loader_a}, B={loader_b}. "
-                "Cross-loader comparisons may not be fully comparable."
+                f"loader mismatch: A={loader_a}, B={loader_b}. The scanned "
+                "fields are rank-normalized, so the topographic structure is "
+                "comparable across formats, but absolute magnitudes (rel_l2 / "
+                "cosine_sim) carry quantization/format noise. For "
+                "magnitude-exact comparisons use the same loader and "
+                "quantization on both sides."
             )
 
         # Check for quantization mismatch
@@ -244,6 +248,7 @@ def _extract_model_meta(fingerprint: dict[str, Any] | None) -> dict[str, Any]:
         "loader": fingerprint.get("loader", "unknown"),
         "n_tensors": fingerprint.get("model", {}).get("n_tensors", 0),
         "n_layers": fingerprint.get("model", {}).get("n_layers", 0),
+        "quantization": fingerprint.get("quantization", {}),
     }
 
 

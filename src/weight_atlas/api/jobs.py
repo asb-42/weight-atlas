@@ -395,6 +395,10 @@ class JobQueue:
             "spec_version": spec.spec_version,
             "model_a": summary.model_a,
             "model_b": summary.model_b,
+            "loaders": {
+                "a": summary.model_a.get("loader"),
+                "b": summary.model_b.get("loader"),
+            },
             "warnings": summary.warnings,
             "channels": {},
         }
