@@ -223,6 +223,7 @@ def _resample_field(field: np.ndarray, n_rows: int, n_cols: int) -> np.ndarray:
 
     # Resample
     resampled = zoom(clean, (zoom_row, zoom_col), order=1)
+    resampled = np.asarray(resampled)
 
     # Resample mask to identify NaN-affected regions
     mask_float = mask.astype(np.float64)

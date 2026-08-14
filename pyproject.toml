@@ -27,7 +27,7 @@ dependencies = [
 blender = []
 umap = ["umap-learn>=0.5"]
 activity = ["torch>=2.0", "transformers>=4.30"]
-dev = ["pytest>=7", "ruff>=0.4", "mypy>=1.9"]
+dev = ["pytest>=7", "ruff>=0.4", "mypy>=1.9", "scipy-stubs>=1.15"]
 
 [project.scripts]
 weight-atlas = "weight_atlas.cli:main"
