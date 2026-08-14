@@ -14,7 +14,11 @@
 
 {% if job.status == "done" %}
 <p>
+    {% if "|" in job.model_path %}
+    <a href="/compare/{{ job.job_id }}">View Compare Report →</a>
+    {% else %}
     <a href="/models/{{ job.job_id }}">View Model Detail →</a>
+    {% endif %}
 </p>
 {% endif %}
 {% endblock %}

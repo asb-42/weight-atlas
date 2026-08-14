@@ -364,6 +364,27 @@ class JobQueue:
             write_tif(delta_path, summary.channels[channel].delta)
             all_artefacts.append(delta_path)
 
+            # Render delta sheet PNGs so the compare report has visuals.
+            try:
+                import weight_atlas.compare.render  # noqa: F401 — registers "delta"
+                from weight_atlas.core.registry import get_renderer
+
+                renderer = get_renderer("delta")()
+                rendered = renderer.render(
+                    summary.channels[channel].delta,
+                    spec,
+                    out / "render",
+                    channel=channel,
+                    row_labels=summary.aligned_row_labels,
+                    col_labels=summary.aligned_col_labels,
+                    mode=mode,
+                    model_a=dir_a.name,
+                    model_b=dir_b.name,
+                )
+                all_artefacts.extend(rendered)
+            except KeyError:
+                pass  # delta renderer not registered
+
         if not summary_channels:
             # Nothing to compare (e.g. activity-only or partial scans) — avoid
             # the NameError from referencing loop-scoped `summary`.
