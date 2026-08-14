@@ -450,3 +450,10 @@ weight-atlas activity --help
   "seeds": {"svd": 0}
 }
 ```
+
+`diverging_clip` (default 0.98) steuert das symmetrische Limit der Delta-Colorbar:
+es ist das Quantil von |Δ| je Kanal, zusätzlich gedeckelt auf eine robuste Spannweite
+(Median + 4.4826·MAD, ≈3σ), damit einzelne Ausreißer den Massenbereich nicht
+"flach" Richtung Weiß drücken. Slot-Spalten, die in einem Modell komplett fehlen
+(NaN), werden beim Rendern automatisch ausgeblendet; die Zuordnung Original→behalten
+ist über `kept_cols` am Renderer abrufbar.

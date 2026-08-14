@@ -241,7 +241,10 @@ scan artefacts (B) ─┘                    │
 - **Hotspot ranking**: top-k locations ranked by |delta|, with NaN positions filtered out.
 - **Read-only**: compare reads only artefacts (TIFF + JSON), never weights.
 - **Diverging colormap**: RdBu_r centered at zero for delta visualization.
-- **Symmetric limits**: ±q(diverging_clip) per channel (default q=0.98), not global.
+- **Symmetric limits**: ±q(diverging_clip) per channel (default q=0.98), capped at a
+  robust spread (median + 4.4826·MAD ≈3σ) so a few outliers cannot flatten the bulk.
+- **Empty columns**: all-NaN columns (slots missing in one model) are dropped before
+  rendering; the original→kept mapping is exposed as `kept_cols` on the renderer.
 - **Profile strip**: 1×L "ablitation bar" showing per-layer relative L2 (hot colormap).
 
 ### compare_summary.json Schema

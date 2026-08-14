@@ -30,6 +30,27 @@ def _get_diverging_clip(spec: AtlasSpec) -> float:
     return 0.98
 
 
+def _compute_vmax(data: np.ndarray, diverging_clip: float) -> float:
+    """Symmetric limit for the diverging colormap.
+
+    Uses the ``diverging_clip`` quantile of |Δ|, capped at a robust spread
+    (median + 4.4826·MAD, ≈3σ) so a few extreme outliers cannot flatten the
+    bulk of the values toward white.
+    """
+    finite = np.isfinite(data)
+    if not finite.any():
+        return 1.0
+    abs_vals = np.abs(data[finite])
+    vmax = float(np.quantile(abs_vals, diverging_clip))
+    if abs_vals.size >= 20:
+        median = float(np.median(abs_vals))
+        mad = float(np.median(np.abs(abs_vals - median)))
+        robust = median + 4.4826 * mad
+        if robust > 0 and vmax > robust:
+            return robust
+    return vmax
+
+
 @register_renderer("delta")
 class DeltaSheet:
     """Renders a delta field as a diverging colormap sheet.
@@ -69,15 +90,25 @@ class DeltaSheet:
         out.mkdir(parents=True, exist_ok=True)
         produced: list[Path] = []
 
+        # Drop all-NaN columns (slots missing in one or both models) so the
+        # sheet compresses horizontally. ``kept_cols`` stores the mapping of
+        # original column indices that survive, so the caller can translate
+        # back (e.g. for the hotspot slot names).
+        valid_cols = ~np.isnan(delta).all(axis=0)
+        self.kept_cols = [int(i) for i in np.where(valid_cols)[0]]
+        if not valid_cols.any():
+            # All columns NaN: keep as-is so the renderer still emits a sheet.
+            data = delta
+        elif valid_cols.all():
+            data = delta
+        else:
+            data = delta[:, valid_cols]
+            if col_labels is not None:
+                col_labels = [label for label, keep in zip(col_labels, valid_cols) if keep]
+
         # Compute symmetric limits using diverging_clip quantile
         diverging_clip = _get_diverging_clip(spec)
-        data = delta
-        finite = np.isfinite(data)
-        if finite.any():
-            abs_vals = np.abs(data[finite])
-            vmax = float(np.quantile(abs_vals, diverging_clip))
-        else:
-            vmax = 1.0
+        vmax = _compute_vmax(data, diverging_clip)
 
         # Render main delta sheet
         sheet_path = self._render_sheet(data, spec, out, channel, row_labels, col_labels, mode, vmax, model_a, model_b)

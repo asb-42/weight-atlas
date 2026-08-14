@@ -490,3 +490,73 @@ class TestDeltaSheetDeterminism:
         assert len(paths) == 2
         assert any("delta_sheet_height" in p.name for p in paths)
         assert any("delta_profile_height" in p.name for p in paths)
+
+
+class TestDeltaSheetColumnCompression:
+    def test_nan_columns_dropped(self, simple_spec, tmp_path):
+        """All-NaN columns (slots missing in one model) are dropped and the
+        kept_cols mapping is recorded."""
+        from weight_atlas.compare.render.delta_sheet import DeltaSheet
+
+        delta = np.full((4, 6), 0.1)
+        delta[:, 1] = np.nan  # slot 1 missing
+        delta[:, 4] = np.nan  # slot 4 missing
+        col_labels = ["attn_q", "attn_k", "attn_v", "attn_o", "mlp_gate", "mlp_up"]
+
+        renderer = DeltaSheet()
+        out = tmp_path / "render"
+        paths = renderer.render(
+            delta, simple_spec, out, channel="height", mode="aligned", col_labels=col_labels
+        )
+
+        assert renderer.kept_cols == [0, 2, 3, 5]
+        assert len(paths) == 2  # sheet + profile still rendered
+        for p in paths:
+            assert p.exists()
+
+    def test_no_nan_columns_keeps_all(self, simple_spec, tmp_path):
+        """When no column is fully NaN, kept_cols covers every index."""
+        from weight_atlas.compare.render.delta_sheet import DeltaSheet
+
+        delta = np.full((4, 5), 0.1)
+        renderer = DeltaSheet()
+        out = tmp_path / "render"
+        renderer.render(delta, simple_spec, out, channel="height", mode="strict")
+        assert renderer.kept_cols == [0, 1, 2, 3, 4]
+
+    def test_all_nan_columns_still_renders(self, simple_spec, tmp_path):
+        """Fully-NaN delta still produces a sheet (kept as-is)."""
+        from weight_atlas.compare.render.delta_sheet import DeltaSheet
+
+        delta = np.full((4, 3), np.nan)
+        renderer = DeltaSheet()
+        out = tmp_path / "render"
+        paths = renderer.render(delta, simple_spec, out, channel="height", mode="aligned")
+        assert renderer.kept_cols == []
+        assert len(paths) == 2
+        for p in paths:
+            assert p.exists()
+
+
+class TestDeltaSheetVmax:
+    def test_vmax_follows_quantile(self, simple_spec):
+        """Without outliers vmax tracks the diverging_clip quantile."""
+        from weight_atlas.compare.render.delta_sheet import _compute_vmax
+
+        rng = np.random.default_rng(0)
+        data = rng.normal(0, 0.1, (40, 40))
+        vmax = _compute_vmax(data, 0.98)
+        assert 0 < vmax <= np.abs(data).max()
+
+    def test_vmax_capped_by_robust_spread(self, simple_spec):
+        """A few extreme outliers must not flatten the bulk toward white."""
+        from weight_atlas.compare.render.delta_sheet import _compute_vmax
+
+        rng = np.random.default_rng(1)
+        data = rng.normal(0, 0.05, (40, 40))
+        data[0, 0] = 0.8  # extreme outlier
+        data[1, 1] = -0.9
+        vmax = _compute_vmax(data, 0.98)
+        # Robust cap should keep vmax well below the outlier magnitude
+        assert vmax < 0.5
+        assert vmax > 0.05  # still large enough to show the bulk
