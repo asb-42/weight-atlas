@@ -24,11 +24,15 @@ import numpy as np
 from weight_atlas.core.registry import register_renderer
 from weight_atlas.core.types import AtlasSpec, Field2D
 from weight_atlas.fields.tif_io import read_tif
+from weight_atlas.render.blender.render_terrain import normalise_height
 
 # Spec defaults for Blender-specific settings
 _DEFAULT_GRID = 1024
 _DEFAULT_RESOLUTION = 2048
 _DEFAULT_Z_SCALE = 0.3
+_DEFAULT_PITCH = 18.0
+_DEFAULT_CLIP = 0.01
+_DEFAULT_ADAPTIVE_Z_SCALE = False
 _OBJ_DOWNSAMPLE = 256
 
 
@@ -70,9 +74,12 @@ def build_blender_command(
     grid: int,
     z_scale: float,
     resolution: int,
+    pitch: float = _DEFAULT_PITCH,
+    clip: float = _DEFAULT_CLIP,
+    adaptive_z_scale: bool = _DEFAULT_ADAPTIVE_Z_SCALE,
 ) -> list[str]:
     """Construct the command-line for a headless Blender render."""
-    return [
+    cmd = [
         str(blender_path),
         "-b",  # headless (no GUI)
         "-P", str(script_path),  # execute Python script
@@ -82,14 +89,20 @@ def build_blender_command(
         "--out", str(out_png),
         "--grid", str(grid),
         "--z-scale", str(z_scale),
+        "--clip", str(clip),
         "--resolution", str(resolution),
+        "--pitch", str(pitch),
     ]
+    if adaptive_z_scale:
+        cmd.append("--adaptive-z-scale")
+    return cmd
 
 
 def write_obj(height: np.ndarray, tint: np.ndarray, out: Path) -> None:
     """Write a Wavefront OBJ mesh (plain text, diffable).
 
-    The mesh is a downsample of the smooth height field to 256² vertices.
+    The mesh is a downsample of the smooth height field to 256² vertices,
+    normalised with the same robust percentile clip as the PNG render.
     """
     # Downsample
     src_h, src_w = height.shape
@@ -98,11 +111,8 @@ def write_obj(height: np.ndarray, tint: np.ndarray, out: Path) -> None:
     col_idx = (np.arange(target) * (src_w - 1) / (target - 1)).astype(int)
     h_small = height[np.ix_(row_idx, col_idx)]
 
-    # Normalise
-    h_min = float(h_small.min())
-    h_max = float(h_small.max())
-    h_range = h_max - h_min if h_max > h_min else 1.0
-    h_norm = (h_small - h_min) / h_range
+    # Robust normalise (same helper as the PNG renderer)
+    h_norm = normalise_height(h_small, _DEFAULT_CLIP)
 
     x = np.linspace(-1.0, 1.0, target)
     y = np.linspace(-1.0, 1.0, target)
@@ -168,6 +178,9 @@ class BlenderRenderer:
         grid = int(_get_spec_value(spec, "grid", _DEFAULT_GRID))
         resolution = int(_get_spec_value(spec, "resolution", _DEFAULT_RESOLUTION))
         z_scale = float(_get_spec_value(spec, "z_scale", _DEFAULT_Z_SCALE))
+        pitch = float(_get_spec_value(spec, "pitch", _DEFAULT_PITCH))
+        clip = float(_get_spec_value(spec, "clip", _DEFAULT_CLIP))
+        adaptive = bool(_get_spec_value(spec, "adaptive_z_scale", _DEFAULT_ADAPTIVE_Z_SCALE))
 
         produced: list[Path] = []
 
@@ -201,6 +214,9 @@ class BlenderRenderer:
                 grid=grid,
                 z_scale=z_scale,
                 resolution=resolution,
+                pitch=pitch,
+                clip=clip,
+                adaptive_z_scale=adaptive,
             )
 
             result = subprocess.run(
@@ -236,6 +252,9 @@ class BlenderRenderer:
                     grid=grid,
                     z_scale=z_scale,
                     resolution=resolution,
+                    pitch=pitch,
+                    clip=clip,
+                    adaptive_z_scale=adaptive,
                 )
 
                 result = subprocess.run(

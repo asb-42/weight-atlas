@@ -104,9 +104,17 @@ field_tint_smooth.tif ──┘                                          │
 - **Engine**: `BLENDER_WORKBENCH` (headless-safe, deterministic, no GPU/EGL requirement). Cycles deferred as beauty-option to backlog.
 - **Binary resolution**: `WEIGHT_ATLAS_BLENDER` env var → `shutil.which("blender")` → clear error message with install hint. No pip dependency.
 - **Mesh**: 1024² grid (spec value), vertex-Z from height (normalised + z-scaled), vertex-color from tint. Mesh generation via `foreach_set` for performance.
-- **Camera**: orthographic, exactly top-down (0° roll/pitch), ortho_scale 2.2 (slight margin around ±1 unit grid).
+- **Camera**: orthographic, fixed 18° pitch (not top-down; reveals relief while
+  staying orthographic — no perspective distortion, comparable across models).
+  ortho_scale computed from pitch + effective z-scale so the tilted grid stays
+  in frame (never smaller than 2.2).
 - **Lighting**: Sun lamp, azimuth 315° (NW), altitude 45°, energy 1.0. Studio shading with vertex colors.
-- **OBJ export**: plain-text Wavefront OBJ at 256² downsample, written directly by wrapper (no bpy-ops). Deterministic, diffable fingerprint artefact.
+- **Height normalisation**: robust percentile clip (1–99%, spec `clip`) before
+  rescaling to [0,1] — a single outlier hotspot can no longer flatten the bulk.
+  `adaptive_z_scale` (opt-in) rescales Z so relief std is constant across
+  fields (base_z_scale / std, capped at 5.0); **breaks absolute-amplitude
+  comparability** — document as purely visual.
+- **OBJ export**: plain-text Wavefront OBJ at 256² downsample, written directly by wrapper (no bpy-ops). Deterministic, diffable fingerprint artefact, uses the same robust normalisation as the PNG render.
 - **World**: fixed dark grey (0.05, 0.05, 0.05), no HDR/noise.
 - **Determinism**: same height+tint inputs → byte-identical PNG (locally verified by smoke test) + byte-identical OBJ (unit tested). Workbench must provide pixel-identical output; if not, documented in smoke-test log with root-cause analysis (never SSIM).
 
@@ -118,10 +126,17 @@ The `atlas_spec.v2.2.json` may include a `blender` block (all optional, defaults
   "blender": {
     "grid": 1024,
     "resolution": 2048,
-    "z_scale": 0.3
+    "z_scale": 0.3,
+    "pitch": 18.0,
+    "clip": 0.01,
+    "adaptive_z_scale": false
   }
 }
 ```
+`pitch`: camera tilt in degrees (0 = top-down, 18 = default relief view).
+`clip`: percentile band for robust height normalisation (0 = plain min/max).
+`adaptive_z_scale`: if true, effective z = `z_scale / std(height)` (capped at
+5.0) — amplifies weak relief but makes amplitudes relative, not absolute.
 
 `spec_version` remains 1 (pre-release); extension documented here per spec.
 

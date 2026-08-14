@@ -321,7 +321,7 @@ Sections:
 | ID | Class | Description |
 |----|-------|-------------|
 | `sheet` | `MatplotlibSheet` | Hillshade + hypsometric tint + contours |
-| `blender` | `BlenderRenderer` | 3D ortho top-view terrain + OBJ mesh |
+| `blender` | `BlenderRenderer` | 3D ortho terrain (18° pitch) + OBJ mesh |
 | `delta` | `DeltaSheet` | Diverging colormap delta visualization + ablition bar profile |
 
 **Registration**: `@register_renderer("id")`
@@ -440,7 +440,7 @@ weight-atlas activity --help
   },
   "grid": {"upsample": 8, "smooth_sigma": 1.0},
   "sheet": {"contour_levels": 12, "light_azdeg": 315, "light_altdeg": 45, "dpi": 150},
-  "blender": {"grid": 1024, "resolution": 2048, "z_scale": 0.3},
+  "blender": {"grid": 1024, "resolution": 2048, "z_scale": 0.3, "pitch": 18.0, "clip": 0.01, "adaptive_z_scale": false},
   "compare": {
     "modes": ["strict", "aligned"],
     "default_mode": "strict",

@@ -10,13 +10,25 @@ Command-line arguments (passed after ``--``):
     --tint     path to field_tint_smooth.npy
     --out      output PNG path
     --grid     grid resolution (default 1024)
-    --z-scale  vertical exaggeration factor (default 1.0)
+    --z-scale  base vertical exaggeration factor (default 1.0)
+    --clip     percentile clip for robust height normalisation (default 0.01)
+    --adaptive-z-scale  rescale z so relief std is constant (flag)
+    --pitch    camera pitch angle in degrees (default 18.0)
     --resolution  render resolution in pixels (default 2048)
 
 Determinism guarantees (local smoke test):
     - Workbench engine (no GPU sampling noise)
     - Fixed world colour, fixed light rotation, no timestamps in PNG output
     - Same inputs → byte-identical PNG (verified by SHA-256 in smoke test)
+
+Robust height normalisation:
+    Raw heights are clipped to the [clip, 1-clip] percentile band and
+    rescaled to [0,1] (not plain min/max). A single outlier hotspot can no
+    longer squash the bulk of the field into a flat slab. With
+    ``--adaptive-z-scale`` the effective z_scale becomes
+    ``base_z_scale / std(normalised)`` (capped), giving weak-relief fields a
+    constant visible amplitude — at the cost of losing absolute-amplitude
+    comparability between models.
 """
 
 from __future__ import annotations
@@ -25,6 +37,9 @@ import argparse
 import sys
 
 import numpy as np
+
+_Z_SCALE_CAP = 5.0
+_EPS = 1e-9
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,9 +51,72 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tint", required=True, help="Path to tint .npy file")
     parser.add_argument("--out", required=True, help="Output PNG path")
     parser.add_argument("--grid", type=int, default=1024, help="Grid resolution")
-    parser.add_argument("--z-scale", type=float, default=1.0, help="Z scale factor")
+    parser.add_argument("--z-scale", type=float, default=1.0, help="Base Z scale factor")
+    parser.add_argument("--clip", type=float, default=0.01,
+                        help="Percentile clip (0-1) for robust height normalisation")
+    parser.add_argument("--adaptive-z-scale", action="store_true",
+                        help="Rescale Z so relief std is constant across fields")
+    parser.add_argument("--pitch", type=float, default=18.0,
+                        help="Camera pitch angle in degrees (0 = top-down)")
     parser.add_argument("--resolution", type=int, default=2048, help="Render resolution")
     return parser.parse_args(argv)
+
+
+def normalise_height(height: np.ndarray, clip: float) -> np.ndarray:
+    """Robustly normalise a height field to [0,1].
+
+    Clips to the ``[clip, 1-clip]`` percentile band before rescaling, so a few
+    outlier hotspots cannot flatten the bulk of the field. Constant fields
+    (or NaN-only) yield a zero array. Handles clip=0 as plain min/max.
+    """
+    height = np.asarray(height, dtype=np.float64)
+    finite = height[np.isfinite(height)]
+    if finite.size == 0:
+        return np.zeros_like(height)
+
+    if clip > 0:
+        lo = float(np.percentile(finite, clip * 100.0))
+        hi = float(np.percentile(finite, 100.0 - clip * 100.0))
+    else:
+        lo = float(finite.min())
+        hi = float(finite.max())
+
+    span = hi - lo
+    if span <= _EPS:
+        return np.zeros_like(height)
+
+    # Clip through finite values only, so NaN inputs map to NaN output.
+    clipped = np.where(np.isfinite(height), np.clip(height, lo, hi), np.nan)
+    norm = (clipped - lo) / span
+    return np.nan_to_num(norm, nan=0.0)
+
+
+def compute_effective_z_scale(
+    base_z_scale: float, h_norm: np.ndarray, adaptive: bool
+) -> float:
+    """Return the effective Z scale.
+
+    ``adaptive=True``: base / std(normalised height), capped at ``_Z_SCALE_CAP``.
+    ``adaptive=False``: the base value unchanged.
+    """
+    if not adaptive:
+        return float(base_z_scale)
+    std = float(np.std(h_norm))
+    if std <= _EPS:
+        return float(base_z_scale)
+    return min(base_z_scale / std, _Z_SCALE_CAP)
+
+
+def compute_ortho_scale(pitch_deg: float, z_scale: float, base: float = 2.2) -> float:
+    """Compute the ortho scale that fits the tilted grid + relief.
+
+    The projected vertical extent of the ±1 unit grid under a ``pitch_deg``
+    tilt is ``2*cos(p) + z_scale*sin(p)``. Returns that (times a 10% margin)
+    when it exceeds the top-down ``base``, else ``base``.
+    """
+    p = np.radians(pitch_deg)
+    projected = 2.0 * np.cos(p) + z_scale * np.sin(p)
+    return max(float(base), projected * 1.1)
 
 
 def clear_scene() -> None:
@@ -57,11 +135,13 @@ def clear_scene() -> None:
         bpy.data.cameras.remove(block)
 
 
-def make_grid_mesh(grid_res: int, z_scale: float, height: np.ndarray) -> object:
-    """Create a grid mesh and displace vertices from height data.
+def make_grid_mesh(grid_res: int, z_scale: float, h_norm: np.ndarray) -> object:
+    """Create a grid mesh and displace vertices from a normalised height field.
 
-    Uses ``from_pydata`` which handles loop allocation internally and is
-    stable for large meshes on Blender 4.x. Returns the created object.
+    ``h_norm`` must already be in [0,1] (see ``normalise_height``); it is
+    scaled by ``z_scale`` for vertical exaggeration. Uses ``from_pydata`` which
+    handles loop allocation internally and is stable for large meshes on
+    Blender 4.x. Returns the created object.
     """
     import bpy
     n = grid_res
@@ -69,11 +149,6 @@ def make_grid_mesh(grid_res: int, z_scale: float, height: np.ndarray) -> object:
     y = np.linspace(-1.0, 1.0, n, dtype=np.float64)
     xx, yy = np.meshgrid(x, y)
 
-    # Normalise height to [0, 1] then scale
-    h_min = float(height.min())
-    h_max = float(height.max())
-    h_range = h_max - h_min if h_max > h_min else 1.0
-    h_norm = (height - h_min) / h_range
     zz = h_norm * z_scale
 
     # Build vertex list
@@ -145,16 +220,17 @@ def setup_lighting() -> None:
     bpy.context.collection.objects.link(light_obj)
 
 
-def setup_camera(grid_res: int, resolution: int) -> None:
-    """Set up an orthographic top-view camera."""
+def setup_camera(grid_res: int, resolution: int, pitch: float = 18.0, z_scale: float = 1.0) -> None:
+    """Set up an orthographic camera tilted by ``pitch`` degrees."""
     import bpy
-    cam = bpy.data.cameras.new("TopCam")
+    cam = bpy.data.cameras.new("TerrainCam")
     cam.type = "ORTHO"
-    # Ortho scale covers the full grid extent (-1 to 1 = 2.0 units)
-    cam.ortho_scale = 2.2  # slight margin
-    cam_obj = bpy.data.objects.new("TopCam", cam)
+    # Ortho scale covers the full tilted grid + relief extent (computed so the
+    # 10% margin keeps edges in frame; never smaller than the top-down size).
+    cam.ortho_scale = compute_ortho_scale(pitch, z_scale)
+    cam_obj = bpy.data.objects.new("TerrainCam", cam)
     cam_obj.location = (0.0, 0.0, 5.0)  # above the terrain
-    cam_obj.rotation_euler = (0.0, 0.0, 0.0)  # looking straight down
+    cam_obj.rotation_euler = (np.radians(pitch), 0.0, 0.0)  # tilt forward
     bpy.context.collection.objects.link(cam_obj)
 
     bpy.context.scene.camera = cam_obj
@@ -202,12 +278,16 @@ def main() -> None:
     if tint.shape != (grid_res, grid_res):
         tint = _resize_grid(tint, grid_res)
 
+    # Effective Z scale (adaptive = constant relief amplitude)
+    h_norm = normalise_height(height, args.clip)
+    z_scale = compute_effective_z_scale(args.z_scale, h_norm, args.adaptive_z_scale)
+
     clear_scene()
-    terrain_obj = make_grid_mesh(grid_res, args.z_scale, height)
+    terrain_obj = make_grid_mesh(grid_res, z_scale, h_norm)
     add_vertex_colors(terrain_obj, tint)
     setup_world()
     setup_lighting()
-    setup_camera(grid_res, args.resolution)
+    setup_camera(grid_res, args.resolution, pitch=args.pitch, z_scale=z_scale)
     setup_render_engine()
     render_to_png(args.out)
 

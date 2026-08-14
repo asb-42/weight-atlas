@@ -23,6 +23,11 @@ from weight_atlas.render.blender.blender_wrapper import (
     resolve_blender_path,
     write_obj,
 )
+from weight_atlas.render.blender.render_terrain import (
+    compute_effective_z_scale,
+    compute_ortho_scale,
+    normalise_height,
+)
 
 
 @pytest.fixture
@@ -125,6 +130,43 @@ class TestBuildBlenderCommand:
         assert args_after_sep[args_after_sep.index("--z-scale") + 1] == "0.3"
         assert "--resolution" in args_after_sep
         assert args_after_sep[args_after_sep.index("--resolution") + 1] == "2048"
+
+    def test_new_args_present(self, tmp_path: Path):
+        cmd = build_blender_command(
+            blender_path=tmp_path / "blender",
+            script_path=tmp_path / "render_terrain.py",
+            height_npy=tmp_path / "height.npy",
+            tint_npy=tmp_path / "tint.npy",
+            out_png=tmp_path / "out.png",
+            grid=1024,
+            z_scale=0.3,
+            resolution=2048,
+            pitch=18.0,
+            clip=0.01,
+            adaptive_z_scale=True,
+        )
+        args_after_sep = cmd[cmd.index("--") + 1:]
+        assert "--pitch" in args_after_sep
+        assert args_after_sep[args_after_sep.index("--pitch") + 1] == "18.0"
+        assert "--clip" in args_after_sep
+        assert args_after_sep[args_after_sep.index("--clip") + 1] == "0.01"
+        assert "--adaptive-z-scale" in args_after_sep
+
+    def test_default_pitch_and_clip(self, tmp_path: Path):
+        cmd = build_blender_command(
+            blender_path=tmp_path / "blender",
+            script_path=tmp_path / "s.py",
+            height_npy=tmp_path / "h.npy",
+            tint_npy=tmp_path / "t.npy",
+            out_png=tmp_path / "o.png",
+            grid=1024,
+            z_scale=0.3,
+            resolution=2048,
+        )
+        args_after_sep = cmd[cmd.index("--") + 1:]
+        assert args_after_sep[args_after_sep.index("--pitch") + 1] == "18.0"
+        assert args_after_sep[args_after_sep.index("--clip") + 1] == "0.01"
+        assert "--adaptive-z-scale" not in args_after_sep
 
     def test_default_values(self, tmp_path: Path):
         cmd = build_blender_command(
@@ -313,3 +355,88 @@ class TestWriteObj:
         vertex_lines = [ln for ln in lines if ln.startswith("v ")]
         # Always downsampled to 256x256
         assert len(vertex_lines) == 256 * 256
+
+
+class TestNormaliseHeight:
+    def test_clips_outliers(self):
+        # One extreme hotspot must not squash the bulk.
+        rng = np.random.default_rng(3)
+        h = rng.uniform(0.3, 0.7, size=(20, 20))  # realistic bulk
+        h[0, 0] = 10.0  # outlier hotspot
+        h[1, 1] = -10.0
+        norm = normalise_height(h, 0.01)
+        assert 0.0 <= norm.min() and norm.max() <= 1.0
+        assert np.isfinite(norm).all()
+        # Bulk values must stay meaningfully spread (not squashed to one row).
+        assert norm.std() > 0.1
+
+    def test_outlier_squashes_plain_minmax(self):
+        # Without clip, a single hotspot pushes the bulk to ~0 — the bug
+        # robust normalisation exists to fix.
+        rng = np.random.default_rng(3)
+        h = rng.uniform(0.3, 0.7, size=(20, 20))
+        h[0, 0] = 100.0
+        plain = normalise_height(h, 0.0)
+        robust = normalise_height(h, 0.01)
+        assert robust.std() > plain.std() * 5
+
+    def test_plain_minmax_when_clip_zero(self):
+        h = np.array([[0.0, 1.0], [2.0, 4.0]], dtype=float)
+        norm = normalise_height(h, 0.0)
+        assert norm[0, 0] == 0.0
+        assert norm[1, 1] == 1.0
+
+    def test_constant_field_zero(self):
+        h = np.ones((4, 4))
+        norm = normalise_height(h, 0.01)
+        assert np.all(norm == 0.0)
+
+    def test_nan_only_zeros(self):
+        h = np.full((4, 4), np.nan)
+        norm = normalise_height(h, 0.01)
+        assert np.all(norm == 0.0)
+
+    def test_nan_masked(self):
+        h = np.array([[0.0, 1.0], [np.nan, 2.0]], dtype=float)
+        norm = normalise_height(h, 0.01)
+        assert np.isfinite(norm).all()
+
+
+class TestComputeEffectiveZScale:
+    def test_non_adaptive_returns_base(self):
+        assert compute_effective_z_scale(0.3, np.array([0.5, 0.5]), False) == 0.3
+
+    def test_adaptive_amplifies_weak_relief(self):
+        # Nearly-flat field -> small std -> large effective z_scale.
+        flat = np.full((10, 10), 0.5)
+        flat[0, 0] = 0.51
+        z = compute_effective_z_scale(0.3, flat, True)
+        assert z > 0.3
+
+    def test_adaptive_caps_at_limit(self):
+        # Truly flat field (std ~0) must not explode to infinity.
+        flat = np.full((10, 10), 0.5)
+        z = compute_effective_z_scale(0.3, flat, True)
+        assert np.isfinite(z)
+        assert z <= 5.0
+
+    def test_adaptive_constant_std(self):
+        # Uniform [0,1] has std ~0.29; effective scale should exceed base.
+        rng = np.random.default_rng(7)
+        h = rng.random((100, 100))
+        z = compute_effective_z_scale(0.3, h, True)
+        assert z > 0.3
+
+
+class TestComputeOrthoScale:
+    def test_top_down_uses_base(self):
+        assert compute_ortho_scale(0.0, 0.3) == 2.2
+
+    def test_tilted_exceeds_base_with_high_z(self):
+        # Large z_scale + tilt -> projected extent larger than 2.2.
+        s = compute_ortho_scale(18.0, 5.0)
+        assert s > 2.2
+
+    def test_default_tilt_stays_at_base(self):
+        # 18° pitch, z_scale 0.3: 2*cos(18°)+0.3*sin(18°) ~1.99 -> base 2.2.
+        assert compute_ortho_scale(18.0, 0.3) == 2.2
