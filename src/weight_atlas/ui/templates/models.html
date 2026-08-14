@@ -7,9 +7,12 @@
     <h3>Scan a Model</h3>
     <form hx-post="/api/jobs" hx-target="#job-result" hx-swap="innerHTML">
         <label for="model_path">Model path:</label>
-        <input type="text" id="model_path" name="model_path"
-               placeholder="/path/to/model.safetensors or /path/to/model/dir"
-               required>
+        <div class="path-picker">
+            <input type="text" id="model_path" name="model_path"
+                   placeholder="/path/to/model.safetensors or /path/to/model/dir"
+                   required>
+            <button type="button" class="btn-small" data-browse="model_path" data-browse-mode="model">Browse…</button>
+        </div>
         <button type="submit">Start Scan</button>
     </form>
     <div id="job-result"></div>
@@ -19,12 +22,18 @@
     <h3>Import Existing Scan</h3>
     <form hx-post="/api/import" hx-target="#import-result" hx-swap="innerHTML">
         <label for="scan_dir">Scan directory:</label>
-        <input type="text" id="scan_dir" name="scan_dir"
-               placeholder="/path/to/existing/artefacts/directory"
-               required>
+        <div class="path-picker">
+            <input type="text" id="scan_dir" name="scan_dir"
+                   placeholder="/path/to/existing/artefacts/directory"
+                   required>
+            <button type="button" class="btn-small" data-browse="scan_dir" data-browse-mode="dir">Browse…</button>
+        </div>
         <label for="import_model_path">Model path (optional):</label>
-        <input type="text" id="import_model_path" name="model_path"
-               placeholder="/path/to/original/model">
+        <div class="path-picker">
+            <input type="text" id="import_model_path" name="model_path"
+                   placeholder="/path/to/original/model">
+            <button type="button" class="btn-small" data-browse="import_model_path" data-browse-mode="model">Browse…</button>
+        </div>
         <button type="submit">Import</button>
     </form>
     <div id="import-result"></div>

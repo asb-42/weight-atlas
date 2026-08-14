@@ -55,6 +55,90 @@ def create_router(
             detail=f"path outside allowed roots: {path}",
         )
 
+    # Model-file picker: safe suffixes shown in the browse dialog.
+    _BROWSE_MODEL_SUFFIXES = {".gguf", ".safetensors"}
+
+    def _browse_start() -> Path:
+        """Default starting directory for the file picker."""
+        if model_roots:
+            return model_roots[0]
+        return Path.home()
+
+    def _dir_has_model(path: Path) -> bool:
+        """True if a directory contains model files (HF-style model dir)."""
+        try:
+            return any(path.glob("*.gguf")) or any(path.glob("*.safetensors"))
+        except OSError:
+            return False
+
+    def _browse_error(msg: str) -> HTMLResponse:
+        return HTMLResponse(
+            f'<p class="hint browse-error">{msg}</p>',
+            status_code=200,
+        )
+
+    @router.get("/api/browse", response_class=HTMLResponse)
+    async def browse_files(
+        request: Request,
+        path: str = "",
+        mode: str = "model",
+    ) -> HTMLResponse:
+        """List a directory for the model file picker (HTMX fragment).
+
+        ``mode="model"``: directories navigate; model files and model
+        directories are selectable. ``mode="dir"``: any directory is
+        selectable (used by the scan import dialog).
+        """
+        if mode not in ("model", "dir"):
+            mode = "model"
+
+        raw = Path(path) if path else _browse_start()
+        try:
+            current = raw.expanduser().resolve()
+            _require_allowed(current)
+        except (OSError, HTTPException) as exc:
+            if isinstance(exc, HTTPException) and exc.status_code == 403:
+                return _browse_error("path is outside the allowed model roots")
+            return _browse_error("path could not be resolved")
+        if not current.is_dir():
+            return _browse_error(f"not a directory: {current}")
+
+        dirs: list[dict[str, Any]] = []
+        files: list[dict[str, Any]] = []
+        try:
+            entries = sorted(current.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+        except PermissionError:
+            entries = []
+        for p in entries:
+            if p.name.startswith("."):
+                continue
+            try:
+                if p.is_dir():
+                    dirs.append(
+                        {
+                            "name": p.name,
+                            "path": str(p),
+                            "is_model_dir": _dir_has_model(p),
+                        }
+                    )
+                elif p.suffix.lower() in _BROWSE_MODEL_SUFFIXES:
+                    files.append({"name": p.name, "path": str(p)})
+            except OSError:
+                continue
+
+        parent = str(current.parent) if current != current.parent else ""
+        return templates.TemplateResponse(
+            request,
+            "_file_browser.html",
+            {
+                "current": str(current),
+                "parent": parent,
+                "dirs": dirs,
+                "files": files,
+                "mode": mode,
+            },
+        )
+
     @router.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
         """Model list page — scans output_root for completed jobs."""

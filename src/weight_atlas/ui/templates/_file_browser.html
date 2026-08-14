@@ -1,0 +1,43 @@
+<div class="file-browser" data-mode="{{ mode }}">
+    <div class="file-browser-path">
+        <button type="button" class="btn-small" hx-get="/api/browse?path=&amp;mode={{ mode }}" hx-target="#file-browser-body" hx-swap="innerHTML">🏠 Home</button>
+        {% if parent %}
+        <button type="button" class="btn-small" hx-get="/api/browse?path={{ parent|urlencode }}&amp;mode={{ mode }}" hx-target="#file-browser-body" hx-swap="innerHTML">⬆ Up</button>
+        {% endif %}
+        <code class="file-browser-current" title="{{ current }}">{{ current }}</code>
+    </div>
+
+    {% if dirs or files %}
+    <ul class="file-browser-list">
+        {% for d in dirs %}
+        <li class="file-browser-entry file-browser-dir{% if d.is_model_dir %} is-model{% endif %}">
+            <button type="button"
+                    class="file-browser-open"
+                    hx-get="/api/browse?path={{ d.path|urlencode }}&amp;mode={{ mode }}"
+                    hx-target="#file-browser-body"
+                    hx-swap="innerHTML">📁</button>
+            <button type="button"
+                    class="file-browser-name"
+                    hx-get="/api/browse?path={{ d.path|urlencode }}&amp;mode={{ mode }}"
+                    hx-target="#file-browser-body"
+                    hx-swap="innerHTML">{{ d.name }}/</button>
+            {% if mode == "dir" %}
+            <button type="button" class="file-browser-select" data-path="{{ d.path }}">select dir</button>
+            {% elif d.is_model_dir %}
+            <span class="badge badge--info">model</span>
+            <button type="button" class="file-browser-select" data-path="{{ d.path }}">select</button>
+            {% endif %}
+        </li>
+        {% endfor %}
+        {% for f in files %}
+        <li class="file-browser-entry file-browser-file">
+            <span class="file-browser-type">{{ f.name.rsplit(".", 1)[-1] }}</span>
+            <button type="button" class="file-browser-name" data-path="{{ f.path }}">{{ f.name }}</button>
+            <button type="button" class="file-browser-select" data-path="{{ f.path }}">select</button>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="hint">(empty directory)</p>
+    {% endif %}
+</div>

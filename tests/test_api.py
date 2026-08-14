@@ -317,6 +317,77 @@ class TestArtefactRoute:
         assert resp.status_code == 403
 
 
+class TestFileBrowser:
+    """The /api/browse endpoint lists directories and model files (HTMX fragment)."""
+
+    def test_browse_lists_model_files(self, client: TestClient, tmp_path: Path) -> None:
+        root = tmp_path / "browse_root"
+        root.mkdir()
+        (root / "my_model.safetensors").write_bytes(b"")
+        (root / "subdir").mkdir()
+        (root / "notes.txt").write_bytes(b"not a model")
+        (root / ".hidden").write_bytes(b"hidden")
+
+        resp = client.get("/api/browse", params={"path": str(root), "mode": "model"})
+        assert resp.status_code == 200
+        assert "my_model.safetensors" in resp.text
+        assert "subdir" in resp.text
+        assert "notes.txt" not in resp.text
+        assert ".hidden" not in resp.text
+
+    def test_browse_dir_mode_selectable(self, client: TestClient, tmp_path: Path) -> None:
+        root = tmp_path / "browse_root"
+        root.mkdir()
+        (root / "artefacts").mkdir()
+        (root / "artefacts" / "fingerprint.json").write_text("{}")
+
+        resp = client.get("/api/browse", params={"path": str(root), "mode": "dir"})
+        assert resp.status_code == 200
+        assert "artefacts" in resp.text
+        assert "select dir" in resp.text
+
+    def test_browse_marks_model_dirs(self, client: TestClient, tmp_path: Path) -> None:
+        root = tmp_path / "browse_root"
+        root.mkdir()
+        model_dir = root / "hf_model"
+        model_dir.mkdir()
+        (model_dir / "model.safetensors").write_bytes(b"")
+        (root / "plain_dir").mkdir()
+
+        resp = client.get("/api/browse", params={"path": str(root), "mode": "model"})
+        assert resp.status_code == 200
+        # Model dir gets the "model" badge + select button
+        assert "hf_model" in resp.text
+        assert "badge badge--info" in resp.text
+        # Plain dir has no select button in model mode
+        assert "plain_dir" in resp.text
+
+    def test_browse_rejects_path_outside_roots(
+        self, tmp_path: Path, spec_path: Path, fake_model: Path
+    ) -> None:
+        output_root = tmp_path / "output"
+        output_root.mkdir(exist_ok=True)
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "m.safetensors").write_bytes(b"")
+
+        app = create_app(
+            db_path=tmp_path / "jobs.db",
+            spec_path=spec_path,
+            output_root=output_root,
+            model_roots=[output_root],
+        )
+        with TestClient(app) as client:
+            resp = client.get("/api/browse", params={"path": str(outside), "mode": "model"})
+            assert resp.status_code == 200
+            assert "outside the allowed model roots" in resp.text
+
+    def test_browse_nonexistent_path(self, client: TestClient) -> None:
+        resp = client.get("/api/browse", params={"path": "/nonexistent/path", "mode": "model"})
+        assert resp.status_code == 200
+        assert "not a directory" in resp.text
+
+
 class TestPathConfinement:
     """When model_roots is configured, paths outside the allowlist are rejected."""
 

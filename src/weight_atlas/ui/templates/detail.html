@@ -60,7 +60,10 @@
     <div class="operations">
         <form class="model-path-form" hx-post="/api/jobs/{{ job.job_id }}/model-path" hx-target="#model-path-status" hx-swap="innerHTML">
             <label for="model_path">Model path</label>
-            <input type="text" id="model_path" name="model_path" value="{{ job.model_path }}" placeholder="/path/to/model.gguf">
+            <div class="path-picker">
+                <input type="text" id="model_path" name="model_path" value="{{ job.model_path }}" placeholder="/path/to/model.gguf">
+                <button type="button" class="btn-small" data-browse="model_path" data-browse-mode="model">Browse…</button>
+            </div>
             <button type="submit">Set model path</button>
         </form>
         <span id="model-path-status"></span>

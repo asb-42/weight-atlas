@@ -252,9 +252,17 @@ For localhost-only access use `weight-atlas serve --host 127.0.0.1` or run
 
 ### Submit a Job
 
-1. Enter a model path (local file or directory)
+1. Enter a model path (local file or directory) — or click **Browse…** to open
+   the server-side file picker and navigate the filesystem (folders open in the
+   dialog; model files/directories get a *select* action).
 2. Click "Start Scan"
 3. Track progress via HTMX polling (updates every 2 seconds)
+
+> The browse dialog uses `GET /api/browse` and lists only `.gguf`/`.safetensors`
+> files plus directories. When the server is configured with an allowlist of
+> model roots (`create_app(model_roots=...)`), the picker is confined to those
+> roots and cannot browse elsewhere. The import form uses the same picker in
+> "dir" mode (any directory is selectable).
 
 ### Model Detail (`/models/{job_id}`)
 

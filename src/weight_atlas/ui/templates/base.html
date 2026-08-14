@@ -22,5 +22,75 @@
     <footer>
         <small>Weight Atlas v0.2.0 — Deterministic weight fingerprinting</small>
     </footer>
+
+    <!-- File browser modal (server-side filesystem picker) -->
+    <div id="file-browser-modal" class="modal-overlay" hidden>
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="file-browser-title">
+            <div class="modal-header">
+                <h3 id="file-browser-title">Select a file</h3>
+                <button type="button" class="btn-close" aria-label="Close" data-close-browser>&times;</button>
+            </div>
+            <div id="file-browser-body"
+                 hx-get="/api/browse"
+                 hx-target="this"
+                 hx-swap="innerHTML"></div>
+            <div class="modal-footer">
+                <span class="hint">Click a folder to open it, then "select" a model file or directory.</span>
+                <button type="button" class="btn-small" data-close-browser>Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Server-side file browser: opens a modal, loads /api/browse fragments,
+        // and writes the chosen path back into the triggering input.
+        let fileBrowserTarget = null;
+
+        function openFileBrowser(targetId, mode) {
+            fileBrowserTarget = targetId;
+            const modal = document.getElementById("file-browser-modal");
+            const body = document.getElementById("file-browser-body");
+            body.dataset.mode = mode || "model";
+            // Reload fragment fresh on every open.
+            body.setAttribute("hx-get", "/api/browse?mode=" + encodeURIComponent(mode || "model"));
+            htmx.process(body);
+            htmx.trigger(body, "load");
+            modal.hidden = false;
+            document.addEventListener("keydown", fileBrowserEscape);
+        }
+
+        function closeFileBrowser() {
+            document.getElementById("file-browser-modal").hidden = true;
+            document.removeEventListener("keydown", fileBrowserEscape);
+        }
+
+        function fileBrowserEscape(e) {
+            if (e.key === "Escape") closeFileBrowser();
+        }
+
+        // Delegated click handling: any element with data-path selects the path.
+        document.body.addEventListener("click", function (e) {
+            const sel = e.target.closest("[data-path]");
+            if (!sel) return;
+            const input = document.getElementById(fileBrowserTarget);
+            if (input) input.value = sel.dataset.path;
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+            closeFileBrowser();
+        });
+
+        document.addEventListener("DOMContentLoaded", function () {
+            document.querySelectorAll("[data-close-browser]").forEach(function (btn) {
+                btn.addEventListener("click", closeFileBrowser);
+            });
+        });
+
+        // Global hook: any element with data-browse opens the picker.
+        document.body.addEventListener("click", function (e) {
+            const opener = e.target.closest("[data-browse]");
+            if (!opener) return;
+            e.preventDefault();
+            openFileBrowser(opener.dataset.browse, opener.dataset.browseMode);
+        });
+    </script>
 </body>
 </html>
