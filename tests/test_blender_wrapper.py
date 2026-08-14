@@ -365,7 +365,7 @@ class TestNormaliseHeight:
         h[0, 0] = 10.0  # outlier hotspot
         h[1, 1] = -10.0
         norm = normalise_height(h, 0.01)
-        assert 0.0 <= norm.min() and norm.max() <= 1.0
+        assert norm.min() >= 0.0 and norm.max() <= 1.0
         assert np.isfinite(norm).all()
         # Bulk values must stay meaningfully spread (not squashed to one row).
         assert norm.std() > 0.1

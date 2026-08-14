@@ -13,6 +13,9 @@ from fastapi.templating import Jinja2Templates
 from weight_atlas.api.jobs import JobQueue, JobStatus
 from weight_atlas.core.types import AtlasSpec, load_default_spec
 
+# Model-file picker: safe suffixes shown in the browse dialog.
+_BROWSE_MODEL_SUFFIXES = {".gguf", ".safetensors"}
+
 
 def create_router(
     job_queue: JobQueue,
@@ -54,9 +57,6 @@ def create_router(
             status_code=403,
             detail=f"path outside allowed roots: {path}",
         )
-
-    # Model-file picker: safe suffixes shown in the browse dialog.
-    _BROWSE_MODEL_SUFFIXES = {".gguf", ".safetensors"}
 
     def _browse_start() -> Path:
         """Default starting directory for the file picker."""

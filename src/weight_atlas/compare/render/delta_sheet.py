@@ -104,7 +104,7 @@ class DeltaSheet:
         else:
             data = delta[:, valid_cols]
             if col_labels is not None:
-                col_labels = [label for label, keep in zip(col_labels, valid_cols) if keep]
+                col_labels = [label for label, keep in zip(col_labels, valid_cols, strict=True) if keep]
 
         # Compute symmetric limits using diverging_clip quantile
         diverging_clip = _get_diverging_clip(spec)
