@@ -331,6 +331,11 @@ class JobQueue:
 
         manifest = json.loads(manifest_path.read_text())
         channels = self._discover_channels_from_manifest(manifest)
+        # Only compare channels the alignment/compare infrastructure supports —
+        # the main spec.channels. Vision (``vision_*``) and MoE expert-panel
+        # (``expert_*``) fields use their own taxonomies and are not comparable
+        # here; including them would KeyError on ``summary.channels[channel]``.
+        channels = [c for c in channels if c in spec.channels]
 
         summary_channels = {}
         all_artefacts: list[Path] = []
