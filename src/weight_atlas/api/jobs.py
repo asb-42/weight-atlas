@@ -213,6 +213,11 @@ class JobQueue:
             job = self._load(job_id)
             if job is None:
                 continue
+            if job.status == JobStatus.DONE:
+                # Idempotent recovery: never re-execute a job already marked
+                # done (e.g. one completed by a manual/out-of-band render), even
+                # if its id is still sitting in the in-memory queue.
+                continue
             self._execute(job)
 
     def _execute(self, job: Job) -> None:
