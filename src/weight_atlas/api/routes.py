@@ -101,6 +101,15 @@ def create_router(
             headers={"HX-Redirect": f"/jobs/{job.job_id}"},
         )
 
+    @router.get("/jobs", response_class=HTMLResponse)
+    async def jobs_list(request: Request) -> HTMLResponse:
+        """List every job (scans, compares, renders) with status and progress."""
+        return templates.TemplateResponse(
+            request,
+            "jobs.html",
+            {"jobs": job_queue.list_jobs(limit=200)},
+        )
+
     @router.get("/api/jobs/{job_id}")
     async def get_job(job_id: str) -> JSONResponse:
         """Get job status (for HTMX polling)."""
@@ -253,6 +262,10 @@ def create_router(
         if not dir_a_str or not dir_b_str:
             raise HTTPException(status_code=400, detail="dir_a and dir_b required")
 
+        mode = payload.get("mode", "strict")
+        if mode not in ("strict", "aligned"):
+            raise HTTPException(status_code=400, detail=f"unknown compare mode: {mode}")
+
         dir_a = Path(dir_a_str).resolve()
         dir_b = Path(dir_b_str).resolve()
 
@@ -269,7 +282,7 @@ def create_router(
         out_dir = output_root / f"compare_{dir_a.name}_vs_{dir_b.name}_{uuid.uuid4().hex[:8]}"
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        job = job_queue.submit_compare(dir_a, dir_b, out_dir, spec_path)
+        job = job_queue.submit_compare(dir_a, dir_b, out_dir, spec_path, mode=mode)
         # Keep the job JSON for the API; HTMX navigates to the compare progress page.
         return JSONResponse(
             job.to_dict(),

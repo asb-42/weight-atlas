@@ -229,8 +229,11 @@ class JobQueue:
 
         # Determine job type from message field
         message = job.message
-        if message == "compare":
+        compare_mode = "strict"
+        if message == "compare" or message.startswith("compare:"):
             job_type = "compare"
+            if ":" in message:
+                compare_mode = message.split(":", 1)[1]
         elif message.startswith("render:"):
             job_type = "render"
         else:
@@ -260,7 +263,7 @@ class JobQueue:
             artefacts: list[str]
             if job_type == "compare":
                 progress_cb(0.2, "Comparing models...")
-                artefacts = self._run_compare(job, spec, progress_cb)
+                artefacts = self._run_compare(job, spec, progress_cb, mode=compare_mode)
             elif job_type == "render":
                 progress_cb(0.2, "Rendering sheets...")
                 artefacts = self._render_job(job, spec, renderer_id or "sheet", progress_cb)
@@ -302,6 +305,7 @@ class JobQueue:
         job: Job,
         spec: Any,
         progress_cb: Callable[[float, str], None],
+        mode: str = "strict",
     ) -> list[str]:
         """Run comparison between two scanned model directories."""
         import json
@@ -345,7 +349,7 @@ class JobQueue:
 
             summary = compute_compare_summary(
                 field_a, field_b, spec,
-                mode="strict",  # Could be extended to support mode parameter
+                mode=mode,
                 fingerprint_a=fp_a,
                 fingerprint_b=fp_b,
             )
@@ -361,7 +365,7 @@ class JobQueue:
             return []
 
         compare_summary = {
-            "mode": "strict",
+            "mode": mode,
             "spec_version": spec.spec_version,
             "model_a": summary.model_a,
             "model_b": summary.model_b,
@@ -486,6 +490,7 @@ class JobQueue:
         dir_b: Path,
         out_dir: Path,
         spec_path: Path,
+        mode: str = "strict",
     ) -> Job:
         """Create a new compare job and enqueue it."""
         now = self._now()
@@ -499,7 +504,7 @@ class JobQueue:
             status=JobStatus.QUEUED,
             created_at=now,
             updated_at=now,
-            message="compare",
+            message=f"compare:{mode}",
         )
         self._save(job)
         self._enqueued.add(job.job_id)

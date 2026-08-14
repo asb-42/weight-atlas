@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Jobs — Weight Atlas{% endblock %}
+{% block content %}
+<h2>Jobs</h2>
+<p><a href="/">← Back to models</a></p>
+
+<table class="stats-table">
+    <thead>
+        <tr>
+            <th>Status</th>
+            <th>Job</th>
+            <th>Model / Compare</th>
+            <th>Progress</th>
+            <th>Message</th>
+            <th>Updated</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for job in jobs %}
+        <tr>
+            <td><span class="badge badge--{{ job.status }}">{{ job.status }}</span></td>
+            <td><a href="/jobs/{{ job.job_id }}">{{ job.job_id[:8] }}</a></td>
+            <td>
+                {% if job.status == "done" and job.message == "Complete" and job.artefacts %}
+                    <a href="/models/{{ job.job_id }}">{{ job.model_path }}</a>
+                {% else %}
+                    {{ job.model_path }}
+                {% endif %}
+            </td>
+            <td>{{ (job.progress * 100) | int }}%</td>
+            <td>{{ job.message }}</td>
+            <td>{{ job.updated_at }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6">No jobs yet.</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

@@ -22,7 +22,20 @@
             {% endfor %}
         </select>
 
+        <fieldset>
+            <legend>Alignment mode</legend>
+            <label>
+                <input type="radio" name="mode" value="strict" checked>
+                Strict (identical architecture — same layer count)
+            </label>
+            <label>
+                <input type="radio" name="mode" value="aligned">
+                Aligned (cross-architecture — normalizes layer depth)
+            </label>
+        </fieldset>
+
         <button type="submit">Run Comparison</button>
+        <p class="hint">Strict requires identical shapes; choose <em>Aligned</em> when comparing models with different layer counts (e.g. Qwen3.6-27B 64 layers vs Qwen3.6-35B-A3B 40 layers).</p>
     </form>
     <div id="compare-result"></div>
 </section>
