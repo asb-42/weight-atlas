@@ -139,6 +139,13 @@ a {
     z-index: 1000;
 }
 
+/* The [hidden] attribute must win over display:flex above, or the modal can
+   never be hidden again (its close buttons/Cancel/Escape set hidden=true but
+   the overlay stays visible). */
+.modal-overlay[hidden] {
+    display: none;
+}
+
 .modal {
     background: var(--bg-alt);
     border: 1px solid var(--border);
