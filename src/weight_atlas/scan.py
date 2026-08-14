@@ -191,7 +191,7 @@ def scan(
     try:
         from threadpoolctl import threadpool_limits  # type: ignore[import-untyped]
     except ImportError:  # pragma: no cover - optional dep
-        threadpool_limits = None  # type: ignore[assignment]
+        threadpool_limits = None
     if use_pool and threadpool_limits is not None:
         # The stats thread pool runs numpy/BLAS concurrently. Cap the BLAS
         # thread pool ONCE around the whole section: entering/exiting

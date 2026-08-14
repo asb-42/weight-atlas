@@ -116,7 +116,7 @@ def compute_ortho_scale(pitch_deg: float, z_scale: float, base: float = 2.2) -> 
     """
     p = np.radians(pitch_deg)
     projected = 2.0 * np.cos(p) + z_scale * np.sin(p)
-    return max(float(base), projected * 1.1)
+    return max(float(base), float(projected) * 1.1)
 
 
 def clear_scene() -> None:

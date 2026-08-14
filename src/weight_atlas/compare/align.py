@@ -145,13 +145,14 @@ def _align_normalized(
     n_cols_common = max(n_cols_a, n_cols_b, len(spec.slots))
 
     # Resample A to common grid
+    layer_map_a: list[int] | None = None
+    layer_map_b: list[int] | None = None
     if interp == "nearest":
         field_a_aligned, layer_map_a = _resample_rows_nearest(field_a, n_rows_common)
         field_b_aligned, layer_map_b = _resample_rows_nearest(field_b, n_rows_common)
     elif interp == "linear":
         field_a_aligned = _resample_field(field_a, n_rows_common, n_cols_common)
         field_b_aligned = _resample_field(field_b, n_rows_common, n_cols_common)
-        layer_map_a = layer_map_b = None
     else:
         raise ValueError(f"unknown interp method: {interp}")
 
