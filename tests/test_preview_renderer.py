@@ -13,7 +13,7 @@ from weight_atlas.render.preview import PreviewRenderer, _auto_levels
 
 @pytest.fixture
 def spec() -> AtlasSpec:
-    return AtlasSpec.from_json(Path("specs/atlas_spec.v2.1.json"))
+    return AtlasSpec.from_json(Path("specs/atlas_spec.v2.2.json"))
 
 
 @pytest.fixture

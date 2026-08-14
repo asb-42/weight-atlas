@@ -13,6 +13,10 @@ from weight_atlas.core.name_map import map_name
 _FIXTURE_PATH = Path(__file__).parent / "fixtures" / "names_bonsai_8b.json"
 _BONSAI = json.loads(_FIXTURE_PATH.read_text())
 
+# Load Qwen3-Next (hybrid) fixture
+_QQWEN3_PATH = Path(__file__).parent / "fixtures" / "names_qwen3_next_gguf.json"
+_QWEN3_NEXT = json.loads(_QQWEN3_PATH.read_text())
+
 
 @pytest.mark.parametrize("name,expected", _BONSAI["expected_mapping"].items())
 def test_bonsai_hf_mapping(name, expected):
@@ -30,6 +34,26 @@ def test_bonsai_gguf_mapping(name, expected):
     exp_layer, exp_slot = expected
     assert layer == exp_layer, f"{name}: layer {layer} != {exp_layer}"
     assert slot == exp_slot, f"{name}: slot {slot} != {exp_slot}"
+
+
+@pytest.mark.parametrize("name,expected", _QWEN3_NEXT["gguf_expected_mapping"].items())
+def test_qwen3_next_gguf_mapping(name, expected):
+    """Every Qwen3-Next GGUF tensor name maps to the expected (layer, slot).
+
+    Covers the hybrid attention+Mamba branch: attn_gate, post_attention_norm,
+    and the full ssm_* Mamba family.
+    """
+    layer, slot = map_name(name)
+    exp_layer, exp_slot = expected
+    assert layer == exp_layer, f"{name}: layer {layer} != {exp_layer}"
+    assert slot == exp_slot, f"{name}: slot {slot} != {exp_slot}"
+
+
+def test_mapping_coverage_qwen3_next():
+    """All Qwen3-Next tensors must map to a non-'other' slot."""
+    all_names = _QWEN3_NEXT["gguf_tensor_names"]
+    unmapped = [name for name in all_names if map_name(name)[1] == "other"]
+    assert not unmapped, f"Unmapped Qwen3-Next tensors: {unmapped}"
 
 
 def test_no_duplicate_layer_slot_mapping():

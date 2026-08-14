@@ -298,7 +298,7 @@ def rasterize_expert_panels(
         slot_map = {"gate": "mlp_gate", "up": "mlp_up", "down": "mlp_down"}
         target_slot = slot_map[slot]
 
-        expert_id = extract_expert_id(ts.name)
+        expert_id = ts.expert_id if ts.expert_id is not None else extract_expert_id(ts.name)
         if expert_id is None:
             continue
 
@@ -355,7 +355,7 @@ def detect_moe(stats: Iterable[TensorStats]) -> dict[str, Any]:
 
     for ts in stats:
         if is_expert_tensor(ts.name):
-            expert_id = extract_expert_id(ts.name)
+            expert_id = ts.expert_id if ts.expert_id is not None else extract_expert_id(ts.name)
             if expert_id is not None:
                 expert_ids.add(expert_id)
             layer, _ = map_name(ts.name)

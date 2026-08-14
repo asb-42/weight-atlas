@@ -165,7 +165,7 @@ No automatic migration. v2.0 fingerprints must be re-scanned. The existing `spec
 - [ ] `weight_atlas/fields/degenerations.py`: Add `range_compression` guard.
 - [ ] `weight_atlas/render/sheet.py`: Simplify contour level computation; remove per-model percentile logic for `height`.
 - [ ] `weight_atlas/fingerprint.py`: Include `scaling` block in JSON output.
-- [ ] `atlas_spec.v2.json` -> `atlas_spec.v2.1.json`: Update channel definitions.
+- [ ] `atlas_spec.v2.json` -> `atlas_spec.v2.1.json` -> `atlas_spec.v2.2.json`: Update channel definitions.
 - [ ] `tests/`: Update fixture fingerprints (re-scan Bonsai-8B). Add unit test for `range_compression` guard.
 - [ ] `ARCHITECTURE.md`: Update "Contour Convention" and "Channel" sections.
 

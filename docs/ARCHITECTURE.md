@@ -72,7 +72,7 @@ weight-atlas diagnose ./models/my_model
 ```
 ## Conventions
 
-- **Raster**: rows = layer index, columns = slot order from `atlas_spec.v2.1.json`. Missing cells = `NaN`, never filled.
+- **Raster**: rows = layer index, columns = slot order from `atlas_spec.v2.2.json`. Missing cells = `NaN`, never filled.
 - **Channels** (v2.1):
   - `height`: `spectral_norm` → `log1p` → `rank_scale(per_column)` — outlier suppression + [0,1] mapping
   - `tint`: `stable_rank` → `log1p` → `robust_scale(1-99%)` — outlier suppression + [0,1] mapping
@@ -112,7 +112,7 @@ field_tint_smooth.tif ──┘                                          │
 
 ### Spec extension
 
-The `atlas_spec.v2.1.json` may include a `blender` block (all optional, defaults shown):
+The `atlas_spec.v2.2.json` may include a `blender` block (all optional, defaults shown):
 ```json
 {
   "blender": {
@@ -270,7 +270,7 @@ scan artefacts (B) ─┘                    │
 ```
 
 ### Spec extension
-The `atlas_spec.v2.1.json` may include a `compare` block:
+The `atlas_spec.v2.2.json` may include a `compare` block:
 ```json
 {
   "compare": {
