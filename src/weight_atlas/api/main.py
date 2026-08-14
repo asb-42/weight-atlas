@@ -60,15 +60,17 @@ def create_app(
 
     app = FastAPI(title="Weight Atlas", version="0.2.0", lifespan=lifespan)
 
+    # Output artefacts (PNG, TIFF, JSON) must be mounted BEFORE /static, or the
+    # broader /static mount shadows /static/outputs and every image/JSON served
+    # from a scan output directory 404s (e.g. the compare report's delta sheets).
+    output_static_dir = base / "output"
+    if output_static_dir.exists():
+        app.mount("/static/outputs", StaticFiles(directory=str(output_static_dir)), name="outputs")
+
     # Static files (CSS)
     static_dir = Path(__file__).resolve().parent.parent / "ui" / "static"
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
-
-    # Output artefacts (PNG, TIFF, JSON)
-    output_static_dir = base / "output"
-    if output_static_dir.exists():
-        app.mount("/static/outputs", StaticFiles(directory=str(output_static_dir)), name="outputs")
 
     # Templates
     templates_dir = Path(__file__).resolve().parent.parent / "ui" / "templates"
