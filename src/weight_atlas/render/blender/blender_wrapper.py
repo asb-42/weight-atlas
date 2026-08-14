@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -170,6 +171,18 @@ class BlenderRenderer:
 
         produced: list[Path] = []
 
+        # Blender ships its own Python interpreter, which often lacks numpy.
+        # Expose the site-packages of the running weight-atlas process (which
+        # has numpy) to the Blender script via PYTHONPATH so the terrain script
+        # can load the heightmap .npy files.
+        site_dirs = [p for p in sys.path if "site-packages" in p]
+        blender_env = dict(os.environ)
+        if site_dirs:
+            existing = blender_env.get("PYTHONPATH")
+            blender_env["PYTHONPATH"] = os.pathsep.join(site_dirs) + (
+                (os.pathsep + existing) if existing else ""
+            )
+
         # Render smooth version
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir_path = Path(tmpdir)
@@ -190,7 +203,9 @@ class BlenderRenderer:
                 resolution=resolution,
             )
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=600, env=blender_env
+            )
             if result.returncode != 0:
                 raise RuntimeError(
                     f"Blender render failed (exit {result.returncode}):\n"
@@ -223,7 +238,9 @@ class BlenderRenderer:
                     resolution=resolution,
                 )
 
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=600, env=blender_env
+                )
                 if result.returncode != 0:
                     raise RuntimeError(
                         f"Blender render failed (exit {result.returncode}):\n"

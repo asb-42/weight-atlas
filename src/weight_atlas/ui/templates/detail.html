@@ -70,13 +70,16 @@
         <button hx-post="/api/jobs/{{ job.job_id }}/render/preview" hx-target="#render-status" hx-swap="innerHTML" hx-indicator="#render-spinner">
             Render Previews
         </button>
+        <button hx-post="/api/jobs/{{ job.job_id }}/render/blender" hx-target="#render-status" hx-swap="innerHTML" hx-indicator="#render-spinner">
+            Render Terrain (Blender)
+        </button>
         <button hx-post="/api/jobs/{{ job.job_id }}/rescan" hx-target="#render-status" hx-swap="innerHTML" hx-indicator="#render-spinner" class="btn-danger">
             Re-scan Model
         </button>
         <span id="render-spinner" class="htmx-indicator"><span class="spinner"></span> Working...</span>
         <span id="render-status"></span>
     </div>
-    <p class="hint">Sheets: hillshade + hypsometric tint + contours. Previews: auto-leveled 8-bit PNG for quick inspection. Re-scan: re-run full scan pipeline with current spec (overwrites existing artefacts). Imported scans need the original model path set above before re-scanning.</p>
+    <p class="hint">Sheets: hillshade + hypsometric tint + contours. Previews: auto-leveled 8-bit PNG for quick inspection. Terrain (Blender): orthographic top-view terrain rendered headlessly with Blender (requires a Blender binary on PATH or WEIGHT_ATLAS_BLENDER). Re-scan: re-run full scan pipeline with current spec (overwrites existing artefacts). Imported scans need the original model path set above before re-scanning.</p>
 </section>
 
 <section class="detail-section">
