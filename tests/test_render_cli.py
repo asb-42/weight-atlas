@@ -37,10 +37,10 @@ def test_render_huge_panel_is_bounded(tmp_path):
     assert len(paths) == 1
     assert paths[0].exists()
 
-    from weight_atlas.render.matplotlib_sheet import _MAX_RENDER_LONG_PX
+    from weight_atlas.render.matplotlib_sheet import _MAX_RENDER_PIXELS
 
     w, h = Image.open(paths[0]).size
-    assert max(w, h) <= _MAX_RENDER_LONG_PX
+    assert w * h <= _MAX_RENDER_PIXELS
 
 
 def test_cli_scan_render():

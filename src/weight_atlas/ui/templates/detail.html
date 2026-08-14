@@ -94,8 +94,10 @@
         {% for png in sheet_pngs %}
         {% if 'preview_' not in png %}
         <figure>
-            <img src="/models/{{ job.job_id }}/artifacts/{{ png }}" alt="{{ png }}">
-            <figcaption>{{ png }}</figcaption>
+            <a href="/models/{{ job.job_id }}/artifacts/{{ png }}" target="_blank" rel="noopener" title="Open full size">
+                <img src="/models/{{ job.job_id }}/artifacts/{{ png }}" alt="{{ png }}">
+            </a>
+            <figcaption>{{ png }} — click to open full size</figcaption>
         </figure>
         {% endif %}
         {% endfor %}
@@ -111,8 +113,10 @@
         {% for png in sheet_pngs %}
         {% if 'preview_' in png %}
         <figure>
-            <img src="/models/{{ job.job_id }}/artifacts/{{ png }}" alt="{{ png }}">
-            <figcaption>{{ png }}</figcaption>
+            <a href="/models/{{ job.job_id }}/artifacts/{{ png }}" target="_blank" rel="noopener" title="Open full size">
+                <img src="/models/{{ job.job_id }}/artifacts/{{ png }}" alt="{{ png }}">
+            </a>
+            <figcaption>{{ png }} — click to open full size</figcaption>
         </figure>
         {% endif %}
         {% endfor %}
@@ -126,8 +130,10 @@
     <div class="image-grid">
         {% for png in terrain_pngs %}
         <figure>
-            <img src="/models/{{ job.job_id }}/artifacts/{{ png }}" alt="{{ png }}">
-            <figcaption>{{ png }}</figcaption>
+            <a href="/models/{{ job.job_id }}/artifacts/{{ png }}" target="_blank" rel="noopener" title="Open full size">
+                <img src="/models/{{ job.job_id }}/artifacts/{{ png }}" alt="{{ png }}">
+            </a>
+            <figcaption>{{ png }} — click to open full size</figcaption>
         </figure>
         {% endfor %}
     </div>

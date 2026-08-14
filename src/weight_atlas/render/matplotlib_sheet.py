@@ -12,6 +12,8 @@ import matplotlib
 
 matplotlib.use("Agg")  # noqa: E402 – must be set before pyplot import
 
+import math
+
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap, Normalize
@@ -35,12 +37,14 @@ _PNG_METADATA = {
 _EPS = 1e-6
 _MIN_VALID_FRACTION = 0.1
 
-# Cap on the long edge of the rendered raster (pixels). Fields like large MoE
-# expert panels (Kimi K3: 736x7168 after upsampling) would otherwise produce a
-# figure sized in inches proportional to the field — 7168 x 0.5 in at 150 dpi
-# is 537,600 px wide, a ~95 GB RGBA buffer that OOM-kills the worker. The
-# aspect ratio is preserved and only the resolution is bounded.
-_MAX_RENDER_LONG_PX = 4096
+# Cap on the total number of rendered pixels (RGBA = 4 bytes/px). Fields like
+# large MoE expert panels (Kimi K3: 736x7168 after upsampling) would otherwise
+# produce a figure sized in inches proportional to the field — 7168 x 0.5 in at
+# 150 dpi is 537,600 px wide, a ~95 GB RGBA buffer that OOM-kills the worker.
+# The raster is scaled to this pixel budget preserving the aspect ratio: small
+# fields are upscaled for quality, and huge wide panels keep useful resolution
+# on their short axis instead of being crushed into a thin strip.
+_MAX_RENDER_PIXELS = 12_000_000
 
 
 @register_renderer("sheet")
@@ -57,16 +61,14 @@ class MatplotlibSheet:
 
         data = field.data
         n_rows, n_cols = data.shape
-        # Bound the raster: keep the field's aspect ratio but cap the long edge
-        # so the dpi-scaled RGBA buffer stays small even for huge panels (see
-        # ``_MAX_RENDER_LONG_PX``). Without this, rendering a 736x7168 expert
-        # panel allocates ~95 GB and is OOM-killed.
-        if n_cols >= n_rows:
-            px_w = _MAX_RENDER_LONG_PX
-            px_h = max(1, int(round(_MAX_RENDER_LONG_PX * n_rows / n_cols)))
-        else:
-            px_h = _MAX_RENDER_LONG_PX
-            px_w = max(1, int(round(_MAX_RENDER_LONG_PX * n_cols / n_rows)))
+        # Bound the raster: keep the field's aspect ratio and scale to a fixed
+        # pixel budget so the dpi-scaled RGBA buffer stays small even for huge
+        # panels (see ``_MAX_RENDER_PIXELS``). Without this, rendering a
+        # 736x7168 expert panel allocates ~95 GB and is OOM-killed; a
+        # long-edge-only cap crushes it to 4096x420 (uninspectable layers).
+        scale = math.sqrt(_MAX_RENDER_PIXELS / max(1, n_rows * n_cols))
+        px_h = max(2, int(round(n_rows * scale)))
+        px_w = max(2, int(round(n_cols * scale)))
         figsize = (max(2.0, px_w / dpi), max(2.0, px_h / dpi))
 
         # Check for degenerate channel
