@@ -1,3 +1,21 @@
+## [Unreleased]
+
+### Name Mapping — Gemma-4 "ultra/heretic" (MoE) support
+
+- `core/name_map.py`: new GGUF rules for Gemma-4's extra per-layer tensors:
+  `pre_ffw_norm_2`, `post_ffw_norm`, `post_ffw_norm_1`, `post_ffw_norm_2`
+  (dedicated norm slots) and `layer_output_scale` (per-layer gain); global
+  `rope_freqs` maps to its own slot.
+- `core/name_map.py`: vision rule for the Gemma-4 mmproj input projection
+  (`mm.input_projection` → `mm_projector`).
+- `specs/atlas_spec.v2.4.json`: new slots `pre_ffw_norm_2`, `post_ffw_norm`,
+  `post_ffw_norm_1`, `post_ffw_norm_2`, `layer_output_scale`, `rope_freqs`
+  (spec_version unchanged — additive slot extension).
+- New fixture `tests/fixtures/names_gemma4_heretic_gguf.json` + audit tests.
+- Verified on `gemma-4-26B-A4B-it-ultra-uncensored-heretic-Q4_K_S.gguf`
+  (4468/4468) and `gemma-4-26B-A4B-it-mmproj-BF16.gguf` (356/356): mapping
+  coverage 100% (was 96.9%).
+
 ## [0.2.0] - 2026-08-09
 
 ### Real-Model-Calibration (Bonsai-8B)

@@ -112,6 +112,14 @@ _GGUF_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"blk\.\d+\.ffn_down"), "mlp_down"),
     (re.compile(r"blk\.\d+\.attn_norm"), "norm_attn"),
     (re.compile(r"blk\.\d+\.ffn_norm"), "norm_mlp"),
+    # Gemma-4 "ultra"/heretic: extra FFW norms and per-layer output scale.
+    # Ordered most-specific first: post_ffw_norm_1/_2 before post_ffw_norm.
+    (re.compile(r"blk\.\d+\.post_ffw_norm_1"), "post_ffw_norm_1"),
+    (re.compile(r"blk\.\d+\.post_ffw_norm_2"), "post_ffw_norm_2"),
+    (re.compile(r"blk\.\d+\.post_ffw_norm"), "post_ffw_norm"),
+    (re.compile(r"blk\.\d+\.pre_ffw_norm_2"), "pre_ffw_norm_2"),
+    (re.compile(r"blk\.\d+\.layer_output_scale"), "layer_output_scale"),
+    (re.compile(r"rope_freqs"), "rope_freqs"),
     (re.compile(r"token_embd"), "embed"),
     (re.compile(r"output\.weight"), "lm_head"),
     (re.compile(r"output_norm"), "norm_mlp"),
@@ -176,6 +184,7 @@ _VISION_RULES: list[tuple[re.Pattern[str], str]] = [
     # Multimodal projector (GGUF mm.*, HF mm_projector / multi_modal_projector)
     (re.compile(r"mm\.model\.mlp\.\d+"), "mm_projector"),
     (re.compile(r"mm\.\d+"), "mm_projector"),
+    (re.compile(r"mm\.input_projection"), "mm_projector"),  # Gemma-4 mmproj
     (re.compile(r"mm_projector"), "mm_projector"),
     (re.compile(r"multi_modal_projector"), "mm_projector"),
     # HF Qwen3-VL / CLIP-style vision_model

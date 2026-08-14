@@ -43,6 +43,15 @@ from weight_atlas.core.name_map import map_name
         ("blk.0.ssm_dt.bias", "ssm_dt"),
         ("blk.0.ssm_norm.weight", "ssm_norm"),
         ("blk.0.ssm_out.weight", "ssm_out"),
+        # Gemma-4 "ultra"/heretic extra per-layer tensors
+        ("blk.0.layer_output_scale.weight", "layer_output_scale"),
+        ("blk.0.post_ffw_norm.weight", "post_ffw_norm"),
+        ("blk.0.post_ffw_norm_1.weight", "post_ffw_norm_1"),
+        ("blk.0.post_ffw_norm_2.weight", "post_ffw_norm_2"),
+        ("blk.0.pre_ffw_norm_2.weight", "pre_ffw_norm_2"),
+        ("blk.29.post_ffw_norm.weight", "post_ffw_norm"),
+        # Gemma-4 RoPE frequency table (global)
+        ("rope_freqs.weight", "rope_freqs"),
     ],
 )
 def test_slot_mapping(name, expected_slot):
@@ -64,6 +73,7 @@ def test_slot_mapping(name, expected_slot):
         ("mm.0.weight", "mm_projector"),
         ("mm.2.weight", "mm_projector"),
         ("mm.model.mlp.1.weight", "mm_projector"),
+        ("mm.input_projection.weight", "mm_projector"),  # Gemma-4 mmproj
         ("model.vision_model.encoder.layers.5.self_attn.q_proj.weight", "v_attn_q"),
         ("model.visual.blocks.2.attn.qkv.weight", "v_attn_qkv"),
         ("model.multi_modal_projector.layers.0.linear_1.weight", "mm_projector"),

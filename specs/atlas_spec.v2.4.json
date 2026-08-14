@@ -6,7 +6,8 @@
              "attn_a_log","attn_dt","attn_res_proj","attn_res_norm",
              "mlp_gate","mlp_up","mlp_down","mlp_res_proj","mlp_res_norm",
              "moe_routed_norm","moe_routed_up","moe_routed_down",
-             "norm_attn","norm_mlp","expert","shared_expert","router","lm_head",
+             "norm_attn","norm_mlp","pre_ffw_norm_2","post_ffw_norm","post_ffw_norm_1","post_ffw_norm_2",
+             "layer_output_scale","expert","shared_expert","router","lm_head","rope_freqs",
              "ssm_a","ssm_alpha","ssm_beta","ssm_conv1d","ssm_dt","ssm_norm","ssm_out",
              "vision_qkv","vision_o","vision_norm","vision_mlp","vision_pos_emb","vision_patch_embed",
              "vision","mm_projector","other"],
@@ -17,7 +18,7 @@
   },
   "grid":  {"upsample": 8, "smooth_sigma": 1.0},
   "sheet": {"contour_levels": 12, "light_azdeg": 315, "light_altdeg": 45, "dpi": 150, "per_row_normalize": true},
-"blender": {"grid": 1024,"resolution": 2048,"z_scale": 0.3,"pitch": 18.0,"clip": 0.01,"adaptive_z_scale": false},
+  "blender": {"grid": 1024, "resolution": 2048, "z_scale": 0.3, "pitch": 18.0, "clip": 0.01, "adaptive_z_scale": false},
   "compare": {
     "modes": ["strict", "aligned"],
     "default_mode": "strict",

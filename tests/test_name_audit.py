@@ -17,6 +17,10 @@ _BONSAI = json.loads(_FIXTURE_PATH.read_text())
 _QQWEN3_PATH = Path(__file__).parent / "fixtures" / "names_qwen3_next_gguf.json"
 _QWEN3_NEXT = json.loads(_QQWEN3_PATH.read_text())
 
+# Load Gemma-4 ultra/heretic (MoE + mmproj) fixture
+_GEMMA4_PATH = Path(__file__).parent / "fixtures" / "names_gemma4_heretic_gguf.json"
+_GEMMA4 = json.loads(_GEMMA4_PATH.read_text())
+
 
 @pytest.mark.parametrize("name,expected", _BONSAI["expected_mapping"].items())
 def test_bonsai_hf_mapping(name, expected):
@@ -114,6 +118,35 @@ def test_mapping_coverage_bonsai():
         if slot == "other":
             unmapped.append(name)
     assert not unmapped, f"Unmapped Bonsai tensors: {unmapped}"
+
+
+@pytest.mark.parametrize("name,expected", _GEMMA4["gguf_expected_mapping"].items())
+def test_gemma4_gguf_mapping(name, expected):
+    """Every Gemma-4 ultra/heretic GGUF tensor name maps to the expected (layer, slot).
+
+    Covers the extra per-layer tensors (pre/post_ffw_norm variants,
+    layer_output_scale) and the global RoPE frequency table.
+    """
+    layer, slot = map_name(name)
+    exp_layer, exp_slot = expected
+    assert layer == exp_layer, f"{name}: layer {layer} != {exp_layer}"
+    assert slot == exp_slot, f"{name}: slot {slot} != {exp_slot}"
+
+
+@pytest.mark.parametrize("name,expected", _GEMMA4["mmproj_expected_mapping"].items())
+def test_gemma4_mmproj_mapping(name, expected):
+    """Every Gemma-4 mmproj tensor name maps to the expected vision slot."""
+    layer, slot = map_name(name)
+    exp_layer, exp_slot = expected
+    assert layer == exp_layer, f"{name}: layer {layer} != {exp_layer}"
+    assert slot == exp_slot, f"{name}: slot {slot} != {exp_slot}"
+
+
+def test_mapping_coverage_gemma4():
+    """All Gemma-4 GGUF + mmproj tensors must map to a non-'other' slot."""
+    all_names = _GEMMA4["gguf_tensor_names"] + _GEMMA4["mmproj_tensor_names"]
+    unmapped = [name for name in all_names if map_name(name)[1] == "other"]
+    assert not unmapped, f"Unmapped Gemma-4 tensors: {unmapped}"
 
 
 def test_in_slots_calculation():

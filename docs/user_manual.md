@@ -124,7 +124,8 @@ Model → TensorHandle (lazy) → Statistics → Rasterize → Field2D → Rende
 
 ### Slots
 
-13 fixed slot categories:
+Slot categories are defined by the canonical spec `specs/atlas_spec.v2.4.json`
+(not a fixed list — new model families add slots). Core categories:
 
 | Slot | Description |
 |------|-------------|
@@ -136,6 +137,10 @@ Model → TensorHandle (lazy) → Statistics → Rasterize → Field2D → Rende
 | router | MoE router |
 | lm_head | Language model head |
 | other | Unrecognized tensors |
+
+Gemma-4 "ultra/heretic" additionally contributes `pre_ffw_norm_2`,
+`post_ffw_norm`, `post_ffw_norm_1`, `post_ffw_norm_2`, `layer_output_scale`
+(per-layer) and `rope_freqs` (global); see `docs/MODEL_FAMILIES.md`.
 
 ### Channels
 
