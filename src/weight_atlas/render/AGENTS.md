@@ -29,6 +29,13 @@ contours), preview thumbnails, and Blender 3D terrain renders (+ OBJ mesh).
   (percentile clip `blender.clip`, default 1–99%) so outliers cannot flatten
   the bulk. `adaptive_z_scale` (opt-in) rescales Z to constant relief std —
   purely visual, breaks absolute-amplitude comparability; document as such.
+- **Sheet renderer**: the matplotlib sheet is a pure height map (hillshade +
+  hypsometric tint + contours from the height channel only). Optional display
+  knobs in `spec.sheet` (defaults off): `normalized_depth` (project rows onto
+  normalized-depth landmarks, shading interpolated cells) and
+  `drop_empty_cols` (drop all-NaN slot columns display-only — never the TIFF
+  fields; only fully-empty columns/slot-blocks drop, title lists them).
+  `per_row_normalize` (default off) normalizes each row independently.
 - **OBJ export**: 256² downsample, plain text, diffable, uses the same
   normalisation as the PNG render.
 

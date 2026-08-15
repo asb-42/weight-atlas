@@ -17,7 +17,7 @@
     "rough":  {"stat": "kurtosis",       "scale": {"type": "rank_scale", "per_column": true}}
   },
   "grid":  {"upsample": 8, "smooth_sigma": 1.0},
-  "sheet": {"contour_levels": 12, "light_azdeg": 315, "light_altdeg": 45, "dpi": 150, "per_row_normalize": true},
+  "sheet": {"contour_levels": 12, "light_azdeg": 315, "light_altdeg": 45, "dpi": 150, "per_row_normalize": true, "drop_empty_cols": false},
   "blender": {"grid": 1024, "resolution": 2048, "z_scale": 0.3, "pitch": 18.0, "clip": 0.01, "adaptive_z_scale": false},
   "compare": {
     "modes": ["strict", "aligned"],

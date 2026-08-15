@@ -79,6 +79,32 @@ class MatplotlibSheet:
             row_labels = depth_landmark_labels(n_landmarks)
             normalized_depth = True
 
+        # Ebene 3: drop all-NaN columns (spec v2.4 knob, default off). Slot
+        # families absent from a model leave white columns; compressing them
+        # makes the sheet readable. Display-only — TIFF fields keep full width.
+        # Smooth fields are upsampled, so one slot spans ``block`` data columns;
+        # drop whole slots, then imshow's extent re-spaces the survivors evenly.
+        dropped_cols: list[str] = []
+        if sheet.get("drop_empty_cols", False) and n_cols > 1 and col_labels:
+            n_labels = min(len(col_labels), n_cols)
+            block = n_cols // n_labels if n_labels and n_cols % n_labels == 0 else 1
+            valid_slots = [
+                bool(np.isfinite(data[:, i * block : (i + 1) * block]).any())
+                for i in range(n_labels)
+            ]
+            if not all(valid_slots):
+                keep_mask = np.repeat(valid_slots, block)
+                dropped_cols = [
+                    lbl for lbl, keep in zip(col_labels[:n_labels], valid_slots, strict=True) if not keep
+                ]
+                data = data[:, keep_mask]
+                n_cols = data.shape[1]
+                col_labels = [
+                    lbl for lbl, keep in zip(col_labels[:n_labels], valid_slots, strict=True) if keep
+                ]
+                if interp_mask is not None:
+                    interp_mask = interp_mask[:, keep_mask]
+
         # Bound the raster: keep the field's aspect ratio and scale to a fixed
         # pixel budget so the dpi-scaled RGBA buffer stays small even for huge
         # panels (see ``_MAX_RENDER_PIXELS``). Without this, rendering a
@@ -198,6 +224,8 @@ class MatplotlibSheet:
             title = f"{field.model_name}: {title}"
         if normalized_depth:
             title = f"{title} · normalized-depth (interp shaded)"
+        if dropped_cols:
+            title = f"{title} · columns dropped: {', '.join(dropped_cols)}"
         ax.set_title(title, fontsize=12, fontweight="bold")
 
         # Colorbar with real percentile values mapped onto the display scale.

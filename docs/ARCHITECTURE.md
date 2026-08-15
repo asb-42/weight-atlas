@@ -93,7 +93,26 @@ Level-1 fields (`Field2D`) are indexed by absolute layer index, so models with d
 - Landmarks outside a column's measured range stay NaN (extreme depth regions are honestly left as holes, never extrapolated).
 - A landmark cell is marked *measured* only when a measured row lies within half a landmark spacing; everything else is interpolated.
 - The sheet renderer shades interpolated cells with a subtle grey veil (`alpha=0.25`) and appends `· normalized-depth` to the title, so estimates stay visible.
-- Same Ebenen hierarchy: **Ebene 1** = raw layer-index field; **Ebene 2** = normalized-depth projection; smoothing/upsample happen afterwards.
+- Same Ebenen hierarchy: **Ebene 1** = raw layer-index field; **Ebene 2** = normalized-depth projection; **Ebene 3** = display-only empty-column compression; smoothing/upsample happen afterwards.
+
+## Empty-column compression (Ebene 3)
+
+Slot families absent from a model leave **all-NaN white columns** on the
+sheets (this is not a mapping error — the model genuinely has no such
+tensors). `sheet.drop_empty_cols` (default `false`, spec v2.4 knob) drops
+those columns display-only and lets imshow's `extent` re-space the survivors
+evenly, so the sheet reads cleanly for models with few slot families.
+
+- **Display-only**: the TIFF fields and fingerprints keep full width — only
+  the rendered PNG compresses. Smooth (upsampled) fields drop whole slot
+  blocks (`n_cols // n_labels`), never partial columns.
+- **Only fully-empty columns drop**: a slot with any measured cell survives;
+  partial NaN stays as-is (never dropped, never stretched).
+- **Honest output**: the title appends `columns dropped: <slot, …>` so the
+  sheet stays truthful about which families were compressed away.
+- **Cross-model trade-off**: enabled, two models' sheets are no longer
+  column-aligned (same slot at different x-positions). Off by default to
+  preserve cross-model comparability; opt-in per scan via the spec.
 
 ## Raster pixel budget
 
