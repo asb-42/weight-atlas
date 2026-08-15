@@ -402,6 +402,65 @@ class TestJobQueueDB:
         assert reloaded.compare_interp == "nearest"
         assert job.job_id in ran, "compare job was not re-enqueued after restart"
 
+    def test_stale_running_job_recovered_by_sweep(self, tmp_path: Path, spec_path: Path, fake_model: Path) -> None:
+        """A ``running`` row stale since before startup must be re-queued.
+
+        Regression: a job marked ``running`` after start()'s recovery ran (a
+        worker that then died) stayed ``running`` forever — the UI showed two
+        jobs "running" at once even though the single-threaded worker could
+        only execute one. The periodic sweep must reset it to ``queued``.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        db_path = tmp_path / "stale_running.db"
+        q1 = JobQueue(db_path, on_job=lambda j: None)
+        job = q1.submit(fake_model, tmp_path / "out", spec_path)
+        # Simulate a process that picked the job up, marked it running, and
+        # then died *after* start()'s startup recovery had already run.
+        old = (datetime.now(UTC) - timedelta(seconds=3600)).isoformat(timespec="seconds")
+        q1._save(job)  # noqa: SLF001
+        with q1._connection() as conn:  # noqa: SLF001
+            conn.execute(
+                "UPDATE jobs SET status=?, updated_at=?, message=? WHERE job_id=?",
+                (JobStatus.RUNNING.value, old, "Rendering height...", job.job_id),
+            )
+
+        q1._recover_stale_running()  # noqa: SLF001 — the sweep body
+        recovered = q1.get(job.job_id)
+        assert recovered is not None
+        assert recovered.status == JobStatus.QUEUED
+        assert recovered.message == "re-queued after stale running"
+
+    def test_stale_sweep_skips_recent_and_current_running(self, tmp_path: Path, spec_path: Path, fake_model: Path) -> None:
+        """The sweep must not reset freshly-updated or in-flight running rows."""
+        from datetime import UTC, datetime, timedelta
+
+        db_path = tmp_path / "stale_running2.db"
+        q = JobQueue(db_path, on_job=lambda j: None)
+        fresh = q.submit(fake_model, tmp_path / "out", spec_path)
+        stale = q.submit(fake_model, tmp_path / "out", spec_path)
+        now = datetime.now(UTC).isoformat(timespec="seconds")
+        old = (datetime.now(UTC) - timedelta(seconds=3600)).isoformat(timespec="seconds")
+        with q._connection() as conn:  # noqa: SLF001
+            conn.execute(
+                "UPDATE jobs SET status=?, updated_at=? WHERE job_id=?",
+                (JobStatus.RUNNING.value, now, fresh.job_id),
+            )
+            conn.execute(
+                "UPDATE jobs SET status=?, updated_at=? WHERE job_id=?",
+                (JobStatus.RUNNING.value, old, stale.job_id),
+            )
+        # The worker is "executing" the fresh job right now.
+        q._current_job_id = fresh.job_id  # noqa: SLF001
+        q._recover_stale_running()  # noqa: SLF001 — the sweep body
+
+        assert q.get(fresh.job_id).status == JobStatus.RUNNING, (
+            "freshly-updated running row must not be reset"
+        )
+        assert q.get(stale.job_id).status == JobStatus.QUEUED, (
+            "stale running row must be reset even while another job executes"
+        )
+
     def test_legacy_db_backfills_job_type_from_message(self, tmp_path: Path, spec_path: Path) -> None:
         """Pre-job_type DBs must be migrated, backfilling type from message.
 

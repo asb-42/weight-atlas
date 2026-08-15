@@ -22,7 +22,13 @@ scan/render/compare, and provides file-browsing and result endpoints. The UI
   `compare_interp`. `job.message` is progress text only and is overwritten
   during execution + recovery — never parse the type back from it. `_migrate`
   backfills `job_type` from legacy `message` markers (`render:<id>`,
-  `compare[:mode[:interp]]`) for pre-job_type DBs.
+  `compare[:mode[:interp]]`) for pre-job_type DBs. Restart recovery
+  (`start()`) resets persisted `queued`/`running` jobs to `queued`
+  (`re-queued after restart`); a background sweeper thread additionally
+  re-queues `running` rows whose `updated_at` is older than
+  `_STALE_RUNNING_SECONDS` (5 min) and not the worker's current job
+  (`re-queued after stale running`) — a job marked running by a process that
+  died after startup would otherwise show as stuck/running forever.
 - **Per-render sheet overrides**: `job.sheet_knobs` (JSON dict, `sheet_knobs`
   column) carries optional display knobs (`normalized_depth`,
   `drop_empty_cols`) for a single render. The worker overlays them onto the

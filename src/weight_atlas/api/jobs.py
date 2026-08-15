@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import time
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -20,6 +21,18 @@ class JobStatus(StrEnum):
     RUNNING = "running"
     DONE = "done"
     FAILED = "failed"
+
+
+# A ``running`` row whose last progress update is older than this is presumed
+# to be a zombie left behind by a crashed process (start()'s startup recovery
+# can't see it if it was marked running after start ran). The single worker
+# thread can only run one job at a time, so any other running row this stale
+# is not executing. Scans report per-tensor progress; renders report per
+# channel; the Blender subprocess reports when it returns. 5 minutes is far
+# longer than any legitimate quiet gap between progress callbacks.
+_STALE_RUNNING_SECONDS = 300.0
+# How often the sweeper thread checks for stale running rows.
+_SWEEP_INTERVAL_SECONDS = 30.0
 
 
 @dataclass
@@ -87,6 +100,8 @@ class JobQueue:
         self._enqueued: set[str] = set()
         self._stop = threading.Event()
         self._worker: threading.Thread | None = None
+        self._sweeper: threading.Thread | None = None
+        self._current_job_id: str | None = None
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
@@ -282,12 +297,16 @@ class JobQueue:
 
         self._worker = threading.Thread(target=self._run, daemon=True)
         self._worker.start()
+        self._sweeper = threading.Thread(target=self._sweep_loop, daemon=True)
+        self._sweeper.start()
 
     def stop(self) -> None:
         """Signal the worker to stop and wait for it."""
         self._stop.set()
         if self._worker is not None:
             self._worker.join(timeout=5.0)
+        if self._sweeper is not None:
+            self._sweeper.join(timeout=5.0)
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -295,15 +314,60 @@ class JobQueue:
                 job_id = self._queue.get(timeout=0.5)
             except Empty:
                 continue
-            job = self._load(job_id)
-            if job is None:
-                continue
-            if job.status == JobStatus.DONE:
-                # Idempotent recovery: never re-execute a job already marked
-                # done (e.g. one completed by a manual/out-of-band render), even
-                # if its id is still sitting in the in-memory queue.
-                continue
-            self._execute(job)
+            self._current_job_id = job_id
+            try:
+                job = self._load(job_id)
+                if job is None:
+                    continue
+                if job.status == JobStatus.DONE:
+                    # Idempotent recovery: never re-execute a job already marked
+                    # done (e.g. one completed by a manual/out-of-band render), even
+                    # if its id is still sitting in the in-memory queue.
+                    continue
+                self._execute(job)
+            finally:
+                self._current_job_id = None
+
+    def _sweep_loop(self) -> None:
+        """Periodically reset stale ``running`` rows via _recover_stale_running."""
+        while not self._stop.is_set():
+            time.sleep(_SWEEP_INTERVAL_SECONDS)
+            self._recover_stale_running()
+
+    def _recover_stale_running(self) -> None:
+        """Reset ``running`` rows left behind by a crashed process.
+
+        ``start()`` resets running jobs present at startup, but a job marked
+        ``running`` *after* start ran (by a worker that then died) would stay
+        stuck as running forever. The worker is single-threaded: exactly one
+        job runs at a time, so any other ``running`` row whose last update is
+        older than ``_STALE_RUNNING_SECONDS`` is a zombie. Reset it to queued
+        and re-enqueue so it re-runs idempotently.
+        """
+        cutoff = datetime.now(UTC).timestamp() - _STALE_RUNNING_SECONDS
+        with self._connection() as conn:
+            rows = conn.execute(
+                "SELECT job_id, updated_at FROM jobs "
+                "WHERE status = ?",
+                (JobStatus.RUNNING.value,),
+            ).fetchall()
+        now = self._now()
+        for job_id, updated_at in rows:
+            try:
+                if datetime.fromisoformat(updated_at).timestamp() > cutoff:
+                    continue  # updated recently — genuinely executing
+            except (TypeError, ValueError):
+                continue  # unparseable timestamp — treat as not stale
+            if job_id == self._current_job_id:
+                continue  # the job this worker is executing right now
+            with self._connection() as conn:
+                conn.execute(
+                    "UPDATE jobs SET status = ?, message = ?, updated_at = ? "
+                    "WHERE job_id = ?",
+                    (JobStatus.QUEUED.value, "re-queued after stale running", now, job_id),
+                )
+            self._queue.put(job_id)
+            self._enqueued.add(job_id)
 
     def _execute(self, job: Job) -> None:
         from weight_atlas.core.types import AtlasSpec
