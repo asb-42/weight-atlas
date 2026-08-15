@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
@@ -274,7 +274,7 @@ def create_router(
         if fp_path.exists():
             try:
                 with open(fp_path) as f:
-                    return json.load(f)
+                    return cast(dict[str, Any], json.load(f))
             except (OSError, ValueError):
                 return {}
         return {}

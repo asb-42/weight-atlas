@@ -308,7 +308,10 @@ def _compile_rules(raw: list[list]) -> list[tuple[re.Pattern[str], str | None]]:
     return [(re.compile(pat), slot) for pat, slot in raw]
 
 
-def _compile_convention(convention: dict, layer_re: re.Pattern[str]):
+def _compile_convention(
+    convention: dict,
+    layer_re: re.Pattern[str],
+) -> tuple[re.Pattern[str], list[tuple[str | None, list[tuple[re.Pattern[str], str | None]]]]]:
     groups = []
     for group_name in convention["order"]:
         handler = convention.get("null_handler", {}).get(group_name)
@@ -329,12 +332,21 @@ class _CompiledRules:
         self.layer_gguf, self.gguf_groups = _compile_convention(
             block["conventions"]["gguf"], re.compile(layer["gguf"])
         )
-        self.non_layer: list[tuple[re.Pattern[str], str | None]] = []
+        self.non_layer: list[tuple[re.Pattern[str], str]] = []
         for conv_name, group_name in block["non_layer_order"]:
-            self.non_layer.extend(
-                _compile_rules(block["conventions"][conv_name]["rules"][group_name])
-            )
-        self.vision = _compile_rules(block["vision"])
+            for pat, slot in _compile_rules(
+                block["conventions"][conv_name]["rules"][group_name]
+            ):
+                if slot is None:
+                    # Non-layer rules always map to a concrete slot; a null
+                    # handler (moe_hf/expert) is meaningless outside layer rules.
+                    continue
+                self.non_layer.append((pat, slot))
+        self.vision: list[tuple[re.Pattern[str], str]] = []
+        for pat, slot in _compile_rules(block["vision"]):
+            if slot is None:
+                continue
+            self.vision.append((pat, slot))
 
 
 _COMPILED: _CompiledRules | None = None

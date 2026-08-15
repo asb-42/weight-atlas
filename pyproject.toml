@@ -4,7 +4,7 @@ version = "0.2.0"
 description = "LLM weight fingerprinting and topographic visualization"
 requires-python = ">=3.11"
 readme = "README.md"
-license = { text = "MIT" }
+license = { file = "LICENSE" }
 dependencies = [
     "numpy>=1.24",
     "safetensors>=0.4",
