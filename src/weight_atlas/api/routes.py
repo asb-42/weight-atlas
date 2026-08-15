@@ -214,79 +214,128 @@ def create_router(
             {"job": job.to_dict()},
         )
 
-    @router.get("/models/{job_id}", response_class=HTMLResponse)
-    async def model_detail(request: Request, job_id: str) -> HTMLResponse:
-        """Model detail view: sheet, terrain, stats table, spec."""
-        job = job_queue.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail="job not found")
+    def _model_context(job: Any) -> dict[str, Any]:
+        """Build the shared context for a model detail sub-page.
 
+        Loads the spec + artefact discovery once per request. Fingerprint is
+        loaded separately (it is large) so overview/sheets/terrain pages stay
+        light.
+        """
         out_dir = Path(job.out_dir)
 
-        # Load spec from job spec_path, or fallback to default
         spec_path = Path(job.spec_path) if job.spec_path else None
         if spec_path is not None and spec_path.exists():
             spec = AtlasSpec.from_json(spec_path)
         else:
-            # Use the canonical default spec (asserts version at load).
             try:
                 spec = load_default_spec()
             except (OSError, RuntimeError) as exc:
                 raise HTTPException(status_code=500, detail=f"Default spec not found: {exc}") from exc
 
-        # Load fingerprint for stats table
-        fp_path = out_dir / "fingerprint.json"
-        fingerprint: dict[str, Any] = {}
-        if fp_path.exists():
-            with open(fp_path) as f:
-                fingerprint = json.load(f)
-
-        # Discover artefacts by type
         sheet_pngs = sorted(out_dir.glob("*_raw.png"))
         terrain_pngs = sorted(out_dir.glob("terrain_*.png"))
         obj_meshes = sorted(out_dir.glob("*.obj"))
         tif_files = sorted(out_dir.glob("field_*.tif"))
 
-        # Compute out_dir relative to output_root FIRST (handle imported dirs outside root)
+        render_dir = out_dir / "render"
+        if render_dir.exists():
+            sheet_pngs.extend(sorted(render_dir.glob("*_raw.png")))
+            terrain_pngs.extend(sorted(render_dir.glob("terrain_*.png")))
+            if not tif_files:
+                tif_files = sorted(render_dir.glob("field_*.tif"))
+
         try:
             out_dir_rel = str(out_dir.relative_to(output_root))
         except ValueError:
             out_dir_rel = str(out_dir)
 
-        # Also check render/ subdirectory for rendered PNGs
-        render_dir = out_dir / "render"
-        if render_dir.exists():
-            render_sheet = sorted(render_dir.glob("*_raw.png"))
-            render_terrain = sorted(render_dir.glob("terrain_*.png"))
-            sheet_pngs.extend(render_sheet)
-            terrain_pngs.extend(render_terrain)
-            if not tif_files:
-                tif_files = sorted(render_dir.glob("field_*.tif"))
-
-        # Create job_info dict with full path for image URLs
         job_info = job.to_dict()
-        job_info['out_dir'] = str(out_dir)
-        job_info['out_dir_rel'] = out_dir_rel
+        job_info["out_dir"] = str(out_dir)
+        job_info["out_dir_rel"] = out_dir_rel
 
+        return {
+            "job": job_info,
+            "spec": {
+                "spec_version": spec.spec_version,
+                "slots": spec.slots,
+                "channels": spec.channels,
+                "grid": spec.grid,
+                "sheet": spec.sheet,
+            },
+            "sheet_pngs": [f"render/{p.name}" for p in sheet_pngs],
+            "terrain_pngs": [f"render/{p.name}" for p in terrain_pngs],
+            "obj_meshes": [str(p.name) for p in obj_meshes],
+            "tif_files": [str(p.name) for p in tif_files],
+            "out_dir": out_dir_rel,
+        }
+
+    def _load_fingerprint(job: Any) -> dict[str, Any]:
+        fp_path = Path(job.out_dir) / "fingerprint.json"
+        if fp_path.exists():
+            try:
+                with open(fp_path) as f:
+                    return json.load(f)
+            except (OSError, ValueError):
+                return {}
+        return {}
+
+    model_tabs = ("overview", "sheets", "terrain", "stats", "spec")
+    stats_per_page = 200
+
+    def _render_model_tab(
+        request: Request,
+        job: Any,
+        tab: str,
+        ctx: dict[str, Any],
+        page: int = 1,
+    ) -> str:
+        """Render a model sub-page body (the tab content below the tab bar)."""
+        ctx = dict(ctx)
+        ctx["active_tab"] = tab
+        if tab in ("overview", "stats", "spec"):
+            ctx["fingerprint"] = _load_fingerprint(job)
+        if tab == "stats":
+            tensors = ctx.get("fingerprint", {}).get("tensors", {})
+            items = list(tensors.items())
+            total = len(items)
+            per = stats_per_page
+            pages = max(1, -(-total // per))
+            page = max(1, min(page, pages))
+            start = (page - 1) * per
+            ctx.update({
+                "stats_rows": items[start:start + per],
+                "stats_page": page,
+                "stats_pages": pages,
+                "stats_total": total,
+                "stats_per_page": per,
+            })
+        template = templates.env.get_template(f"_model_{tab}.html")
+        return template.render(**ctx)
+
+    @router.get("/models/{job_id}", response_class=HTMLResponse)
+    async def model_detail(
+        request: Request,
+        job_id: str,
+        tab: str = "overview",
+        page: int = 1,
+    ) -> HTMLResponse:
+        """Model detail view: tabbed sub-pages (overview/sheets/terrain/stats/spec).
+
+        The stats table is server-paginated and rendered only on its own
+        sub-page, so the overview page stays small even for 74k-tensor models.
+        """
+        job = job_queue.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="job not found")
+        if tab not in model_tabs:
+            tab = "overview"
+        ctx = _model_context(job)
+        ctx["tab_content"] = _render_model_tab(request, job, tab, ctx, page=page)
+        ctx["active_tab"] = tab
         return templates.TemplateResponse(
             request,
             "detail.html",
-            {
-                "job": job_info,
-                "fingerprint": fingerprint,
-                "spec": {
-                    "spec_version": spec.spec_version,
-                    "slots": spec.slots,
-                    "channels": spec.channels,
-                    "grid": spec.grid,
-                    "sheet": spec.sheet,
-                },
-                "sheet_pngs": [f"render/{p.name}" for p in sheet_pngs],
-                "terrain_pngs": [f"render/{p.name}" for p in terrain_pngs],
-                "obj_meshes": [str(p.name) for p in obj_meshes],
-                "tif_files": [str(p.name) for p in tif_files],
-                "out_dir": out_dir_rel,
-            },
+            ctx,
         )
 
     @router.get("/api/models/{job_id}/fingerprint")
@@ -323,7 +372,7 @@ def create_router(
         # List completed scan jobs as candidates
         candidates = []
         for job in job_queue.list_jobs(limit=100):
-            if job.status == JobStatus.DONE and job.message != "compare":
+            if job.status == JobStatus.DONE and job.job_type != "compare":
                 candidates.append(
                     {
                         "job_id": job.job_id,

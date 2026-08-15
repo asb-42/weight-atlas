@@ -3,6 +3,13 @@
 Convention: regex rules applied in order; first match wins. Unknown names
 map to slot ``"other"`` (never silently dropped).
 
+The rule tables are **spec-driven**: the canonical default spec
+(``specs/atlas_spec.v2.4.json``) carries a ``name_map`` block that defines
+them per naming convention. New tensor families are added by editing that
+spec block, not this module. The in-code lists below are the *fallback* used
+only when the loaded spec has no ``name_map`` block (older spec files, or
+spec-less contexts) — keep them in sync with the canonical spec block.
+
 Supports several naming conventions:
 - HuggingFace: model.layers.N.self_attn.q_proj.weight
 - GGUF: blk.N.attn_q.weight
@@ -61,6 +68,7 @@ _HF_HYBRID_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"ssm\.dt"), "ssm_dt"),
     (re.compile(r"ssm\.norm"), "ssm_norm"),
     (re.compile(r"ssm\.out_proj"), "ssm_out"),
+    (re.compile(r"ssm\.ba"), "ssm_ba"),  # Mamba B-matrix (Qwen3-Next)
 ]
 
 # Kimi K3 (language_model.model.layers.N.*) rules — applied after base HF rules.
@@ -138,6 +146,7 @@ _GGUF_HYBRID_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"blk\.\d+\.ssm_norm"), "ssm_norm"),
     (re.compile(r"blk\.\d+\.ssm_out"), "ssm_out"),
     (re.compile(r"blk\.\d+\.ssm_a"), "ssm_a"),
+    (re.compile(r"blk\.\d+\.ssm_ba"), "ssm_ba"),  # Mamba B-matrix (Qwen3-Next)
 ]
 
 # GGUF MoE-specific rules
@@ -229,12 +238,130 @@ _VISION_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"vision_tower\."), "v_other"),
 ]
 
-# Layer index extraction patterns
-_LAYER_RE = re.compile(r"layers?\.(\d+)")
-_GGUF_LAYER_RE = re.compile(r"blk\.(\d+)")
-
 # Expert ID extraction
 _EXPERT_RE = re.compile(r"mlp\.experts\.(\d+)\.(gate|up|down)_proj")
+
+# ---------------------------------------------------------------------------
+# Spec-driven rule loading
+# ---------------------------------------------------------------------------
+# The canonical rule tables live in the default spec's ``name_map`` block.
+# ``_load_block()`` prefers that block; ``_fallback_block()`` reconstructs it
+# from the in-code lists above for specs that predate the block. Both produce
+# the same structure, so mapping stays byte-identical regardless of which
+# source is active.
+
+
+def _fallback_block() -> dict:
+    """Rebuild the ``name_map`` block structure from the in-code lists."""
+    return {
+        "layer": {"hf": r"layers?\.(\d+)", "gguf": r"blk\.(\d+)"},
+        "conventions": {
+            "hf": {
+                "order": ["moe", "base", "hybrid", "kimi"],
+                "rules": {
+                    "moe": [[p.pattern, s] for p, s in _MOE_RULES],
+                    "base": [[p.pattern, s] for p, s in _RULES],
+                    "hybrid": [[p.pattern, s] for p, s in _HF_HYBRID_RULES],
+                    "kimi": [[p.pattern, s] for p, s in _KIMI_RULES],
+                },
+                "null_handler": {"moe": "moe_hf"},
+            },
+            "gguf": {
+                "order": ["moe", "base", "hybrid"],
+                "rules": {
+                    "moe": [[p.pattern, s] for p, s in _GGUF_MOE_RULES],
+                    "base": [[p.pattern, s] for p, s in _GGUF_RULES],
+                    "hybrid": [[p.pattern, s] for p, s in _GGUF_HYBRID_RULES],
+                },
+                "null_handler": {"moe": "expert"},
+            },
+        },
+        "non_layer_order": [
+            ["hf", "base"],
+            ["hf", "hybrid"],
+            ["hf", "kimi"],
+            ["gguf", "base"],
+            ["gguf", "hybrid"],
+        ],
+        "vision": [[p.pattern, s] for p, s in _VISION_RULES],
+    }
+
+
+def _load_block() -> dict:
+    """Return the ``name_map`` block from the default spec, else the fallback.
+
+    Loads lazily so importing :mod:`weight_atlas.core.types` (which owns
+    ``AtlasSpec``) never risks a cycle here.
+    """
+    try:
+        from weight_atlas.core.types import load_default_spec
+
+        block = getattr(load_default_spec(), "name_map", None)
+        if isinstance(block, dict) and block:
+            return block
+    except Exception:
+        pass
+    return _fallback_block()
+
+
+def _compile_rules(raw: list[list]) -> list[tuple[re.Pattern[str], str | None]]:
+    return [(re.compile(pat), slot) for pat, slot in raw]
+
+
+def _compile_convention(convention: dict, layer_re: re.Pattern[str]):
+    groups = []
+    for group_name in convention["order"]:
+        handler = convention.get("null_handler", {}).get(group_name)
+        groups.append(
+            (handler, _compile_rules(convention["rules"][group_name]))
+        )
+    return layer_re, groups
+
+
+class _CompiledRules:
+    """Compiled name_map tables in the exact lookup order used by map_name/map_vision."""
+
+    def __init__(self, block: dict) -> None:
+        layer = block["layer"]
+        self.layer_hf, self.hf_groups = _compile_convention(
+            block["conventions"]["hf"], re.compile(layer["hf"])
+        )
+        self.layer_gguf, self.gguf_groups = _compile_convention(
+            block["conventions"]["gguf"], re.compile(layer["gguf"])
+        )
+        self.non_layer: list[tuple[re.Pattern[str], str | None]] = []
+        for conv_name, group_name in block["non_layer_order"]:
+            self.non_layer.extend(
+                _compile_rules(block["conventions"][conv_name]["rules"][group_name])
+            )
+        self.vision = _compile_rules(block["vision"])
+
+
+_COMPILED: _CompiledRules | None = None
+
+
+def _compiled() -> _CompiledRules:
+    global _COMPILED
+    if _COMPILED is None:
+        _COMPILED = _CompiledRules(_load_block())
+    return _COMPILED
+
+
+def _match_layer(
+    name: str,
+    groups: list[tuple[str | None, list[tuple[re.Pattern[str], str | None]]]],
+    layer: int,
+) -> tuple[int, str]:
+    """Run the ordered groups for one convention; first match wins."""
+    for handler, rules in groups:
+        for pat, slot in rules:
+            if pat.search(name):
+                if slot is None:
+                    if handler == "moe_hf":
+                        return _handle_moe_hf(name, layer)
+                    return layer, "expert"
+                return layer, slot
+    return layer, "other"
 
 
 def map_vision(name: str) -> tuple[int | None, str] | None:
@@ -245,7 +372,7 @@ def map_vision(name: str) -> tuple[int | None, str] | None:
     pos_embed, multimodal projector). Returns ``None`` for tensors that are
     not part of a vision tower / multimodal projector.
     """
-    for pat, slot in _VISION_RULES:
+    for pat, slot in _compiled().vision:
         m = pat.search(name)
         if m:
             block: int | None = None
@@ -268,6 +395,8 @@ def map_name(name: str) -> tuple[int | None, str]:
     slots (``v_*``/``mm_*``) but never populate the transformer raster.
     Supports HuggingFace, GGUF, MoE, and VLM naming conventions.
     """
+    rules = _compiled()
+
     # VLM (vision-language) tensors first: they are non-layer, so the vision
     # tower (v.blk.N.*) never collides with language-model layers in the raster.
     vision = map_vision(name)
@@ -275,65 +404,17 @@ def map_name(name: str) -> tuple[int | None, str]:
         return None, vision[1]
 
     # Try HuggingFace layer pattern first
-    m = _LAYER_RE.search(name)
+    m = rules.layer_hf.search(name)
     if m:
-        layer = int(m.group(1))
-        # Check MoE rules first (order matters!)
-        for pat, moe_slot in _MOE_RULES:
-            if pat.search(name):
-                if moe_slot is None:
-                    # Special handling for shared expert and expert tensors
-                    return _handle_moe_hf(name, layer)
-                return layer, moe_slot
-        # Then regular HF rules
-        for pat, slot in _RULES:
-            if pat.search(name):
-                return layer, slot
-        # Then Qwen3-Next hybrid rules
-        for pat, slot in _HF_HYBRID_RULES:
-            if pat.search(name):
-                return layer, slot
-        # Then Kimi K3 rules
-        for pat, slot in _KIMI_RULES:
-            if pat.search(name):
-                return layer, slot
-        return layer, "other"
+        return _match_layer(name, rules.hf_groups, int(m.group(1)))
 
     # Try GGUF layer pattern
-    m = _GGUF_LAYER_RE.search(name)
+    m = rules.layer_gguf.search(name)
     if m:
-        layer = int(m.group(1))
-        # Check GGUF MoE rules first
-        for pat, moe_slot in _GGUF_MOE_RULES:
-            if pat.search(name):
-                if moe_slot is None:
-                    # Expert tensor (3D stacked)
-                    return layer, "expert"
-                return layer, moe_slot
-        # Then regular GGUF rules
-        for pat, slot in _GGUF_RULES:
-            if pat.search(name):
-                return layer, slot
-        # Then Qwen3-Next hybrid rules
-        for pat, slot in _GGUF_HYBRID_RULES:
-            if pat.search(name):
-                return layer, slot
-        return layer, "other"
+        return _match_layer(name, rules.gguf_groups, int(m.group(1)))
 
     # Non-layer tensors (embed, lm_head)
-    for pat, slot in _RULES:
-        if pat.search(name):
-            return None, slot
-    for pat, slot in _HF_HYBRID_RULES:
-        if pat.search(name):
-            return None, slot
-    for pat, slot in _KIMI_RULES:
-        if pat.search(name):
-            return None, slot
-    for pat, slot in _GGUF_RULES:
-        if pat.search(name):
-            return None, slot
-    for pat, slot in _GGUF_HYBRID_RULES:
+    for pat, slot in rules.non_layer:
         if pat.search(name):
             return None, slot
     return None, "other"

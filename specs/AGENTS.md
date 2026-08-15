@@ -29,7 +29,21 @@ scales, grid, render, compare, blender) plus the activity protocol schema.
   documented defaults.
 - **Consumers**: channels (stats + scale), `grid` (upsample/smooth), `sheet`
   (contours/lighting/dpi), `blender` (render settings), `compare`
-  (alignment/mode/interp), `embedding` (PCA/UMAP method).
+  (alignment/mode/interp), `embedding` (PCA/UMAP method), `name_map`
+  (tensor-name → slot mapping registry, read by `core/name_map.py`).
+
+## Name-mapping registry (`name_map` block)
+
+- The **canonical default spec** (v2.4) carries a top-level `name_map` block:
+  per-convention ordered regex rules (`hf`/`gguf`, grouped as
+  moe/base/hybrid/kimi with first-match-wins order), `layer` index patterns,
+  `non_layer_order`, and `vision` rules. `core/name_map.py` compiles it at
+  runtime; new tensor families are added by editing this block, **not** code.
+- **Sync policy**: the block is version-independent mapping knowledge, so it
+  lives only in the canonical spec. Older spec versions (v1–v2.3) deliberately
+  have no `name_map` key — `name_map.py` falls back to its in-code tables for
+  them. Keep the fallback tables in sync with the v2.4 block when the mapping
+  changes.
 
 ## Work Guidance
 

@@ -37,6 +37,7 @@ from weight_atlas.core.name_map import map_name
         ("blk.0.attn_gate.weight", "attn_gate"),
         ("blk.0.post_attention_norm.weight", "norm_mlp"),
         ("blk.0.ssm_a", "ssm_a"),
+        ("blk.0.ssm_ba", "ssm_ba"),
         ("blk.0.ssm_alpha.weight", "ssm_alpha"),
         ("blk.0.ssm_beta.weight", "ssm_beta"),
         ("blk.0.ssm_conv1d.weight", "ssm_conv1d"),
@@ -89,6 +90,23 @@ def test_vlm_mapping(name, expected_slot):
 def test_layer_index_extracted():
     layer, _ = map_name("model.layers.7.self_attn.q_proj.weight")
     assert layer == 7
+
+
+def test_ssm_ba_hf_maps_to_ssm_ba():
+    """Qwen3-Next HF: the Mamba B-matrix maps to its own ssm_ba slot.
+
+    Regression for the 36 unmapped ``blk.*.ssm_ba.weight`` tensors in the
+    Qwen3-Next fingerprint: the B-matrix must not fall through to ``other``.
+    """
+    layer, slot = map_name("model.layers.3.ssm.ba.weight")
+    assert slot == "ssm_ba"
+    assert layer == 3
+
+
+def test_ssm_ba_gguf_maps_to_ssm_ba():
+    layer, slot = map_name("blk.3.ssm_ba")
+    assert slot == "ssm_ba"
+    assert layer == 3
 
 
 def test_non_layer_has_none_index():

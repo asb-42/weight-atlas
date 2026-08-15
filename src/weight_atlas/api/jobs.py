@@ -35,6 +35,14 @@ class Job:
     updated_at: str = ""
     error: str = ""
     artefacts: list[str] = field(default_factory=list)
+    # Job type is persisted separately from ``message`` so a restart can
+    # recover the original kind (scan/render/compare) even after progress
+    # text overwrote ``message``. ``renderer``/``compare_mode``/
+    # ``compare_interp`` carry the per-type params.
+    job_type: str = "scan"
+    renderer: str = ""
+    compare_mode: str = "strict"
+    compare_interp: str = "linear"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -49,6 +57,10 @@ class Job:
             "updated_at": self.updated_at,
             "error": self.error,
             "artefacts": self.artefacts,
+            "job_type": self.job_type,
+            "renderer": self.renderer,
+            "compare_mode": self.compare_mode,
+            "compare_interp": self.compare_interp,
         }
 
 
@@ -120,6 +132,53 @@ class JobQueue:
                     artefacts TEXT NOT NULL DEFAULT '[]'
                 )
             """)
+            self._migrate(conn)
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        """Add the job_type columns on pre-existing databases and backfill.
+
+        Older schema encoded the job type in ``message`` (``scan``,
+        ``compare[:mode[:interp]]``, ``render:<renderer>``) and recovery
+        overwrote it with ``re-queued after restart``, turning render/compare
+        jobs into scans on restart. New columns persist the type explicitly;
+        legacy rows are backfilled from their still-intact message where
+        possible (running/complete rows no longer carry the marker and fall
+        back to ``scan``).
+        """
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(jobs)")}
+        for name, ddl in (
+            ("job_type", "TEXT NOT NULL DEFAULT 'scan'"),
+            ("renderer", "TEXT NOT NULL DEFAULT ''"),
+            ("compare_mode", "TEXT NOT NULL DEFAULT 'strict'"),
+            ("compare_interp", "TEXT NOT NULL DEFAULT 'linear'"),
+        ):
+            if name not in cols:
+                conn.execute(f"ALTER TABLE jobs ADD COLUMN {name} {ddl}")
+        rows = conn.execute(
+            "SELECT job_id, message, out_dir FROM jobs WHERE job_type = 'scan'"
+        ).fetchall()
+        for job_id, message, out_dir in rows:
+            if message == "compare" or message.startswith("compare:"):
+                parts = message.split(":", 2)
+                conn.execute(
+                    "UPDATE jobs SET job_type='compare', compare_mode=?, "
+                    "compare_interp=? WHERE job_id=?",
+                    (parts[1] if len(parts) > 1 else "strict",
+                     parts[2] if len(parts) > 2 else "linear", job_id),
+                )
+            elif message.startswith("render:"):
+                conn.execute(
+                    "UPDATE jobs SET job_type='render', renderer=? WHERE job_id=?",
+                    (message.split(":", 1)[1], job_id),
+                )
+            elif Path(out_dir).name.startswith("compare_"):
+                # Completed legacy compare jobs have message="Complete" (the
+                # marker was overwritten by progress text), so recover the type
+                # from the compare_* out_dir naming instead.
+                conn.execute(
+                    "UPDATE jobs SET job_type='compare' WHERE job_id=?",
+                    (job_id,),
+                )
 
     def _now(self) -> str:
         return datetime.now(UTC).isoformat(timespec="seconds")
@@ -131,8 +190,9 @@ class JobQueue:
                 """
                 INSERT OR REPLACE INTO jobs
                 (job_id, model_path, out_dir, spec_path, status, progress,
-                 message, created_at, updated_at, error, artefacts)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 message, created_at, updated_at, error, artefacts,
+                 job_type, renderer, compare_mode, compare_interp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job.job_id,
@@ -146,6 +206,10 @@ class JobQueue:
                     job.updated_at,
                     job.error,
                     json.dumps(job.artefacts),
+                    job.job_type,
+                    job.renderer,
+                    job.compare_mode,
+                    job.compare_interp,
                 ),
             )
 
@@ -169,6 +233,10 @@ class JobQueue:
             updated_at=row[8],
             error=row[9],
             artefacts=json.loads(row[10]),
+            job_type=row[11],
+            renderer=row[12],
+            compare_mode=row[13],
+            compare_interp=row[14],
         )
 
     def start(self) -> None:
@@ -227,21 +295,12 @@ class JobQueue:
         job.status = JobStatus.RUNNING
         job.updated_at = now
 
-        # Determine job type from message field
-        message = job.message
-        compare_mode = "strict"
-        compare_interp = "linear"
-        if message == "compare" or message.startswith("compare:"):
-            job_type = "compare"
-            if ":" in message:
-                parts = message.split(":", 2)
-                compare_mode = parts[1] if len(parts) > 1 else "strict"
-                compare_interp = parts[2] if len(parts) > 2 else "linear"
-        elif message.startswith("render:"):
-            job_type = "render"
-        else:
-            job_type = "scan"
-        renderer_id = message.split(":", 1)[1] if job_type == "render" else None
+        # Job type is persisted explicitly (``job.job_type``), never parsed
+        # back from ``message`` — recovery rewrites message with progress text.
+        job_type = job.job_type
+        compare_mode = job.compare_mode
+        compare_interp = job.compare_interp
+        renderer_id = job.renderer
         if job_type == "scan":
             job.message = "Starting scan..."
         elif job_type == "compare":
@@ -514,6 +573,7 @@ class JobQueue:
             created_at=now,
             updated_at=now,
             message="Queued",
+            job_type="scan",
         )
         self._save(job)
         self._enqueued.add(job.job_id)
@@ -541,7 +601,10 @@ class JobQueue:
             status=JobStatus.QUEUED,
             created_at=now,
             updated_at=now,
-            message=f"compare:{mode}:{interp}",
+            message="Queued",
+            job_type="compare",
+            compare_mode=mode,
+            compare_interp=interp,
         )
         self._save(job)
         self._enqueued.add(job.job_id)
@@ -566,7 +629,8 @@ class JobQueue:
             status=JobStatus.QUEUED,
             created_at=now,
             updated_at=now,
-            message="scan",
+            message="Queued",
+            job_type="scan",
         )
         self._save(job)
         self._enqueued.add(job.job_id)
@@ -587,7 +651,9 @@ class JobQueue:
             status=JobStatus.QUEUED,
             created_at=now,
             updated_at=now,
-            message=f"render:{renderer}",
+            message="Queued",
+            job_type="render",
+            renderer=renderer,
         )
         self._save(job)
         self._enqueued.add(job.job_id)
@@ -716,6 +782,10 @@ class JobQueue:
                 updated_at=r[8],
                 error=r[9],
                 artefacts=json.loads(r[10]),
+                job_type=r[11],
+                renderer=r[12],
+                compare_mode=r[13],
+                compare_interp=r[14],
             )
             for r in rows
         ]

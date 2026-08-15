@@ -1,0 +1,26 @@
+<section class="detail-section">
+    <h3>Terrain (Blender)</h3>
+    {% if terrain_pngs %}
+    <div class="image-grid">
+        {% for png in terrain_pngs %}
+        <figure>
+            <a href="/models/{{ job.job_id }}/artifacts/{{ png }}" target="_blank" rel="noopener" title="Open full size">
+                <img loading="lazy" src="/models/{{ job.job_id }}/artifacts/{{ png }}" alt="{{ png }}">
+            </a>
+            <figcaption>{{ png }} — click to open full size</figcaption>
+        </figure>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p>No terrain renders available. Run the Blender renderer first.</p>
+    {% endif %}
+
+    {% if obj_meshes %}
+    <h4>Mesh</h4>
+    <ul>
+        {% for obj in obj_meshes %}
+        <li>{{ obj }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+</section>

@@ -1,0 +1,139 @@
+{% if fingerprint and fingerprint.get('warnings') %}
+<section class="banner banner--warning">
+    <strong>Warnings:</strong>
+    <ul>
+        {% for warning in fingerprint.warnings %}
+        <li>{{ warning }}</li>
+        {% endfor %}
+    </ul>
+</section>
+{% endif %}
+
+{% if fingerprint and fingerprint.get('mapping_coverage') %}
+{% set mc = fingerprint.mapping_coverage %}
+{% if mc.unmapped is defined %}
+{# v0.2.0 format: in_slots is a ratio, unmapped is a count #}
+{% if mc.in_slots < 0.8 or mc.unmapped > 0 %}
+<section class="banner banner--warning">
+    <strong>Mapping Coverage:</strong>
+    {{ "%.1f%%" | format(mc.in_slots * 100) }} in slots
+    ({{ mc.unmapped }} unmapped{% if mc.unmapped_tensors %}: {{ mc.unmapped_tensors | join(', ') }}{% endif %})
+</section>
+{% endif %}
+{% elif mc.in_slots is defined and mc.in_slots > 1 %}
+{# v0.1.0 format: in_slots is a count, compute ratio #}
+{% set ratio = mc.ratio if mc.ratio is defined else (mc.in_slots / mc.total if mc.total else 1.0) %}
+{% if ratio < 0.8 %}
+<section class="banner banner--warning">
+    <strong>Mapping Coverage:</strong>
+    {{ "%.1f%%" | format(ratio * 100) }} in slots
+    ({{ mc.total - mc.in_slots }} unmapped)
+</section>
+{% endif %}
+{% endif %}
+{% endif %}
+
+<section class="detail-section">
+    <h3>Operations</h3>
+    <div class="operations">
+        <form class="model-path-form" hx-post="/api/jobs/{{ job.job_id }}/model-path" hx-target="#model-path-status" hx-swap="innerHTML">
+            <label for="model_path">Model path</label>
+            <div class="path-picker">
+                <input type="text" id="model_path" name="model_path" value="{{ job.model_path }}" placeholder="/path/to/model.gguf">
+                <button type="button" class="btn-small" data-browse="model_path" data-browse-mode="model">Browse…</button>
+            </div>
+            <button type="submit">Set model path</button>
+        </form>
+        <span id="model-path-status"></span>
+        <button hx-post="/api/jobs/{{ job.job_id }}/render/sheet" hx-target="#render-status" hx-swap="innerHTML" hx-indicator="#render-spinner">
+            Render Sheets
+        </button>
+        <button hx-post="/api/jobs/{{ job.job_id }}/render/preview" hx-target="#render-status" hx-swap="innerHTML" hx-indicator="#render-spinner">
+            Render Previews
+        </button>
+        <button hx-post="/api/jobs/{{ job.job_id }}/render/blender" hx-target="#render-status" hx-swap="innerHTML" hx-indicator="#render-spinner">
+            Render Terrain (Blender)
+        </button>
+        <button hx-post="/api/jobs/{{ job.job_id }}/rescan" hx-target="#render-status" hx-swap="innerHTML" hx-indicator="#render-spinner" class="btn-danger">
+            Re-scan Model
+        </button>
+        <span id="render-spinner" class="htmx-indicator"><span class="spinner"></span> Working...</span>
+        <span id="render-status"></span>
+    </div>
+    <p class="hint">Sheets: hillshade + hypsometric tint + contours. Previews: auto-leveled 8-bit PNG for quick inspection. Terrain (Blender): orthographic top-view terrain rendered headlessly with Blender (requires a Blender binary on PATH or WEIGHT_ATLAS_BLENDER). Re-scan: re-run full scan pipeline with current spec (overwrites existing artefacts). Imported scans need the original model path set above before re-scanning.</p>
+</section>
+
+<section class="detail-section">
+    <h3>Fields</h3>
+    {% if tif_files %}
+    <div class="fields-info">
+        <p>Available field data (TIFF):</p>
+        <ul>
+            {% for tif in tif_files %}
+            <li><code>{{ tif }}</code></li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% else %}
+    <p>No field data available.</p>
+    {% endif %}
+</section>
+
+{% if fingerprint and fingerprint.get('quantization') %}
+<section class="detail-section">
+    <h3>Quantization (GGUF)</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Type</th>
+                <th>Count</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for type, count in fingerprint.quantization.items() %}
+            <tr>
+                <td>{{ type }}</td>
+                <td>{{ count }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+
+{% if fingerprint and fingerprint.get('model', {}).get('moe') %}
+<section class="detail-section">
+    <h3>MoE Architecture</h3>
+    <div class="moe-badge">
+        <span class="badge badge--info">MoE</span>
+        <span>{{ fingerprint.model.moe.num_experts }} experts</span>
+        {% if fingerprint.model.moe.shared_expert %}
+        <span class="badge badge--success">+ Shared Expert</span>
+        {% endif %}
+        <span>{{ fingerprint.model.moe.num_layers }} layers</span>
+    </div>
+</section>
+{% endif %}
+
+{% if fingerprint and fingerprint.get('embedding_meta') %}
+<section class="detail-section">
+    <h3>Embedding Projection</h3>
+    <div class="embedding-info">
+        <p><strong>Method:</strong> {{ fingerprint.embedding_meta.method }}</p>
+        {% if fingerprint.embedding_meta.explained_variance %}
+        <p><strong>Explained Variance:</strong> {{ fingerprint.embedding_meta.explained_variance | join(', ') }}</p>
+        {% endif %}
+        {% if fingerprint.embedding_meta.version %}
+        <p><strong>Version:</strong> {{ fingerprint.embedding_meta.version }}</p>
+        {% endif %}
+    </div>
+    {% for tif in tif_files %}
+    {% if 'embed_density' in tif %}
+    <figure>
+        <img loading="lazy" src="/models/{{ job.job_id }}/artifacts/render/{{ tif }}" alt="{{ tif }}">
+        <figcaption>{{ tif }}</figcaption>
+    </figure>
+    {% endif %}
+    {% endfor %}
+</section>
+{% endif %}

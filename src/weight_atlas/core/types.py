@@ -126,6 +126,7 @@ class AtlasSpec:
     vision_slots: list[str] = field(default_factory=list)
     vision_channels: dict[str, Any] = field(default_factory=dict)
     expert_channels: dict[str, Any] = field(default_factory=dict)
+    name_map: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_json(cls, path: Path) -> AtlasSpec:
@@ -143,6 +144,7 @@ class AtlasSpec:
             vision_slots=list(raw.get("vision_slots", [])),
             vision_channels=dict(raw.get("vision_channels", {})),
             expert_channels=dict(raw.get("expert_channels", {})),
+            name_map=dict(raw.get("name_map", {})),
         )
 
     def channel_stat(self, channel: str) -> str:

@@ -7,6 +7,7 @@ histogram stretching) and gamma correction for visual inspection.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import matplotlib
@@ -25,6 +26,14 @@ _PNG_METADATA = {
     "Creation Time": "1970-01-01T00:00:00Z",
 }
 
+# Pixel budget for the rendered raster (mirrors the sheet renderer's cap).
+# An expert panel is e.g. 4096×384 (8× upsample) — at the natural figsize
+# (~2048×153 in) and dpi=150 that becomes a ~7 GPx RGBA buffer (~28 GB) and
+# OOM-kills the worker. Cap the raster so huge panels keep a useful
+# resolution while the allocation stays small.
+_PREVIEW_DPI = 150
+_MAX_RENDER_PIXELS = 12_000_000
+
 
 @register_renderer("preview")
 class PreviewRenderer:
@@ -41,7 +50,14 @@ class PreviewRenderer:
 
         data = field.data
         n_rows, n_cols = data.shape
-        figsize = (max(6, n_cols * 0.5), max(4, n_rows * 0.4))
+
+        # Bound the raster to a fixed pixel budget (see ``_MAX_RENDER_PIXELS``).
+        # The natural preview figsize scales with the field's dimensions, so a
+        # wide expert panel would otherwise allocate a huge RGBA buffer.
+        scale = math.sqrt(_MAX_RENDER_PIXELS / max(1, n_rows * n_cols))
+        px_h = max(2, int(round(n_rows * scale)))
+        px_w = max(2, int(round(n_cols * scale)))
+        figsize = (max(6.0, px_w / _PREVIEW_DPI), max(4.0, px_h / _PREVIEW_DPI))
 
         # Auto-levels: quantile-based histogram stretching
         normalized = _auto_levels(data, lo=0.01, hi=0.99)
@@ -88,7 +104,7 @@ class PreviewRenderer:
         ax.set_title(title)
 
         raw_path = out / f"preview_{field.channel}.png"
-        fig.savefig(raw_path, dpi=150, bbox_inches="tight", metadata=_PNG_METADATA)
+        fig.savefig(raw_path, dpi=_PREVIEW_DPI, bbox_inches="tight", metadata=_PNG_METADATA)
         plt.close(fig)
         return [raw_path]
 

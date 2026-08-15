@@ -539,3 +539,49 @@ dd {
 #render-status:empty {
     display: none;
 }
+
+/* ---- Model detail tabs ---- */
+.model-tabs {
+    display: flex;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1.5rem;
+}
+
+.model-tab {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    color: var(--fg);
+    text-decoration: none;
+    border-radius: 6px 6px 0 0;
+    border: 1px solid transparent;
+    border-bottom: none;
+    opacity: 0.75;
+}
+
+.model-tab:hover {
+    background: var(--bg-alt);
+    opacity: 1;
+}
+
+.model-tab--active {
+    background: var(--bg-alt);
+    border-color: var(--border);
+    color: var(--highlight);
+    opacity: 1;
+    font-weight: 600;
+}
+
+/* ---- Statistics pagination ---- */
+.stats-pagination {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 1rem;
+}
+
+.stats-page-indicator {
+    color: #888;
+    font-size: 0.85rem;
+}

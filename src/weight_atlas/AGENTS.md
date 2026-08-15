@@ -29,6 +29,10 @@ compare two scanned models. The web UI (api + ui) is the primary interface.
 - **Spec coupling**: behaviour follows `AtlasSpec` from `core.types`
   (`spec.channels`, `spec.compare`, `spec.blender`). Extend the spec, don't
   hard-code values. Keep all `specs/*.json` versions in sync for shared keys.
+- **Name mapping is spec-driven**: `core/name_map.py` compiles the `name_map`
+  block from the canonical default spec. Adding a tensor family = edit the
+  v2.4 spec block + add the slot; the in-code rule lists are a fallback for
+  older specs and must stay in sync.
 - **Architecture docs**: durable design rules live in `docs/ARCHITECTURE.md`;
   update it when pipeline contracts change.
 

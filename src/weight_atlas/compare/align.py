@@ -27,6 +27,21 @@ class AlignResult:
     layer_map_b: list[int] | None = None
 
 
+def _col_labels_for_width(spec: AtlasSpec, n_cols: int) -> list[str]:
+    """Column labels for a field of ``n_cols`` columns, derived from ``spec.slots``.
+
+    Fields are rasterised with one column per slot in ``spec.slots`` order, so
+    the first ``n_cols`` slot names label the columns. A field narrower than the
+    current spec (e.g. scanned with an older spec that had fewer slots) gets its
+    labels truncated; a field wider than the spec gets positional labels for the
+    extra columns. This keeps col_labels in lockstep with the real field width
+    instead of crashing downstream consumers (e.g. ``zip(..., strict=True)``).
+    """
+    if n_cols <= len(spec.slots):
+        return list(spec.slots[:n_cols])
+    return list(spec.slots) + [str(i) for i in range(len(spec.slots), n_cols)]
+
+
 def check_compatibility(
     spec_a: dict[str, Any],
     spec_b: dict[str, Any],
@@ -111,11 +126,22 @@ def _align_strict(
     if row_labels_a is not None and row_labels_b is not None and row_labels_a != row_labels_b:
         warnings.append("row_labels differ between A and B")
 
+    # Column labels follow the actual field width, not blind spec.slots: a
+    # field scanned with an older spec (fewer slots) must not overflow its
+    # real column count (zip(..., strict=True) would crash downstream).
+    col_labels = _col_labels_for_width(spec, field_a.shape[1])
+    if field_a.shape[1] != len(spec.slots):
+        warnings.append(
+            f"field has {field_a.shape[1]} columns but the spec defines "
+            f"{len(spec.slots)} slots (scanned with an older spec?) — column "
+            "labels truncated to the real field width"
+        )
+
     return AlignResult(
         data_a=field_a.copy(),
         data_b=field_b.copy(),
         row_labels=list(row_labels_a) if row_labels_a else [str(i) for i in range(field_a.shape[0])],
-        col_labels=list(spec.slots),
+        col_labels=col_labels,
         mode="strict",
         warnings=warnings,
     )
@@ -139,10 +165,13 @@ def _align_normalized(
     n_rows_max = max(n_rows_a, n_rows_b)
     n_rows_common = max(n_rows_max, 64)  # at least 64 depth samples
 
-    # Determine common column count (max of both, but at least spec.slots)
+    # Determine common column count (max of both real widths). The spec slot
+    # list is NOT used as a floor: a field scanned with an older spec is
+    # narrower, and forcing the common grid to len(spec.slots) would upsample
+    # phantom interpolated columns that have no real slot.
     n_cols_a = field_a.shape[1]
     n_cols_b = field_b.shape[1]
-    n_cols_common = max(n_cols_a, n_cols_b, len(spec.slots))
+    n_cols_common = max(n_cols_a, n_cols_b)
 
     # Resample A to common grid
     layer_map_a: list[int] | None = None
@@ -163,6 +192,12 @@ def _align_normalized(
             f"different layer counts (A={n_rows_a}, B={n_rows_b}), "
             f"resampled to {n_rows_common} common depth grid"
         )
+    if n_cols_common != len(spec.slots):
+        warnings.append(
+            f"fields are {n_cols_common} columns wide but the spec defines "
+            f"{len(spec.slots)} slots (scanned with an older spec?) — column "
+            "labels truncated to the real field width"
+        )
     if interp == "linear":
         warnings.append(
             "aligned mode uses bilinear interpolation: rows are normalized "
@@ -180,7 +215,7 @@ def _align_normalized(
         data_a=field_a_aligned,
         data_b=field_b_aligned,
         row_labels=row_labels,
-        col_labels=list(spec.slots),
+        col_labels=_col_labels_for_width(spec, n_cols_common),
         mode="aligned",
         warnings=warnings,
         interp=interp,

@@ -96,6 +96,11 @@ class DeltaSheet:
         # back (e.g. for the hotspot slot names).
         valid_cols = ~np.isnan(delta).all(axis=0)
         self.kept_cols = [int(i) for i in np.where(valid_cols)[0]]
+        # Column labels must track the real field width. A caller may pass
+        # spec.slots from a newer spec than the scan used; truncate to the
+        # actual column count so zip(..., strict=True) cannot raise.
+        if col_labels is not None and len(col_labels) != delta.shape[1]:
+            col_labels = list(col_labels[:delta.shape[1]])
         if not valid_cols.any():
             # All columns NaN: keep as-is so the renderer still emits a sheet.
             data = delta

@@ -412,6 +412,19 @@ GGUF stores MoE expert tensors as 3D arrays (hidden, hidden, n_experts). The loa
 ### Rule order importance
 `mlp.gate.weight` (router) must match before `mlp.gate_proj` (mlp_gate). The name_map rules are ordered to ensure this.
 
+### Spec-driven name mapping (`name_map` block, spec v2.4)
+The tensor-name → slot tables are **spec-driven**: the canonical default spec
+carries a top-level `name_map` block (per-convention ordered rules for
+hf/gguf in moe/base/hybrid/kimi groups, `layer` index patterns,
+`non_layer_order`, and the vision rules). `core/name_map.py` compiles it at
+runtime and falls back to its in-code tables for older specs without the key.
+
+Adding a new tensor family is now a spec edit: add the rules to the `name_map`
+block **and** a new `slots` entry (in v2.4; `spec_version` stays 4 — additive).
+`ssm_ba` (Mamba B-matrix, Qwen3-Next) was the first such family: previously it
+fell through to `other` and left 36 tensors unmapped per model; it now maps to
+its own `ssm_ba` slot.
+
 ### Artefacts
 - `field_expert_mlp_{gate,up,down}_<channel>_{raw,smooth}.tif`
 - Sheet PNGs via existing sheet renderer (generic over Field2D)

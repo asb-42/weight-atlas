@@ -132,11 +132,33 @@ class TestAlignStrict:
         result = align(field_a, field_b, spec, mode="strict",
                        row_labels_a=labels, row_labels_b=labels)
         assert result.row_labels == labels
-        assert result.col_labels == spec.slots
+        assert len(result.col_labels) == field_a.shape[1]
+        assert result.col_labels == spec.slots[:field_a.shape[1]]
 
-    def test_col_labels_from_spec(self, field_a, field_b, spec):
+    def test_col_labels_follow_field_width(self, field_a, field_b, spec):
+        # 7-column field is narrower than spec.slots (23) — labels must
+        # truncate to the real width, never overflow.
         result = align(field_a, field_b, spec, mode="strict")
-        assert result.col_labels == spec.slots
+        assert len(result.col_labels) == field_a.shape[1]
+        assert result.col_labels == spec.slots[:field_a.shape[1]]
+
+    def test_narrower_field_truncates_col_labels(self, spec):
+        """A field scanned with an older spec (fewer slots than the current
+        spec) must truncate col_labels to the real width, not crash."""
+        a = np.zeros((4, len(spec.slots) - 1))
+        b = np.zeros((4, len(spec.slots) - 1))
+        result = align(a, b, spec, mode="strict")
+        assert len(result.col_labels) == a.shape[1]
+        assert result.col_labels == spec.slots[:-1]
+        assert any("truncated" in w for w in result.warnings)
+
+    def test_wider_field_pads_col_labels(self, spec):
+        """A field wider than the spec gets positional labels for extras."""
+        a = np.zeros((4, len(spec.slots) + 2))
+        b = np.zeros((4, len(spec.slots) + 2))
+        result = align(a, b, spec, mode="strict")
+        assert len(result.col_labels) == a.shape[1]
+        assert result.col_labels[: len(spec.slots)] == spec.slots
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +249,20 @@ class TestAlignNormalized:
         b = np.zeros((8, 7))
         with pytest.raises(ValueError):
             align(a, b, spec, mode="aligned", interp="bogus")
+
+    def test_narrower_fields_no_phantom_columns(self, spec):
+        """Aligned mode must not upsample columns to len(spec.slots): fields
+        scanned with an older spec stay at their real width and col_labels
+        truncate to match."""
+        width = len(spec.slots) - 1
+        a = np.zeros((4, width))
+        b = np.zeros((8, width))
+        result = align(a, b, spec, mode="aligned")
+        assert result.data_a.shape[1] == width
+        assert result.data_b.shape[1] == width
+        assert len(result.col_labels) == width
+        assert result.col_labels == spec.slots[:-1]
+        assert any("truncated" in w for w in result.warnings)
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,52 @@
+<section class="detail-section">
+    <h3>Statistics</h3>
+    {% if stats_rows %}
+    <p class="hint">Showing {{ stats_rows | length }} of {{ stats_total }} tensors (page {{ stats_page }} of {{ stats_pages }}).</p>
+    <div class="stats-table-wrapper">
+        <table class="stats-table">
+            <thead>
+                <tr>
+                    <th>Tensor</th>
+                    <th>Shape</th>
+                    <th>Frobenius</th>
+                    <th>Spectral Norm</th>
+                    <th>Effective Rank</th>
+                    <th>Kurtosis</th>
+                    <th>Sparsity</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for name, stats in stats_rows %}
+                <tr>
+                    <td>{{ name }}</td>
+                    <td>{{ stats.shape | join("x") }}</td>
+                    <td>{{ "%.4f" | format(stats.frobenius) }}</td>
+                    <td>{{ "%.4f" | format(stats.spectral_norm) }}</td>
+                    <td>{{ "%.4f" | format(stats.effective_rank) }}</td>
+                    <td>{{ "%.4f" | format(stats.kurtosis) }}</td>
+                    <td>{{ "%.4f" | format(stats.sparsity) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if stats_pages > 1 %}
+    <nav class="stats-pagination">
+        {% if stats_page > 1 %}
+        <a hx-get="/models/{{ job.job_id }}?tab=stats&page={{ stats_page - 1 }}"
+           hx-target="#model-tab-content" hx-swap="innerHTML" hx-push-url="true"
+           class="btn-small">&larr; Prev</a>
+        {% endif %}
+        <span class="stats-page-indicator">Page {{ stats_page }} / {{ stats_pages }}</span>
+        {% if stats_page < stats_pages %}
+        <a hx-get="/models/{{ job.job_id }}?tab=stats&page={{ stats_page + 1 }}"
+           hx-target="#model-tab-content" hx-swap="innerHTML" hx-push-url="true"
+           class="btn-small">Next &rarr;</a>
+        {% endif %}
+    </nav>
+    {% endif %}
+    {% else %}
+    <p>No statistics available.</p>
+    {% endif %}
+</section>

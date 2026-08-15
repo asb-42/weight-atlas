@@ -23,6 +23,13 @@ fields, compute per-channel deltas, rank hotspots, and emit a compare report.
   layer indices — surface this in `CompareSummary.alignment` + warnings.
 - **Hard-reject on spec_version mismatch**: `check_compatibility` raises
   ValueError; tool_version mismatch warns only.
+- **Column labels track real field width**: `col_labels` are derived from
+  `spec.slots` truncated/padded to the actual column count of the scanned
+  field (fields scanned with an older spec may be narrower than the current
+  `spec.slots`). Never feed full `spec.slots` to a narrower delta — downstream
+  `zip(..., strict=True)` (e.g. `delta_sheet.py`) would crash. Emit a warning
+  on any width mismatch. Aligned-mode common grid uses the max of the two real
+  widths, NOT `len(spec.slots)` as a floor (no phantom upsampled columns).
 - **Determinism**: delta TIFFs, compare JSON, and delta sheets must be
   byte-identical for identical inputs (NaN positions excluded via masks).
 - **NaN discipline**: deltas are NaN where either field is NaN; hotspot

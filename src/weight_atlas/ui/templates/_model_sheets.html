@@ -1,0 +1,42 @@
+<section class="detail-section">
+    <h3>Sheet</h3>
+    <p class="channel-info">
+        <strong>Height:</strong> spectral_norm (robust_scale) — layer norm outlier ridge visible as vertical stripe.
+        <strong>Tint:</strong> stable_rank (robust_scale) = log1p((frobenius/spectral_norm)²) — matrix effective dimensionality.
+        <strong>Rough:</strong> kurtosis (robust_scale) — distribution shape (negative = uniform, positive = peaked).
+    </p>
+    {% set sheets = sheet_pngs | select('ne', '') | list %}
+    {% if sheets %}
+    <div class="image-grid">
+        {% for png in sheets %}
+        {% if 'preview_' not in png %}
+        <figure>
+            <a href="/models/{{ job.job_id }}/artifacts/{{ png }}" target="_blank" rel="noopener" title="Open full size">
+                <img loading="lazy" src="/models/{{ job.job_id }}/artifacts/{{ png }}" alt="{{ png }}">
+            </a>
+            <figcaption>{{ png }} — click to open full size</figcaption>
+        </figure>
+        {% endif %}
+        {% endfor %}
+    </div>
+    {% else %}
+    <p>No sheet images available. Click "Render Sheets" on the Overview tab.</p>
+    {% endif %}
+</section>
+
+<section class="detail-section">
+    <h3>Preview (auto-leveled)</h3>
+    <div class="image-grid">
+        {% for png in sheet_pngs %}
+        {% if 'preview_' in png %}
+        <figure>
+            <a href="/models/{{ job.job_id }}/artifacts/{{ png }}" target="_blank" rel="noopener" title="Open full size">
+                <img loading="lazy" src="/models/{{ job.job_id }}/artifacts/{{ png }}" alt="{{ png }}">
+            </a>
+            <figcaption>{{ png }} — click to open full size</figcaption>
+        </figure>
+        {% endif %}
+        {% endfor %}
+    </div>
+    <p class="hint">Auto-leveled 8-bit PNG with gamma=2.2 correction for quick visual inspection.</p>
+</section>

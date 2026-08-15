@@ -1,0 +1,29 @@
+<section class="detail-section">
+    <h3>Spec</h3>
+    <dl>
+        <dt>Spec Version</dt>
+        <dd>{{ spec.spec_version }}</dd>
+        <dt>Slots</dt>
+        <dd>{{ spec.slots | join(', ') }}</dd>
+        <dt>Channels</dt>
+        <dd>{{ spec.channels | tojson }}</dd>
+        <dt>Grid</dt>
+        <dd>{{ spec.grid | tojson }}</dd>
+    </dl>
+</section>
+
+<section class="detail-section">
+    <h3>Artefacts</h3>
+    <ul>
+        {% for tif in tif_files %}
+        <li>
+            {% if tif.endswith('.tif') or tif.endswith('.tiff') %}
+                <span class="tif-not-inline">{{ tif }} — TIFF (download only)</span>
+                <a href="/models/{{ job.job_id }}/artifacts/{{ tif }}" download>download</a>
+            {% else %}
+                <a href="/models/{{ job.job_id }}/artifacts/{{ tif }}">{{ tif }}</a>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+</section>

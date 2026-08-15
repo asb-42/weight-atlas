@@ -17,9 +17,12 @@ scan/render/compare, and provides file-browsing and result endpoints. The UI
 ## Local Contracts
 
 - **Job queue**: `JobQueue` in `jobs.py` persists jobs in `data/jobs.db`.
-  Job type is encoded in `job.message` — `scan`, `compare:{mode}:{interp}`,
-  `render:{renderer_id}`. Keep the delimiter-based message format backward
-  compatible when adding params.
+  Job type lives in its own column (`job.job_type` = `scan`/`render`/
+  `compare`), with per-type params in `renderer`, `compare_mode`,
+  `compare_interp`. `job.message` is progress text only and is overwritten
+  during execution + recovery — never parse the type back from it. `_migrate`
+  backfills `job_type` from legacy `message` markers (`render:<id>`,
+  `compare[:mode[:interp]]`) for pre-job_type DBs.
 - **Deterministic job IDs**: `uuid4` is fine (not an output artefact).
 - **File browsing is confined**: `GET /api/browse` must never escape the
   allowed roots (models/ + scan output dirs) — `_require_allowed` guard.
@@ -28,6 +31,12 @@ scan/render/compare, and provides file-browsing and result endpoints. The UI
   enqueueing.
 - **Errors surface on the job**: worker catches exceptions → `job.status =
   FAILED` + `job.error`; the API never raises unhandled.
+- **Model detail is tabbed sub-pages**: `GET /models/{id}` is a light overview;
+  sheets/terrain/stats/spec load as htmx fragments via `?tab=`. The statistics
+  table is server-paginated (200 rows/page, clamped) — never render the full
+  tensor table inline (74k-tensor fingerprints made the old page ~25 MB).
+  Fragment templates are `ui/templates/_model_{tab}.html`; add new tabs to
+  `model_tabs` in `routes.py` + a template.
 
 ## Work Guidance
 

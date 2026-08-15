@@ -20,6 +20,7 @@ from matplotlib.colors import LinearSegmentedColormap, Normalize
 
 from weight_atlas.core.registry import register_renderer
 from weight_atlas.core.types import AtlasSpec, Field2D
+from weight_atlas.fields.normalize import depth_landmark_labels, project_normalized_depth
 
 # Diverging blue-white-red palette (RdBu family) for rank-scaled [0,1] fields.
 # Replaces the original green→brown→white hypsometric terrain scale, which
@@ -61,6 +62,23 @@ class MatplotlibSheet:
 
         data = field.data
         n_rows, n_cols = data.shape
+
+        # Ebene 2: normalized-depth projection (spec v2.4 knob). Re-map rows onto
+        # fixed relative-depth landmarks (0%..100%) so models with different layer
+        # counts become comparable and NaN "perforation" holes are interpolated
+        # over. The interpolation mask marks every estimated cell so the sheet can
+        # shade it and stay honest about where values are estimates.
+        row_labels = field.row_labels
+        col_labels = field.col_labels
+        interp_mask: np.ndarray | None = None
+        normalized_depth = False
+        if sheet.get("normalized_depth", False) and n_rows > 1:
+            n_landmarks = int(sheet.get("normalized_depth_landmarks", 21))
+            data, interp_mask = project_normalized_depth(data, n_landmarks)
+            n_rows, n_cols = data.shape
+            row_labels = depth_landmark_labels(n_landmarks)
+            normalized_depth = True
+
         # Bound the raster: keep the field's aspect ratio and scale to a fixed
         # pixel budget so the dpi-scaled RGBA buffer stays small even for huge
         # panels (see ``_MAX_RENDER_PIXELS``). Without this, rendering a
@@ -83,6 +101,17 @@ class MatplotlibSheet:
 
         fig, ax = plt.subplots(figsize=figsize)
         ax.imshow(normed, cmap=_HYPSO, vmin=0, vmax=1, origin="upper", extent=(-0.5, n_cols - 0.5, n_rows - 0.5, -0.5))
+
+        # Subtle gray veil over interpolated (estimated) cells so the normalized
+        # depth projection stays honest about which regions are estimates.
+        if interp_mask is not None and interp_mask.any():
+            shade = np.where(interp_mask & np.isfinite(data), 1.0, np.nan)
+            ax.imshow(
+                shade,
+                cmap="Greys", vmin=0, vmax=1, origin="upper",
+                extent=(-0.5, n_cols - 0.5, n_rows - 0.5, -0.5),
+                alpha=0.25, zorder=2,
+            )
 
         # Scatter overlay for embedding visualization
         if scatter_path is not None and scatter_path.exists():
@@ -124,27 +153,27 @@ class MatplotlibSheet:
         ax.set_ylabel("layer", fontsize=10, fontweight="bold")
 
         # Handle upsampled data: col_labels may have fewer entries than n_cols
-        if len(field.col_labels) == n_cols:
+        if len(col_labels) == n_cols:
             step = max(1, n_cols // 20)
             ax.set_xticks(range(0, n_cols, step))
-            ax.set_xticklabels([field.col_labels[i] for i in range(0, n_cols, step)],
+            ax.set_xticklabels([col_labels[i] for i in range(0, n_cols, step)],
                              rotation=90, fontsize=7, ha="center")
-        elif len(field.col_labels) > 0:
-            n_labels = len(field.col_labels)
+        elif len(col_labels) > 0:
+            n_labels = len(col_labels)
             tick_positions = [i * n_cols // n_labels for i in range(n_labels)]
             ax.set_xticks(tick_positions)
-            ax.set_xticklabels(field.col_labels, rotation=90, fontsize=7, ha="center")
+            ax.set_xticklabels(col_labels, rotation=90, fontsize=7, ha="center")
 
-        if len(field.row_labels) == n_rows:
+        if len(row_labels) == n_rows:
             step = max(1, n_rows // 20)
             ax.set_yticks(range(0, n_rows, step))
-            ax.set_yticklabels([field.row_labels[i] for i in range(0, n_rows, step)],
+            ax.set_yticklabels([row_labels[i] for i in range(0, n_rows, step)],
                              fontsize=7)
-        elif len(field.row_labels) > 0:
-            n_labels = len(field.row_labels)
+        elif len(row_labels) > 0:
+            n_labels = len(row_labels)
             tick_positions = [i * n_rows // n_labels for i in range(n_labels)]
             ax.set_yticks(tick_positions)
-            ax.set_yticklabels(field.row_labels, fontsize=7)
+            ax.set_yticklabels(row_labels, fontsize=7)
 
         # Title: model · channel · transformation
         display_channel = field.channel
@@ -167,6 +196,8 @@ class MatplotlibSheet:
         title = f"{display_channel}: {transform_str}"
         if field.model_name:
             title = f"{field.model_name}: {title}"
+        if normalized_depth:
+            title = f"{title} · normalized-depth (interp shaded)"
         ax.set_title(title, fontsize=12, fontweight="bold")
 
         # Colorbar with real percentile values mapped onto the display scale.

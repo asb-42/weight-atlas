@@ -1,0 +1,20 @@
+<nav class="model-tabs" id="model-tabs" role="tablist">
+    {% set tabs = [
+        ("overview", "Overview"),
+        ("sheets", "Sheets"),
+        ("terrain", "Terrain"),
+        ("stats", "Statistics"),
+        ("spec", "Spec"),
+    ] %}
+    {% for key, label in tabs %}
+    <a class="model-tab{% if active_tab == key %} model-tab--active{% endif %}"
+       href="/models/{{ job.job_id }}?tab={{ key }}"
+       data-tab="{{ key }}"
+       role="tab"
+       aria-selected="{{ 'true' if active_tab == key else 'false' }}"
+       hx-get="/models/{{ job.job_id }}?tab={{ key }}"
+       hx-target="#model-tab-content"
+       hx-swap="innerHTML"
+       hx-push-url="true">{{ label }}</a>
+    {% endfor %}
+</nav>

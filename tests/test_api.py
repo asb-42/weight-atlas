@@ -142,6 +142,30 @@ class TestJobProgressPage:
 
 
 class TestModelDetail:
+    def _import_scan(self, client: TestClient, tmp_path: Path, fake_model: Path, n_tensors: int = 5) -> str:
+        """Create + import a done scan so fingerprint stats are available."""
+        scan_dir = tmp_path / f"scan_{n_tensors}"
+        scan_dir.mkdir(exist_ok=True)
+        tensors = {}
+        for i in range(n_tensors):
+            tensors[f"blk.{i}.attn_q.weight"] = {
+                "shape": [32, 32], "frobenius": 1.0, "spectral_norm": 1.0,
+                "effective_rank": 2.0, "kurtosis": 0.0, "sparsity": 0.0,
+            }
+        fp = {
+            "spec_version": 2, "model": {"n_tensors": n_tensors, "n_layers": 1},
+            "mapping_coverage": {"in_slots": 1.0, "unmapped": 0, "unmapped_tensors": []},
+            "tensors": tensors,
+        }
+        with open(scan_dir / "fingerprint.json", "w") as f:
+            json.dump(fp, f)
+        resp = client.post(
+            "/api/import",
+            json={"scan_dir": str(scan_dir), "model_path": str(fake_model)},
+        )
+        assert resp.status_code == 200
+        return resp.json()["job_id"]
+
     def test_detail_requires_done_job(self, client: TestClient, fake_model: Path) -> None:
         create_resp = client.post("/api/jobs", json={"model_path": str(fake_model)})
         job_id = create_resp.json()["job_id"]
@@ -149,6 +173,43 @@ class TestModelDetail:
         # Job is queued/running — detail should still render (but may be empty)
         response = client.get(f"/models/{job_id}")
         assert response.status_code == 200
+
+    def test_detail_tabs_render(self, client: TestClient, fake_model: Path, tmp_path: Path) -> None:
+        """Each model sub-page (tab) must render 200 with its own content."""
+        job_id = self._import_scan(client, tmp_path, fake_model)
+
+        base = client.get(f"/models/{job_id}")
+        assert base.status_code == 200
+        # Tab bar is present; stats table is NOT inline on the overview page.
+        assert 'class="model-tabs"' in base.text
+        assert 'data-tab="stats"' in base.text
+        assert "stats-table" not in base.text
+
+        for tab, needle in (
+            ("overview", "Operations"),
+            ("sheets", "Sheet"),
+            ("terrain", "Terrain"),
+            ("stats", "Statistics"),
+            ("spec", "Spec"),
+        ):
+            resp = client.get(f"/models/{job_id}?tab={tab}")
+            assert resp.status_code == 200, f"tab {tab} failed"
+            assert "model-tab--active" in resp.text
+            assert needle in resp.text, f"tab {tab} missing {needle}"
+
+    def test_stats_tab_paginates(self, client: TestClient, fake_model: Path, tmp_path: Path) -> None:
+        """Statistics sub-page must paginate server-side."""
+        job_id = self._import_scan(client, tmp_path, fake_model, n_tensors=5)
+        resp = client.get(f"/models/{job_id}?tab=stats")
+        assert resp.status_code == 200
+        assert "stats-table" in resp.text
+
+    def test_stats_tab_clamps_page(self, client: TestClient, fake_model: Path, tmp_path: Path) -> None:
+        """Out-of-range stats page must clamp, not error."""
+        job_id = self._import_scan(client, tmp_path, fake_model, n_tensors=450)
+        resp = client.get(f"/models/{job_id}?tab=stats&page=999999")
+        assert resp.status_code == 200
+        assert "Page 3 / 3" in resp.text
 
 
 class TestFingerprintEndpoint:
@@ -230,6 +291,119 @@ class TestJobQueueDB:
             q2.stop()
 
         assert job.job_id in ran, "queued job was not re-enqueued after restart"
+
+    def test_restart_preserves_render_job_type(self, tmp_path: Path, spec_path: Path, fake_model: Path) -> None:
+        """A render job must come back as a render job after a restart.
+
+        Regression: job type used to be encoded in ``message`` and recovery
+        overwrote it with ``re-queued after restart``, so a render job was
+        re-executed as a full scan on restart.
+        """
+        import time
+
+        db_path = tmp_path / "restart_render.db"
+        q1 = JobQueue(db_path, on_job=lambda j: None)
+        base = q1.submit(fake_model, tmp_path / "out", spec_path)
+        job = q1.submit_render(base.job_id, "preview")
+        assert job.job_type == "render"
+        assert job.renderer == "preview"
+
+        ran: list[str] = []
+        q2 = JobQueue(db_path, on_job=lambda j: None)
+        q2._execute = lambda j: ran.append(j.job_id)  # noqa: SLF001 — test hook
+        q2.start()
+        try:
+            time.sleep(0.4)
+        finally:
+            q2.stop()
+
+        reloaded = q2.get(job.job_id)
+        assert reloaded is not None
+        assert reloaded.job_type == "render", (
+            "render job type was lost across restart"
+        )
+        assert reloaded.renderer == "preview"
+        assert job.job_id in ran, "render job was not re-enqueued after restart"
+
+    def test_restart_preserves_compare_job_type(self, tmp_path: Path, spec_path: Path, fake_model: Path) -> None:
+        """A compare job must keep its mode/interp after a restart."""
+        import time
+
+        db_path = tmp_path / "restart_compare.db"
+        q1 = JobQueue(db_path, on_job=lambda j: None)
+        job = q1.submit_compare(
+            tmp_path / "a", tmp_path / "b", tmp_path / "cmp_out", spec_path,
+            mode="aligned", interp="nearest",
+        )
+        assert job.job_type == "compare"
+
+        ran: list[str] = []
+        q2 = JobQueue(db_path, on_job=lambda j: None)
+        q2._execute = lambda j: ran.append(j.job_id)  # noqa: SLF001 — test hook
+        q2.start()
+        try:
+            time.sleep(0.4)
+        finally:
+            q2.stop()
+
+        reloaded = q2.get(job.job_id)
+        assert reloaded is not None
+        assert reloaded.job_type == "compare"
+        assert reloaded.compare_mode == "aligned"
+        assert reloaded.compare_interp == "nearest"
+        assert job.job_id in ran, "compare job was not re-enqueued after restart"
+
+    def test_legacy_db_backfills_job_type_from_message(self, tmp_path: Path, spec_path: Path) -> None:
+        """Pre-job_type DBs must be migrated, backfilling type from message.
+
+        Legacy rows encoded the type in ``message`` (``render:<id>``,
+        ``compare[:mode[:interp]]``); after migration they must carry the
+        dedicated job_type column so recovery does not turn them into scans.
+        """
+        import sqlite3
+
+        db_path = tmp_path / "legacy.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute("""
+            CREATE TABLE jobs (
+                job_id TEXT PRIMARY KEY,
+                model_path TEXT NOT NULL,
+                out_dir TEXT NOT NULL,
+                spec_path TEXT NOT NULL,
+                status TEXT NOT NULL,
+                progress REAL NOT NULL DEFAULT 0.0,
+                message TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                error TEXT NOT NULL DEFAULT '',
+                artefacts TEXT NOT NULL DEFAULT '[]'
+            )
+        """)
+        now = "2026-01-01T00:00:00"
+        conn.executemany(
+            "INSERT INTO jobs (job_id, model_path, out_dir, spec_path, status,"
+            " progress, message, created_at, updated_at, error, artefacts)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                ("r1", "/m", "/o", "", "queued", 0.0, "render:preview", now, now, "", "[]"),
+                ("c1", "/a|/b", "/o", "", "queued", 0.0, "compare:aligned:nearest", now, now, "", "[]"),
+                ("c2", "/a|/b", "/o", "", "queued", 0.0, "compare", now, now, "", "[]"),
+                ("s1", "/m", "/o", "", "queued", 0.0, "Queued", now, now, "", "[]"),
+                ("c3", "/a|/b", "/out/compare_a_vs_b_abcd1234", "", "done", 1.0, "Complete", now, now, "", "[]"),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        queue = JobQueue(db_path, on_job=lambda j: None)
+        assert queue.get("r1").job_type == "render"
+        assert queue.get("r1").renderer == "preview"
+        assert queue.get("c1").job_type == "compare"
+        assert queue.get("c1").compare_mode == "aligned"
+        assert queue.get("c1").compare_interp == "nearest"
+        assert queue.get("c2").job_type == "compare"
+        assert queue.get("s1").job_type == "scan"
+        assert queue.get("c3").job_type == "compare"
 
     def test_db_access_does_not_leak_fds(
         self, tmp_path: Path, spec_path: Path, fake_model: Path
