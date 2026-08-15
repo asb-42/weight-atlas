@@ -515,10 +515,13 @@ def create_router(
         )
 
     @router.post("/api/jobs/{job_id}/render/{renderer:path}")
-    async def render_job(job_id: str, renderer: str) -> Response:
+    async def render_job(job_id: str, renderer: str, request: Request) -> Response:
         """Trigger rendering for a job (enqueued on the worker thread).
 
         Redirects the HTMX client to the new job's live progress page.
+        Optional sheet overrides (``normalized_depth``, ``drop_empty_cols``)
+        come from the UI's checkboxes and are applied on top of the recorded
+        spec for this render only.
         """
         job = job_queue.get(job_id)
         if job is None:
@@ -534,7 +537,15 @@ def create_router(
         except KeyError:
             raise HTTPException(status_code=404, detail=f"unknown renderer: {renderer}") from None
 
-        new_job = job_queue.submit_render(job_id, renderer)
+        form = await request.form()
+        sheet_knobs: dict[str, bool] = {}
+        if renderer == "sheet" or renderer == "preview":
+            # Only the raster sheet renderers consume these knobs.
+            for key in ("normalized_depth", "drop_empty_cols"):
+                if key in form:
+                    sheet_knobs[key] = True
+
+        new_job = job_queue.submit_render(job_id, renderer, sheet_knobs=sheet_knobs)
         return Response(
             status_code=202,
             headers={"HX-Redirect": f"/jobs/{new_job.job_id}"},

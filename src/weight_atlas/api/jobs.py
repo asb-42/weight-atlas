@@ -7,7 +7,7 @@ import threading
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -38,11 +38,14 @@ class Job:
     # Job type is persisted separately from ``message`` so a restart can
     # recover the original kind (scan/render/compare) even after progress
     # text overwrote ``message``. ``renderer``/``compare_mode``/
-    # ``compare_interp`` carry the per-type params.
+    # ``compare_interp`` carry the per-type params. ``sheet_knobs`` holds
+    # optional per-render sheet overrides (e.g. ``{"normalized_depth": True}``)
+    # applied on top of the recorded spec when a render job runs.
     job_type: str = "scan"
     renderer: str = ""
     compare_mode: str = "strict"
     compare_interp: str = "linear"
+    sheet_knobs: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -61,6 +64,7 @@ class Job:
             "renderer": self.renderer,
             "compare_mode": self.compare_mode,
             "compare_interp": self.compare_interp,
+            "sheet_knobs": self.sheet_knobs,
         }
 
 
@@ -151,6 +155,7 @@ class JobQueue:
             ("renderer", "TEXT NOT NULL DEFAULT ''"),
             ("compare_mode", "TEXT NOT NULL DEFAULT 'strict'"),
             ("compare_interp", "TEXT NOT NULL DEFAULT 'linear'"),
+            ("sheet_knobs", "TEXT NOT NULL DEFAULT '{}'"),
         ):
             if name not in cols:
                 conn.execute(f"ALTER TABLE jobs ADD COLUMN {name} {ddl}")
@@ -183,6 +188,16 @@ class JobQueue:
     def _now(self) -> str:
         return datetime.now(UTC).isoformat(timespec="seconds")
 
+    def _apply_sheet_knobs(self, spec: Any, knobs: dict[str, Any]) -> Any:
+        """Return a copy of ``spec`` with per-render sheet overrides applied.
+
+        Only the ``sheet`` block is touched (e.g. ``normalized_depth``,
+        ``drop_empty_cols``); the scan's recorded spec stays unchanged.
+        """
+        sheet = dict(getattr(spec, "sheet", {}) or {})
+        sheet.update(knobs)
+        return replace(spec, sheet=sheet)
+
     def _save(self, job: Job) -> None:
         import json
         with self._connection() as conn:
@@ -191,8 +206,8 @@ class JobQueue:
                 INSERT OR REPLACE INTO jobs
                 (job_id, model_path, out_dir, spec_path, status, progress,
                  message, created_at, updated_at, error, artefacts,
-                 job_type, renderer, compare_mode, compare_interp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 job_type, renderer, compare_mode, compare_interp, sheet_knobs)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job.job_id,
@@ -210,6 +225,7 @@ class JobQueue:
                     job.renderer,
                     job.compare_mode,
                     job.compare_interp,
+                    json.dumps(job.sheet_knobs),
                 ),
             )
 
@@ -237,6 +253,7 @@ class JobQueue:
             renderer=row[12],
             compare_mode=row[13],
             compare_interp=row[14],
+            sheet_knobs=json.loads(row[15]) if len(row) > 15 else {},
         )
 
     def start(self) -> None:
@@ -322,6 +339,10 @@ class JobQueue:
             from weight_atlas.core.types import load_default_spec
             spec_path = Path(job.spec_path) if job.spec_path else None
             spec = AtlasSpec.from_json(spec_path) if spec_path and spec_path.exists() else load_default_spec()
+            if job.sheet_knobs:
+                # Apply per-render sheet overrides (e.g. normalized_depth)
+                # on top of the recorded spec; the scan's spec stays untouched.
+                spec = self._apply_sheet_knobs(spec, job.sheet_knobs)
             artefacts: list[str]
             if job_type == "compare":
                 progress_cb(0.2, "Comparing models...")
@@ -637,7 +658,7 @@ class JobQueue:
         self._queue.put(job.job_id)
         return job
 
-    def submit_render(self, job_id: str, renderer: str) -> Job:
+    def submit_render(self, job_id: str, renderer: str, sheet_knobs: dict[str, Any] | None = None) -> Job:
         """Enqueue a render of a completed scan (worker thread, not event loop)."""
         original = self._load(job_id)
         if original is None:
@@ -654,6 +675,7 @@ class JobQueue:
             message="Queued",
             job_type="render",
             renderer=renderer,
+            sheet_knobs=dict(sheet_knobs or {}),
         )
         self._save(job)
         self._enqueued.add(job.job_id)

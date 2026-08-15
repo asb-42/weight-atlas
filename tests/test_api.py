@@ -325,6 +325,55 @@ class TestJobQueueDB:
         assert reloaded.renderer == "preview"
         assert job.job_id in ran, "render job was not re-enqueued after restart"
 
+    def test_render_job_sheet_knobs_persist_and_apply(self, tmp_path: Path, spec_path: Path, fake_model: Path) -> None:
+        """Per-render sheet knobs survive a restart and are overlaid on the spec."""
+        import time
+
+        db_path = tmp_path / "restart_knobs.db"
+        q1 = JobQueue(db_path, on_job=lambda j: None)
+        base = q1.submit(fake_model, tmp_path / "out", spec_path)
+        job = q1.submit_render(base.job_id, "sheet", sheet_knobs={"normalized_depth": True})
+        assert job.sheet_knobs == {"normalized_depth": True}
+
+        q2 = JobQueue(db_path, on_job=lambda j: None)
+        q2._execute = lambda j: None  # noqa: SLF001 — don't actually render
+        q2.start()
+        try:
+            time.sleep(0.4)
+        finally:
+            q2.stop()
+
+        reloaded = q2.get(job.job_id)
+        assert reloaded is not None
+        assert reloaded.sheet_knobs == {"normalized_depth": True}, (
+            "sheet_knobs were lost across restart"
+        )
+
+        from weight_atlas.core.types import AtlasSpec
+        base_spec = AtlasSpec.from_json(spec_path)
+        assert base_spec.sheet.get("normalized_depth") is None
+        overlaid = q2._apply_sheet_knobs(base_spec, {"normalized_depth": True})  # noqa: SLF001
+        assert overlaid.sheet["normalized_depth"] is True
+        assert base_spec.sheet.get("normalized_depth") is None, (
+            "overlay must not mutate the recorded spec"
+        )
+
+    def test_render_job_sheet_knobs_roundtrip_through_db(self, tmp_path: Path, spec_path: Path, fake_model: Path) -> None:
+        """Sheet knobs round-trip through the SQLite persistence layer."""
+        db_path = tmp_path / "knobs_roundtrip.db"
+        q1 = JobQueue(db_path, on_job=lambda j: None)
+        base = q1.submit(fake_model, tmp_path / "out", spec_path)
+        job = q1.submit_render(base.job_id, "sheet", sheet_knobs={"drop_empty_cols": True, "normalized_depth": True})
+        q1._save(job)  # noqa: SLF001
+        loaded = q1._load(job.job_id)  # noqa: SLF001
+        assert loaded is not None
+        assert loaded.sheet_knobs == {"drop_empty_cols": True, "normalized_depth": True}
+
+        # A render without knobs defaults to an empty dict.
+        bare = q1.submit_render(base.job_id, "preview")
+        q1._save(bare)  # noqa: SLF001
+        assert q1._load(bare.job_id).sheet_knobs == {}  # noqa: SLF001
+
     def test_restart_preserves_compare_job_type(self, tmp_path: Path, spec_path: Path, fake_model: Path) -> None:
         """A compare job must keep its mode/interp after a restart."""
         import time
@@ -597,6 +646,58 @@ class TestPathConfinement:
         with TestClient(app) as client:
             resp = client.post("/api/import", json={"scan_dir": str(scan_dir), "model_path": str(fake_model)})
             assert resp.status_code == 403
+
+
+class TestRenderEndpoint:
+    def test_render_sheet_with_knobs_enqueues_override(
+        self, client, tmp_path: Path, fake_model: Path
+    ) -> None:
+        """POSTing sheet checkboxes to the render route enqueues a knobs job."""
+        resp = client.post("/api/jobs", json={"model_path": str(fake_model)})
+        assert resp.status_code == 200
+        job_id = resp.json()["job_id"]
+
+        r = client.post(
+            f"/api/jobs/{job_id}/render/sheet",
+            data={"normalized_depth": "on", "drop_empty_cols": "on"},
+        )
+        assert r.status_code == 202
+        assert r.headers.get("HX-Redirect", "").startswith("/jobs/")
+
+        render_job_id = r.headers["HX-Redirect"].split("/")[-1]
+        render_job = client.get(f"/api/jobs/{render_job_id}").json()
+        assert render_job["job_type"] == "render"
+        assert render_job["sheet_knobs"] == {
+            "normalized_depth": True,
+            "drop_empty_cols": True,
+        }
+
+    def test_render_blender_ignores_sheet_knobs(
+        self, client, tmp_path: Path, fake_model: Path
+    ) -> None:
+        """The Blender (terrain) renderer must not carry sheet knobs."""
+        resp = client.post("/api/jobs", json={"model_path": str(fake_model)})
+        assert resp.status_code == 200
+        job_id = resp.json()["job_id"]
+
+        r = client.post(
+            f"/api/jobs/{job_id}/render/blender",
+            data={"normalized_depth": "on"},
+        )
+        assert r.status_code == 202
+        render_job_id = r.headers["HX-Redirect"].split("/")[-1]
+        render_job = client.get(f"/api/jobs/{render_job_id}").json()
+        assert render_job["job_type"] == "render"
+        assert render_job["sheet_knobs"] == {}
+
+    def test_render_unknown_renderer_404(self, client, tmp_path: Path, fake_model: Path) -> None:
+        """An unknown renderer id must 404 before enqueueing."""
+        resp = client.post("/api/jobs", json={"model_path": str(fake_model)})
+        assert resp.status_code == 200
+        job_id = resp.json()["job_id"]
+
+        r = client.post(f"/api/jobs/{job_id}/render/nonexistent")
+        assert r.status_code == 404
 
 
 class TestRescan:

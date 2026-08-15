@@ -45,10 +45,20 @@
             <button type="submit">Set model path</button>
         </form>
         <span id="model-path-status"></span>
-        <button hx-post="/api/jobs/{{ job.job_id }}/render/sheet" hx-target="#render-status" hx-swap="innerHTML" hx-indicator="#render-spinner">
+        <div class="render-options">
+            <label class="render-option">
+                <input type="checkbox" id="opt-normalized-depth" name="normalized_depth">
+                Normalized depth (0–100%)
+            </label>
+            <label class="render-option">
+                <input type="checkbox" id="opt-drop-empty" name="drop_empty_cols">
+                Drop empty columns
+            </label>
+        </div>
+        <button hx-post="/api/jobs/{{ job.job_id }}/render/sheet" hx-include="#opt-normalized-depth, #opt-drop-empty" hx-target="#render-status" hx-swap="innerHTML" hx-indicator="#render-spinner">
             Render Sheets
         </button>
-        <button hx-post="/api/jobs/{{ job.job_id }}/render/preview" hx-target="#render-status" hx-swap="innerHTML" hx-indicator="#render-spinner">
+        <button hx-post="/api/jobs/{{ job.job_id }}/render/preview" hx-include="#opt-normalized-depth, #opt-drop-empty" hx-target="#render-status" hx-swap="innerHTML" hx-indicator="#render-spinner">
             Render Previews
         </button>
         <button hx-post="/api/jobs/{{ job.job_id }}/render/blender" hx-target="#render-status" hx-swap="innerHTML" hx-indicator="#render-spinner">
@@ -61,6 +71,7 @@
         <span id="render-status"></span>
     </div>
     <p class="hint">Sheets: hillshade + hypsometric tint + contours. Previews: auto-leveled 8-bit PNG for quick inspection. Terrain (Blender): orthographic top-view terrain rendered headlessly with Blender (requires a Blender binary on PATH or WEIGHT_ATLAS_BLENDER). Re-scan: re-run full scan pipeline with current spec (overwrites existing artefacts). Imported scans need the original model path set above before re-scanning.</p>
+    <p class="hint">Sheet options: "Normalized depth" projects the layer axis to 0–100 % depth (better cross-model comparability; off by default); "Drop empty columns" compresses fully-NaN slot columns out of the sheet display. Both apply to the next render only and leave the recorded spec untouched.</p>
 </section>
 
 <section class="detail-section">

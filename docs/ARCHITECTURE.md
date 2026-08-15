@@ -90,6 +90,7 @@ The matplotlib sheet is a **pure height map**: hillshade + hypsometric tint + co
 Level-1 fields (`Field2D`) are indexed by absolute layer index, so models with different layer counts have incomparable row axes, and absent slots leave NaN "perforation" holes. `fields/normalize.py` (`project_normalized_depth`) re-maps each column onto a fixed set of depth landmarks (0 % … 100 % of the layer stack) by linear interpolation over the measured rows, returning an **interpolation mask** marking every estimated cell.
 
 - Enabled per spec: `sheet.normalized_depth` (default `false`), `sheet.normalized_depth_landmarks` (default `21`).
+- The web UI can apply it **per render**: the overview's "Normalized depth" checkbox sends a `normalized_depth` sheet_knob to `/api/jobs/{id}/render/sheet`, which the worker overlays onto the recorded spec for that render only (`_apply_sheet_knobs`) — the scan's spec stays untouched, and re-renders without the checkbox go back to the default.
 - Landmarks outside a column's measured range stay NaN (extreme depth regions are honestly left as holes, never extrapolated).
 - A landmark cell is marked *measured* only when a measured row lies within half a landmark spacing; everything else is interpolated.
 - The sheet renderer shades interpolated cells with a subtle grey veil (`alpha=0.25`) and appends `· normalized-depth` to the title, so estimates stay visible.
@@ -112,7 +113,9 @@ evenly, so the sheet reads cleanly for models with few slot families.
   sheet stays truthful about which families were compressed away.
 - **Cross-model trade-off**: enabled, two models' sheets are no longer
   column-aligned (same slot at different x-positions). Off by default to
-  preserve cross-model comparability; opt-in per scan via the spec.
+  preserve cross-model comparability; opt-in per scan via the spec or per
+  render via the UI's "Drop empty columns" checkbox (same sheet_knob flow as
+  `normalized_depth`).
 
 ## Raster pixel budget
 

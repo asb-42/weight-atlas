@@ -23,6 +23,13 @@ scan/render/compare, and provides file-browsing and result endpoints. The UI
   during execution + recovery — never parse the type back from it. `_migrate`
   backfills `job_type` from legacy `message` markers (`render:<id>`,
   `compare[:mode[:interp]]`) for pre-job_type DBs.
+- **Per-render sheet overrides**: `job.sheet_knobs` (JSON dict, `sheet_knobs`
+  column) carries optional display knobs (`normalized_depth`,
+  `drop_empty_cols`) for a single render. The worker overlays them onto the
+  spec's `sheet` block (`_apply_sheet_knobs`, dataclasses.replace) before
+  rendering — the scan's recorded spec is never mutated. The UI sends them as
+  checkbox form fields to `/api/jobs/{id}/render/sheet`; only the raster sheet
+  renderers accept them, the Blender renderer ignores them. Default empty.
 - **Deterministic job IDs**: `uuid4` is fine (not an output artefact).
 - **File browsing is confined**: `GET /api/browse` must never escape the
   allowed roots (models/ + scan output dirs) — `_require_allowed` guard.

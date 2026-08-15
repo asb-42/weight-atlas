@@ -484,6 +484,24 @@ dd {
     margin: 1rem 0;
 }
 
+.render-options {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    padding: 0.4rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-alt);
+    font-size: 0.9rem;
+}
+
+.render-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    cursor: pointer;
+}
+
 .hint {
     color: #888;
     font-size: 0.85rem;
