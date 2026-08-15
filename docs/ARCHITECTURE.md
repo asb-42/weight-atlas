@@ -22,9 +22,9 @@ safetensors ─► TensorHandle (lazy) ─► Statistic.compute ─► TensorSta
                            ┌────────────────────────────┼────────────────────────────┐
                            │                            │                            │
                            ▼                            ▼                            ▼
-                    Matplotlib Sheet              Blender Renderer            (future: web)
-                    (hillshade+hypsometric        (3D ortho top-view
-                     + contours)                   + OBJ mesh)
+                    Matplotlib Sheet              Blender Renderer             Web UI (M3)
+                    (hillshade+hypsometric        (3D ortho top-view   (FastAPI + HTMX,
+                     + contours)                   + OBJ mesh)           serves artefacts)
 ```
 
 Renderers (matplotlib, Blender) read **only** artefacts (TIFF + JSON), never weights.
@@ -72,7 +72,7 @@ weight-atlas diagnose ./models/my_model
 ```
 ## Conventions
 
-- **Raster**: rows = layer index, columns = slot order from `atlas_spec.v2.2.json`. Missing cells = `NaN`, never filled.
+- **Raster**: rows = layer index, columns = slot order from `atlas_spec.v2.4.json`. Missing cells = `NaN`, never filled.
 - **Channels** (v2.1):
   - `height`: `spectral_norm` → `log1p` → `rank_scale(per_column)` — outlier suppression + [0,1] mapping
   - `tint`: `stable_rank` → `log1p` → `robust_scale(1-99%)` — outlier suppression + [0,1] mapping
@@ -84,6 +84,20 @@ weight-atlas diagnose ./models/my_model
 ## Sheet Clarification
 
 The matplotlib sheet is a **pure height map**: hillshade + hypsometric tint + contours all derived from the **height channel only**. Tint and rough channels are separate fields intended for Blender (M2) and future sheets. This is a deliberate design decision to keep the 2D sheet focused on topographic readability.
+
+## Normalized-Depth Projection (Ebene 2)
+
+Level-1 fields (`Field2D`) are indexed by absolute layer index, so models with different layer counts have incomparable row axes, and absent slots leave NaN "perforation" holes. `fields/normalize.py` (`project_normalized_depth`) re-maps each column onto a fixed set of depth landmarks (0 % … 100 % of the layer stack) by linear interpolation over the measured rows, returning an **interpolation mask** marking every estimated cell.
+
+- Enabled per spec: `sheet.normalized_depth` (default `false`), `sheet.normalized_depth_landmarks` (default `21`).
+- Landmarks outside a column's measured range stay NaN (extreme depth regions are honestly left as holes, never extrapolated).
+- A landmark cell is marked *measured* only when a measured row lies within half a landmark spacing; everything else is interpolated.
+- The sheet renderer shades interpolated cells with a subtle grey veil (`alpha=0.25`) and appends `· normalized-depth` to the title, so estimates stay visible.
+- Same Ebenen hierarchy: **Ebene 1** = raw layer-index field; **Ebene 2** = normalized-depth projection; smoothing/upsample happen afterwards.
+
+## Raster pixel budget
+
+The sheet renderer bounds the raster before rasterizing: it scales to a fixed pixel budget (`_MAX_RENDER_PIXELS = 12_000_000`, aspect-ratio preserving) instead of honouring raw tensor dimensions. Without this, a 736×7168 expert panel allocates ~95 GB and is OOM-killed; a long-edge-only cap crushes it to 4096×420 (uninspectable layers). This is a pure render-side cap — the TIFF fields themselves keep full resolution.
 
 ## Contour Convention
 
@@ -120,7 +134,7 @@ field_tint_smooth.tif ──┘                                          │
 
 ### Spec extension
 
-The `atlas_spec.v2.2.json` may include a `blender` block (all optional, defaults shown):
+The `atlas_spec.v2.4.json` may include a `blender` block (all optional, defaults shown):
 ```json
 {
   "blender": {
@@ -138,7 +152,8 @@ The `atlas_spec.v2.2.json` may include a `blender` block (all optional, defaults
 `adaptive_z_scale`: if true, effective z = `z_scale / std(height)` (capped at
 5.0) — amplifies weak relief but makes amplitudes relative, not absolute.
 
-`spec_version` remains 1 (pre-release); extension documented here per spec.
+`spec_version` stays 4 (additive extension documented here per spec; never
+bump for new keys).
 
 ### Smoke test
 
@@ -192,15 +207,20 @@ Browser ─► FastAPI routes ─► JobQueue (SQLite) ─► In-process worker 
 | Route | Method | Purpose |
 |-------|--------|---------|
 | `/` | GET | Model list page |
+| `/api/browse` | GET | File picker (HTMX fragment, confined to allowed roots) |
 | `/api/jobs` | POST | Submit new scan job |
-| `/api/jobs/{id}` | GET | Job status JSON |
-| `/jobs/{id}` | GET | Job progress page (HTMX polling) |
-| `/models/{id}` | GET | Model detail (sheet, terrain, stats, spec) |
-| `/api/models/{id}/fingerprint` | GET | Fingerprint JSON |
-| `/api/jobs/{id}/status` | GET | HTMX partial: status badge + progress bar |
+| `/api/import` | POST | Import an existing scan directory into the job DB |
+| `/api/jobs/{job_id}` | GET | Job status JSON |
+| `/jobs` | GET | Job list page (scans, compares, renders) |
+| `/jobs/{job_id}` | GET | Job progress page (HTMX polling) |
+| `/api/jobs/{job_id}/rescan` | POST | Re-run the full scan pipeline for a job |
+| `/api/jobs/{job_id}/render/{renderer}` | POST | Enqueue a render job (e.g. `blender`, `preview`) |
+| `/models/{job_id}` | GET | Model detail: tabbed sub-pages (`?tab=` overview/sheets/terrain/stats/spec, `?page=` stats pagination) |
+| `/api/models/{job_id}/fingerprint` | GET | Fingerprint JSON |
+| `/api/jobs/{job_id}/status` | GET | HTMX partial: status badge + progress bar |
 | `/compare` | GET | Compare page (select two models) |
 | `/api/compare` | POST | Submit new compare job |
-| `/compare/{id}` | GET | Compare report (delta visualizations + metrics) |
+| `/compare/{job_id}` | GET | Compare report (delta visualizations + metrics) |
 
 ### Directory structure
 ```
@@ -214,11 +234,19 @@ src/weight_atlas/ui/
 ├── templates/       # Jinja2 templates
 │   ├── base.html
 │   ├── models.html
-│   ├── detail.html
+│   ├── detail.html          # slim shell: tabbed sub-page partials
+│   ├── _model_tabs.html     # tab nav + HTMX lazy fragment loader
+│   ├── _model_overview.html # overview + fingerprint highlights
+│   ├── _model_sheets.html   # sheet/field PNGs
+│   ├── _model_terrain.html  # Blender terrain renders
+│   ├── _model_stats.html    # server-paginated tensor stats (200/page)
+│   ├── _model_spec.html     # spec summary
+│   ├── jobs.html            # job list (scans, compares, renders)
+│   ├── _job_status.html     # status badge + progress bar partial
+│   ├── _file_browser.html   # file picker fragment (/api/browse)
 │   ├── job_progress.html
 │   ├── compare.html
-│   ├── compare_report.html
-│   └── _job_status.html
+│   └── compare_report.html
 └── static/
     └── style.css
 ```
@@ -271,7 +299,7 @@ scan artefacts (B) ─┘                    │
 ```json
 {
   "mode": "strict",
-  "spec_version": 1,
+  "spec_version": 4,
   "model_a": { "tool_version": "...", "loader": "...", "n_tensors": 0, "n_layers": 0 },
   "model_b": { "tool_version": "...", "loader": "...", "n_tensors": 0, "n_layers": 0 },
   "warnings": [],
@@ -293,7 +321,7 @@ scan artefacts (B) ─┘                    │
 ```
 
 ### Spec extension
-The `atlas_spec.v2.2.json` may include a `compare` block:
+The `atlas_spec.v2.4.json` may include a `compare` block:
 ```json
 {
   "compare": {
@@ -306,7 +334,7 @@ The `atlas_spec.v2.2.json` may include a `compare` block:
   }
 }
 ```
-`spec_version` remains 1 (extension documented here per spec).
+`spec_version` stays 4 (additive extension documented here per spec).
 `aligned_interp` accepts `"linear"` (bilinear interpolation, default) or
 `"nearest"` (nearest-layer matching by normalized depth; preserves layer
 structure and NaN holes).
@@ -460,6 +488,37 @@ a text-only model) becomes a visible fingerprint difference.
   `mapping_coverage.vision_tensors`. Text-only models have no `model.vision`
   block and no vision artefacts.
 
+## Embedding Projection (M7)
+
+### Data flow
+```
+token_embd / embed_tokens ─► project ─► embedding_{pca,umap}.npy
+                                        ├─► field_embed_density_{raw,smooth}.tif (PCA)
+                                        ├─► embedding_scatter.npy (PCA, subsampled)
+                                        └─► embedding_meta.json
+```
+
+### Design decisions
+
+- **Spec-driven**: `spec.embedding` block (`method` pca|umap, `grid`, `components`,
+  `subsample_scatter`, `seeds`). Default method is `pca`; UMAP requires the
+  `umap` extra (`umap-learn`) and is imported lazily in `scan.py`.
+- **PCA is dependency-free and deterministic**: randomized SVD with seeded RNG
+  (`spec.embedding.seeds.pca`). Embedding tensor found by name suffix
+  (`model.embed_tokens.weight` / `token_embd.weight`, incl. prefixed VLM names
+  such as Kimi K3's `language_model.model.embed_tokens.weight`).
+- **Density field**: PCA projects the (V, D) embedding matrix, then the first
+  two components are binned into a fixed `grid × grid` density field and
+  written as `field_embed_density_{raw,smooth}.tif` (log1p + upsample +
+  smooth, same pipeline as channels). UMAP saves only the projected
+  coordinates (2-D), no density field.
+- **Scatter overlay**: `embedding_scatter.npy` (subsampled, seeded RNG) is
+  overlaid on the sheet when the sheet renderer runs against the density
+  field — the PCA footprint is drawn as white dots over the density raster.
+- **Metadata**: `embedding_meta.json` records method, explained variance,
+  `n_components`, sign convention, and scatter subsample/seed.
+
 ## Extras (lazy)
 
-`umap` is declared but empty – imports must stay out of core.
+`umap` extra is declared (only in `.[umap]`) and `embedding/umap.py` is
+imported lazily inside `scan.py`; imports must stay out of core.
