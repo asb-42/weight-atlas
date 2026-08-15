@@ -147,6 +147,11 @@ _GGUF_HYBRID_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"blk\.\d+\.ssm_out"), "ssm_out"),
     (re.compile(r"blk\.\d+\.ssm_a"), "ssm_a"),
     (re.compile(r"blk\.\d+\.ssm_ba"), "ssm_ba"),  # Mamba B-matrix (Qwen3-Next)
+    # MTP draft head (Qwen3-Next MTP block, e.g. blk.64.nextn.*)
+    (re.compile(r"blk\.\d+\.nextn\.eh_proj"), "mtp_eh_proj"),
+    (re.compile(r"blk\.\d+\.nextn\.enorm"), "mtp_enorm"),
+    (re.compile(r"blk\.\d+\.nextn\.hnorm"), "mtp_hnorm"),
+    (re.compile(r"blk\.\d+\.nextn\.shared_head_norm"), "mtp_shared_head_norm"),
 ]
 
 # GGUF MoE-specific rules

@@ -78,3 +78,22 @@ def test_mapping_coverage_none_mapped(spec):
     assert mc["in_other"] == 1.0
     assert mc["unmapped"] == 2
     assert len(mc["unmapped_tensors"]) == 2
+
+
+def test_mapping_coverage_mtp_draft_head_mapped(spec):
+    """Qwen3-Next MTP draft head tensors (blk.N.nextn.*) must map to mtp slots."""
+    from weight_atlas.core.types import TensorStats
+
+    stats = [
+        TensorStats(name="blk.64.nextn.eh_proj.weight", shape=(10240, 5120)),
+        TensorStats(name="blk.64.nextn.enorm.weight", shape=(5120,)),
+        TensorStats(name="blk.64.nextn.hnorm.weight", shape=(5120,)),
+        TensorStats(name="blk.64.nextn.shared_head_norm.weight", shape=(5120,)),
+    ]
+    fp = _build_fingerprint(stats, spec, "gguf")
+
+    mc = fp["mapping_coverage"]
+    assert mc["in_slots"] == 1.0
+    assert mc["in_other"] == 0.0
+    assert mc["unmapped"] == 0
+    assert mc["unmapped_tensors"] == []

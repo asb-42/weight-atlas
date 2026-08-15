@@ -473,7 +473,10 @@ Adding a new tensor family is now a spec edit: add the rules to the `name_map`
 block **and** a new `slots` entry (in v2.4; `spec_version` stays 4 — additive).
 `ssm_ba` (Mamba B-matrix, Qwen3-Next) was the first such family: previously it
 fell through to `other` and left 36 tensors unmapped per model; it now maps to
-its own `ssm_ba` slot.
+its own `ssm_ba` slot. The MTP draft head (`blk.N.nextn.*`, Qwen3-Next
+multi-token prediction block) follows the same pattern: `eh_proj` →
+`mtp_eh_proj`, `enorm`/`hnorm`/`shared_head_norm` → their own `mtp_*` slots,
+so MTP weights are no longer reported unmapped.
 
 ### Artefacts
 - `field_expert_mlp_{gate,up,down}_<channel>_{raw,smooth}.tif`

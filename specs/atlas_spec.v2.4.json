@@ -9,6 +9,7 @@
              "norm_attn","norm_mlp","pre_ffw_norm_2","post_ffw_norm","post_ffw_norm_1","post_ffw_norm_2",
              "layer_output_scale","expert","shared_expert","router","lm_head","rope_freqs",
              "ssm_a","ssm_ba","ssm_alpha","ssm_beta","ssm_conv1d","ssm_dt","ssm_norm","ssm_out",
+             "mtp_eh_proj","mtp_enorm","mtp_hnorm","mtp_shared_head_norm",
              "vision_qkv","vision_o","vision_norm","vision_mlp","vision_pos_emb","vision_patch_embed",
              "vision","mm_projector","other"],
   "channels": {
@@ -170,7 +171,11 @@
             ["blk\\.\\d+\\.ssm_norm", "ssm_norm"],
             ["blk\\.\\d+\\.ssm_out", "ssm_out"],
             ["blk\\.\\d+\\.ssm_a", "ssm_a"],
-            ["blk\\.\\d+\\.ssm_ba", "ssm_ba"]
+            ["blk\\.\\d+\\.ssm_ba", "ssm_ba"],
+            ["blk\\.\\d+\\.nextn\\.eh_proj", "mtp_eh_proj"],
+            ["blk\\.\\d+\\.nextn\\.enorm", "mtp_enorm"],
+            ["blk\\.\\d+\\.nextn\\.hnorm", "mtp_hnorm"],
+            ["blk\\.\\d+\\.nextn\\.shared_head_norm", "mtp_shared_head_norm"]
           ]
         },
         "null_handler": {"moe": "expert"}

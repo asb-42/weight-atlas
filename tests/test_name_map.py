@@ -44,6 +44,11 @@ from weight_atlas.core.name_map import map_name
         ("blk.0.ssm_dt.bias", "ssm_dt"),
         ("blk.0.ssm_norm.weight", "ssm_norm"),
         ("blk.0.ssm_out.weight", "ssm_out"),
+        # Qwen3-Next MTP draft head (blk.N.nextn.*)
+        ("blk.64.nextn.eh_proj.weight", "mtp_eh_proj"),
+        ("blk.64.nextn.enorm.weight", "mtp_enorm"),
+        ("blk.64.nextn.hnorm.weight", "mtp_hnorm"),
+        ("blk.64.nextn.shared_head_norm.weight", "mtp_shared_head_norm"),
         # Gemma-4 "ultra"/heretic extra per-layer tensors
         ("blk.0.layer_output_scale.weight", "layer_output_scale"),
         ("blk.0.post_ffw_norm.weight", "post_ffw_norm"),
