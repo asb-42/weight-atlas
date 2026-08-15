@@ -1,6 +1,6 @@
 {
   "spec_version": 4,
-  "slots": ["embed","attn_q","attn_q_norm","attn_k","attn_k_norm","attn_v","attn_o","attn_gate",
+  "slots": ["embed","attn_q","attn_q_norm","attn_k","attn_k_norm","attn_v","attn_o","attn_gate","attn_sinks",
              "attn_q_a","attn_q_a_norm","attn_q_b","attn_kv_a","attn_kv_a_norm","attn_kv_b","attn_o_norm",
              "attn_q_conv","attn_k_conv","attn_v_conv","attn_f_a","attn_f_b","attn_b",
              "attn_a_log","attn_dt","attn_res_proj","attn_res_norm",
@@ -146,6 +146,7 @@
             ["blk\\.\\d+\\.attn_k", "attn_k"],
             ["blk\\.\\d+\\.attn_v", "attn_v"],
             ["blk\\.\\d+\\.attn_output", "attn_o"],
+            ["blk\\.\\d+\\.attn_sinks", "attn_sinks"],
             ["blk\\.\\d+\\.ffn_gate", "mlp_gate"],
             ["blk\\.\\d+\\.ffn_up", "mlp_up"],
             ["blk\\.\\d+\\.ffn_down", "mlp_down"],

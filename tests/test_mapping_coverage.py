@@ -97,3 +97,20 @@ def test_mapping_coverage_mtp_draft_head_mapped(spec):
     assert mc["in_other"] == 0.0
     assert mc["unmapped"] == 0
     assert mc["unmapped_tensors"] == []
+
+
+def test_mapping_coverage_attn_sinks_mapped(spec):
+    """GPT-OSS / Qwen3-Next attention-sink registers (blk.N.attn_sinks) must map."""
+    from weight_atlas.core.types import TensorStats
+
+    stats = [
+        TensorStats(name=f"blk.{i}.attn_sinks.weight", shape=(64,))
+        for i in range(36)
+    ]
+    fp = _build_fingerprint(stats, spec, "gguf")
+
+    mc = fp["mapping_coverage"]
+    assert mc["in_slots"] == 1.0
+    assert mc["in_other"] == 0.0
+    assert mc["unmapped"] == 0
+    assert mc["unmapped_tensors"] == []

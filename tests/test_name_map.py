@@ -27,6 +27,7 @@ from weight_atlas.core.name_map import map_name
         ("blk.0.attn_k.weight", "attn_k"),
         ("blk.0.attn_v.weight", "attn_v"),
         ("blk.0.attn_output.weight", "attn_o"),
+        ("blk.0.attn_sinks.weight", "attn_sinks"),
         ("blk.0.ffn_gate.weight", "mlp_gate"),
         ("blk.0.ffn_up.weight", "mlp_up"),
         ("blk.0.ffn_down.weight", "mlp_down"),

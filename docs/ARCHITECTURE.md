@@ -476,7 +476,9 @@ fell through to `other` and left 36 tensors unmapped per model; it now maps to
 its own `ssm_ba` slot. The MTP draft head (`blk.N.nextn.*`, Qwen3-Next
 multi-token prediction block) follows the same pattern: `eh_proj` →
 `mtp_eh_proj`, `enorm`/`hnorm`/`shared_head_norm` → their own `mtp_*` slots,
-so MTP weights are no longer reported unmapped.
+so MTP weights are no longer reported unmapped. GPT-OSS / Qwen3-Next
+per-layer attention-sink registers (`blk.N.attn_sinks`, a small `[64]`
+sink vector per layer) map to their own `attn_sinks` slot.
 
 ### Artefacts
 - `field_expert_mlp_{gate,up,down}_<channel>_{raw,smooth}.tif`

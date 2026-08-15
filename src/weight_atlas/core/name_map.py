@@ -115,6 +115,7 @@ _GGUF_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"blk\.\d+\.attn_k"), "attn_k"),
     (re.compile(r"blk\.\d+\.attn_v"), "attn_v"),
     (re.compile(r"blk\.\d+\.attn_output"), "attn_o"),
+    (re.compile(r"blk\.\d+\.attn_sinks"), "attn_sinks"),  # GPT-OSS / Qwen3-Next sink register
     (re.compile(r"blk\.\d+\.ffn_gate"), "mlp_gate"),
     (re.compile(r"blk\.\d+\.ffn_up"), "mlp_up"),
     (re.compile(r"blk\.\d+\.ffn_down"), "mlp_down"),
