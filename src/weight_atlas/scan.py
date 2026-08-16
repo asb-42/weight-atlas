@@ -463,12 +463,14 @@ def _build_fingerprint(
     }
     layers: set[int] = set()
 
-    # Build ggml_type mapping from handles if available
+    # Build ggml_type/dtype mapping from handles if available.
     ggml_types: dict[str, str] = {}
+    dtypes: dict[str, str] = {}
     if handles:
         for h in handles:
             if h.dtype.startswith("ggml_"):
                 ggml_types[h.name] = h.dtype
+            dtypes[h.name] = h.dtype
 
     for ts in stats:
         layer, slot = map_name(ts.name)
@@ -487,6 +489,9 @@ def _build_fingerprint(
         # Add ggml_type if present
         if ts.name in ggml_types:
             tensor_info["ggml_type"] = ggml_types[ts.name]
+        # Add on-disk dtype for type_map (GGUF ggml_type, safetensors dtype)
+        if ts.name in dtypes:
+            tensor_info["dtype"] = dtypes[ts.name]
         out["tensors"][ts.name] = tensor_info
 
     out["model"]["n_tensors"] = len(out["tensors"])

@@ -289,7 +289,12 @@ def _dequant_q8_0(data: bytes) -> np.ndarray:
 
 
 def _dequant_q4_0(data: bytes) -> np.ndarray:
-    """Q4_0: block-wise dequantization (32-element blocks, f16 scale, 4-bit quants)."""
+    """Q4_0: block-wise dequantization (32-element blocks, f16 scale, 4-bit quants).
+
+    Canonical layout (llama.cpp / gguf): within a block, the first 16 values
+    live in the low nibbles of the 16 qs bytes and the last 16 in the high
+    nibbles. Nibble value v maps to v - 8 (signed -8..7).
+    """
     block_size = 18
     n_blocks = len(data) // block_size
     result = np.empty(n_blocks * 32, dtype=np.float32)
@@ -297,13 +302,9 @@ def _dequant_q4_0(data: bytes) -> np.ndarray:
         offset = i * block_size
         scale = np.frombuffer(data[offset:offset + 2], dtype=np.float16)[0].astype(np.float32)
         packed = np.frombuffer(data[offset + 2:offset + 18], dtype=np.uint8)
-        quants = np.empty(32, dtype=np.float32)
-        for j in range(16):
-            low = packed[j] & 0x0F
-            high = (packed[j] >> 4) & 0x0F
-            quants[j * 2] = float(low) - 8.0
-            quants[j * 2 + 1] = float(high) - 8.0
-        result[i * 32:(i + 1) * 32] = quants * scale
+        lo = (packed & 0x0F).astype(np.float32) - 8.0
+        hi = ((packed >> 4) & 0x0F).astype(np.float32) - 8.0
+        result[i * 32:(i + 1) * 32] = np.concatenate([lo, hi]) * scale
     return result
 
 

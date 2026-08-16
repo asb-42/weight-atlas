@@ -2,6 +2,13 @@
 
 LLM weight fingerprinting and topographic visualization. Scan a model → extract tensor statistics → rasterize into 2D fields → render topographic sheets. Fully deterministic and renderer-independent.
 
+Weight Atlas serves two audiences from the same dataset:
+
+- **Organic users (humans)** read the topographic sheets, 3D terrain, and web UI — a model's internals at a glance.
+- **Synthetic users (LLM agents)** query the machine-readable API for small, self-describing, interpretation-ready answers — the same weight data, optimized for an agent's context budget.
+
+See `docs/2026-08-16_weight-atlas-api-spec-v0.2.md` for the LLM query API design.
+
 ## Three Core Guarantees
 
 1. **Artifacts are renderer-independent and canonical**: All outputs follow a versioned specification. Renderers never access raw weights.
@@ -61,6 +68,9 @@ weight-atlas render ./artefacts --renderer sheet
   of an unmapped blind spot
 - **Activity Mode ("fMRI")**: Forward-pass activation capture over a versioned stimulus protocol
 - **Web UI**: Browse models, submit jobs, view artifacts via browser (HTMX + FastAPI)
+- **Query API (LLM access)**: a machine-readable REST layer over the scanned
+  dataset, designed for synthetic users (see
+  `docs/2026-08-16_weight-atlas-api-spec-v0.2.md`)
 
 ## Usage
 

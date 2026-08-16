@@ -22,6 +22,29 @@ _PNG_METADATA = {
 }
 
 
+def _noise_floor_mask(delta: np.ndarray, noise_floor_dir: Path, channel: str) -> np.ndarray:
+    """Per-cell mask of |delta| at or below the calibration |delta|.
+
+    Reads the calibration compare job's ``field_delta_<channel>_raw.tif`` and
+    marks every cell where the current |delta| <= calibration |delta|. NaN is
+    never a value: both sides must be finite for the cell to be veiled.
+    """
+    calib_path = noise_floor_dir / f"field_delta_{channel}_raw.tif"
+    if not calib_path.exists():
+        return np.zeros(delta.shape, dtype=bool)
+    from weight_atlas.fields.tif_io import read_tif
+
+    calib = read_tif(calib_path)
+    if calib.shape != delta.shape:
+        return np.zeros(delta.shape, dtype=bool)
+    floor = np.abs(calib)
+    cur = np.abs(delta)
+    both = np.isfinite(floor) & np.isfinite(cur)
+    mask = np.zeros(delta.shape, dtype=bool)
+    mask[both] = cur[both] <= floor[both]
+    return mask
+
+
 def _get_diverging_clip(spec: AtlasSpec) -> float:
     """Get diverging_clip quantile from spec, default 0.98."""
     compare_spec = getattr(spec, "compare", None)
@@ -73,6 +96,7 @@ class DeltaSheet:
         model_a: str = "",
         model_b: str = "",
         render_profile: bool = True,
+        noise_floor_dir: Path | None = None,
     ) -> list[Path]:
         """Render a delta field as a diverging colormap.
 
@@ -86,9 +110,18 @@ class DeltaSheet:
             mode: alignment mode for title
             model_a, model_b: model display names for the title
             render_profile: if True, also render 1×L profile strip
+            noise_floor_dir: optional directory of a calibration compare job;
+                cells with |delta| at or below the calibration |delta| get a
+                grey noise-floor veil (alpha=0.25) on the sheets
         """
         out.mkdir(parents=True, exist_ok=True)
         produced: list[Path] = []
+
+        # M9 noise-floor veil: composed at the raw field level, before column
+        # dropping, so the floor mask tracks the original grid.
+        noise_floor_mask: np.ndarray | None = None
+        if noise_floor_dir is not None:
+            noise_floor_mask = _noise_floor_mask(delta, noise_floor_dir, channel)
 
         # Drop all-NaN columns (slots missing in one or both models) so the
         # sheet compresses horizontally. ``kept_cols`` stores the mapping of
@@ -110,13 +143,16 @@ class DeltaSheet:
             data = delta[:, valid_cols]
             if col_labels is not None:
                 col_labels = [label for label, keep in zip(col_labels, valid_cols, strict=True) if keep]
+            if noise_floor_mask is not None:
+                # Column-dropped sheet: align the veil mask to the kept columns.
+                noise_floor_mask = noise_floor_mask[:, valid_cols]
 
         # Compute symmetric limits using diverging_clip quantile
         diverging_clip = _get_diverging_clip(spec)
         vmax = _compute_vmax(data, diverging_clip)
 
         # Render main delta sheet
-        sheet_path = self._render_sheet(data, spec, out, channel, row_labels, col_labels, mode, vmax, model_a, model_b)
+        sheet_path = self._render_sheet(data, spec, out, channel, row_labels, col_labels, mode, vmax, model_a, model_b, noise_floor_mask)
         produced.append(sheet_path)
 
         # Render profile strip if requested
@@ -138,6 +174,7 @@ class DeltaSheet:
         vmax: float,
         model_a: str = "",
         model_b: str = "",
+        noise_floor_mask: np.ndarray | None = None,
     ) -> Path:
         """Render the main delta sheet."""
         dpi = int(spec.sheet["dpi"])
@@ -157,6 +194,18 @@ class DeltaSheet:
             extent=(-0.5, n_cols - 0.5, n_rows - 0.5, -0.5),
             aspect="auto",
         )
+
+        # M9 noise-floor veil: grey shading over cells at/below the calibration
+        # |delta|, composed on top of the delta image (never stacked with any
+        # other veil — the noise-floor mask is the only veil here).
+        if noise_floor_mask is not None and noise_floor_mask.any():
+            shade = np.where(noise_floor_mask & np.isfinite(data), 1.0, np.nan)
+            ax.imshow(
+                shade,
+                cmap="Greys", vmin=0, vmax=1, origin="upper",
+                extent=(-0.5, n_cols - 0.5, n_rows - 0.5, -0.5),
+                alpha=0.25, zorder=2,
+            )
 
         # Colorbar
         cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
@@ -184,6 +233,8 @@ class DeltaSheet:
         title = f"Δ {channel} – {mode}"
         if model_a and model_b:
             title += f" ({model_a} vs {model_b})"
+        if noise_floor_mask is not None and noise_floor_mask.any():
+            title += " · noise-floor veiled"
         ax.set_title(title)
 
         delta_path = out / f"delta_sheet_{channel}.png"

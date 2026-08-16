@@ -76,6 +76,22 @@ class TestDequantQ40:
         expected = [-14.0] * 32
         np.testing.assert_array_almost_equal(result, expected)
 
+    def test_q4_0_canonical_layout(self):
+        """Q4_0: first 16 values sit in low nibbles, last 16 in high nibbles."""
+        # Block: scale=1.0 (f16), then 16 packed bytes. Byte j carries value j
+        # (0..15) in its low nibble and value j+16 (0..15) in its high nibble,
+        # i.e. byte j = j | (j << 4). The interleaved (2j, 2j+1) layout would
+        # scramble these.
+        scale = np.float16(1.0).tobytes()
+        packed = bytes([j | (j << 4) for j in range(16)])
+        data = scale + packed
+        result = dequantize(data, GGML_TYPE_Q4_0)
+        # Low nibbles: values 0..15 -> -8..7; high nibbles: values 16..31 ->
+        # nibbles 0..15 -> -8..7. An interleaved layout would order them
+        # (-8,-8,-7,-7,...) instead.
+        expected = [float(v) - 8.0 for v in range(16)] * 2
+        np.testing.assert_array_almost_equal(result, expected)
+
 
 # ---------------------------------------------------------------------------
 # Type name and support checks

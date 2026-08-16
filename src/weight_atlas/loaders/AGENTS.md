@@ -23,7 +23,14 @@ GGUF loaders plus GGUF dequantisation (including MXFP4 block formats).
   mapping tables.
 - **Dequant correctness**: GGUF/MXFP4 dequant is numerically pinned by tests
   (`tests/test_gguf.py`, `tests/test_kimi_k3.py`); do not change
-  dequantisation without updating those fixtures.
+  dequantisation without updating those fixtures. Q4_0 uses the canonical
+  layout (first 16 values in the low nibbles, last 16 in the high nibbles of
+  the 16 qs bytes) — pinned by `test_q4_0_canonical_layout`.
+- **Q4_0 synthesis for fixtures**: `GGUFWriter.add_tensor(raw_dtype=...)`
+  only tags the type (writes raw float32 bytes, no quantization). Real
+  quantized fixtures use `gguf.quants.quantize(data, qtype)` and pass the
+  packed bytes with `raw_shape=list(q.shape)` + `raw_dtype` (see
+  `tests/test_paired.py`, `tests/test_gguf.py`).
 
 ## Work Guidance
 

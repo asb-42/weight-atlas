@@ -61,6 +61,29 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Aligned-mode row resampling: linear (bilinear) or nearest "
                               "(nearest-layer matching). Default: spec compare.aligned_interp")
     compare.add_argument("--spec", type=Path, default=None, help="Path to atlas spec JSON")
+    compare.add_argument("--noise-floor", type=Path, default=None,
+                         help="Directory of a calibration compare job; cells with |delta| at or "
+                              "below the calibration |delta| get a noise-floor grey veil on the "
+                              "delta sheets")
+
+    paired = sub.add_parser("paired", aliases=["qimpact"], help="Paired tensor-difference analysis between two weight snapshots (M9): quant-impact or edit-signatures")
+    paired.set_defaults(alias="paired")
+    paired.add_argument("scan_a", type=Path, help="Directory containing scan artefacts for model A")
+    paired.add_argument("scan_b", type=Path, help="Directory containing scan artefacts for model B")
+    paired.add_argument("--weights-a", type=Path, required=True, help="Path to model A weights (GGUF/safetensors)")
+    paired.add_argument("--weights-b", type=Path, required=True, help="Path to model B weights (GGUF/safetensors)")
+    paired.add_argument("--out", type=Path, required=True, help="Output directory for paired artefacts")
+    paired.add_argument("--preset", choices=["quant", "edit"], default="quant",
+                        help="Analysis preset: quant (quantization impact, default) or edit (edit signatures / abliteration)")
+    paired.add_argument("--ref-side", choices=["a", "b"], default="a",
+                        help="Reference side for SQNR/rel-L2 (default: a)")
+    paired.add_argument("--mode", default="strict",
+                        help="Paired analysis is strict-only (default: strict); "
+                             "any other value is rejected")
+    paired.add_argument("--jobs", type=int, default=None,
+                        help="Parallel measurement workers (default: min(8, cpu_count)); "
+                             "results are identical for any value")
+    paired.add_argument("--spec", type=Path, default=None, help="Path to atlas spec JSON")
 
     activity = sub.add_parser("activity", help="Capture forward-pass activations (fMRI mode)")
     activity.add_argument("model_path", type=Path, help="Path to HuggingFace model directory")
@@ -239,6 +262,19 @@ def _cmd_compare(args: argparse.Namespace) -> int:
         write_tif(delta_path, summary.channels[channel].delta)
         all_artefacts.append(delta_path)
 
+        # Additive M9 artefacts: per-channel |delta| rasters that the
+        # noise-floor veil consumes (raw = delta on scaled channel values).
+        field_delta_raw = out / f"field_delta_{channel}_raw.tif"
+        write_tif(field_delta_raw, summary.channels[channel].delta)
+        all_artefacts.append(field_delta_raw)
+        from weight_atlas.fields.smoothing import smooth, upsample
+        field_delta_smooth = out / f"field_delta_{channel}_smooth.tif"
+        write_tif(
+            field_delta_smooth,
+            smooth(upsample(summary.channels[channel].delta, int(spec.grid.get("upsample", 1))), float(spec.grid.get("smooth_sigma", 1.0))),
+        )
+        all_artefacts.append(field_delta_smooth)
+
         # Render delta sheet
         try:
             renderer = get_renderer("delta")()
@@ -252,6 +288,7 @@ def _cmd_compare(args: argparse.Namespace) -> int:
                 mode=args.mode,
                 model_a=args.dir_a.name,
                 model_b=args.dir_b.name,
+                noise_floor_dir=args.noise_floor,
             )
             all_artefacts.extend(rendered)
         except KeyError:
@@ -321,6 +358,42 @@ def _cmd_compare(args: argparse.Namespace) -> int:
 
     for p in all_artefacts:
         print(p)
+    return 0
+
+
+def _cmd_paired(args: argparse.Namespace) -> int:
+    """Run paired tensor-difference analysis (quant or edit preset)."""
+    from weight_atlas.paired import run_paired
+
+    spec = _load_spec(args.spec)
+
+    fp_a_path = args.scan_a / "fingerprint.json"
+    fp_b_path = args.scan_b / "fingerprint.json"
+    fp_a = json.loads(fp_a_path.read_text()) if fp_a_path.exists() else None
+    fp_b = json.loads(fp_b_path.read_text()) if fp_b_path.exists() else None
+
+    try:
+        artefacts = run_paired(
+            args.weights_a,
+            args.weights_b,
+            args.out,
+            spec,
+            fp_a=fp_a,
+            fp_b=fp_b,
+            ref_side=args.ref_side,
+            jobs=args.jobs,
+            mode=args.mode,
+            preset=args.preset,
+        )
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    for a in artefacts:
+        print(a)
     return 0
 
 
@@ -416,6 +489,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_render(args)
     if args.command == "compare":
         return _cmd_compare(args)
+    if args.command in ("paired", "qimpact"):
+        return _cmd_paired(args)
     if args.command == "activity":
         return _cmd_activity(args)
     if args.command == "diagnose":

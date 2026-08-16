@@ -8,15 +8,21 @@
 4. [Core Concepts](#core-concepts)
 5. [CLI Reference](#cli-reference)
 6. [Web UI Guide](#web-ui-guide)
-7. [Plugins](#plugins)
-8. [Artifact Reference](#artifact-reference)
-9. [Troubleshooting](#troubleshooting)
+7. [Query API (LLM access)](#query-api-llm-access)
+8. [Plugins](#plugins)
+9. [Artifact Reference](#artifact-reference)
+10. [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Introduction
 
 Weight Atlas is a tool for **LLM weight fingerprinting and topographic visualization**. It scans a model's weights, extracts tensor statistics, rasterizes them into 2D fields, and renders topographic sheets or 3D terrain. It also supports quantitative comparison between models and forward-pass activation capture ("fMRI mode").
+
+Weight Atlas serves two audiences from the same dataset:
+
+- **Organic users (humans)** read the topographic renders and web UI — a model's internals at a glance.
+- **Synthetic users (LLM agents)** query the machine-readable API and get small, self-describing, interpretation-ready responses about themselves and their relatives.
 
 ### What Weight Atlas Does
 
@@ -26,6 +32,7 @@ Weight Atlas is a tool for **LLM weight fingerprinting and topographic visualiza
 - **Project embeddings**: PCA/UMAP projection of token embeddings as density fields
 - **Analyze MoE models**: Layer × Expert visualization for Mixture-of-Experts architectures
 - **Capture activations**: Forward-pass activation capture over a versioned stimulus protocol ("fMRI mode")
+- **Query API**: a machine-readable REST layer exposing the scan dataset to LLM agents (see [Query API](#query-api-llm-access))
 
 ### Three Core Guarantees
 
@@ -293,6 +300,57 @@ Sections:
 - Hotspot rankings (top-5 per channel)
 - Delta visualizations
 - Expert panel comparison (if MoE)
+
+---
+
+## Query API (LLM access)
+
+The web server exposes the scanned dataset as a machine-readable JSON API so
+LLM agents can analyse model weight topology without ingesting the full
+fingerprint table. The web UI stays the interface for humans; the API is the
+interface for agents.
+
+> **Status**: design proposal — see `docs/2026-08-16_weight-atlas-api-spec-v0.2.md`
+> for the full specification (endpoints, data model, error codes, roadmap).
+> The read endpoints below are the current plan.
+
+### Discovery
+
+- `GET /api` — self-description: endpoints, metric vocabulary, tensor-type
+  taxonomy, filter grammar. An agent's first call.
+- `GET /api/schema` — machine-readable field-level schema for every response.
+
+### Model listing & metadata
+
+- `GET /models` — all available scans (model_id, arch, n_tensors, quantization)
+- `GET /model/{model_id}` — scan metadata + global baseline statistics
+
+### Analysis endpoints
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /model/{id}/summary` | Model-wide aggregates (group by type/layer) |
+| `GET /model/{id}/layer/{n}` | All tensors in one layer, intra-layer comparison |
+| `GET /model/{id}/anomalies` | Statistically unusual tensors (p99 default) |
+| `GET /model/{id}/query` | Filtered, sorted, paginated tensor list |
+| `GET /model/{id}/compare?a=…&b=…` | Two slices within one model |
+| `GET /model/{id}/histogram` | Distribution of a metric |
+| `GET /model/{id}/tensor/{name}` | Full detail for one tensor |
+| `GET /model/{id}/delta?with={other}` | Cross-scan comparison |
+
+### Design conventions for agents
+
+- **Small responses**: max 500 rows; every list endpoint supports a `fields`
+  parameter to trim columns (token budget).
+- **Baseline context**: responses include `_baseline` (global / per-type
+  statistics) and per-row `vs_*` ratios, so values are interpretable without a
+  second call.
+- **Server-side interpretation**: `note` / `context` / `interpretation` fields
+  give an immediate reading; the agent verifies rather than constructs.
+- **Weight-space honesty**: `/delta` prefers real weight-space paired metrics
+  (`rel_l2`, `dspec`, edit classification) over statistic diffs when paired
+  artefacts exist.
+- **Deterministic**: same query → same response; no timestamps in output.
 
 ---
 

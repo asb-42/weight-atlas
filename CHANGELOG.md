@@ -1,5 +1,55 @@
 ## [Unreleased]
 
+### Quantization Impact (M9)
+
+- New `weight-atlas qimpact` subcommand: measures per-tensor quantization
+  impact (sqnr_db, rel_l2, cos, zflip, dmax; dspec opt-in) between two weight
+  snapshots via name-level pairing across formats (GGUF `blk.N.*` ↔ HF
+  `model.layers.N.*`). Strict-only — `--mode aligned` raises ValueError.
+- Artefacts: `field_impact_<metric>_{raw,smooth}.tif`, `field_qtype_raw.tif`
+  + `qtype_map.json`, expert/vision impact fields, `impact_summary.json`
+  (global stats, per-type medians, top-5 hotspot ranking), fixed-anchor
+  `impact_*.png` sheets (bypass `filled_norm`/`per_row_normalize`), and a
+  SHA-256 `manifest.json`. Byte-identical for any `--jobs`.
+- `compare --noise-floor CALIB_DIR`: grey veil over cells whose |delta| is at
+  or below the calibration compare's |delta|; compare jobs always emit
+  `field_delta_<channel>_{raw,smooth}.tif` as veil source.
+- `specs/atlas_spec.v2.4.json`: new canonical-only `qimpact` block
+  (spec_version unchanged — additive extension).
+- Scan fingerprints record per-tensor `dtype` for all handles.
+- `gguf_dequant.py`: Q4_0 dequantisation now uses the canonical block layout
+  (first 16 values in low nibbles, last 16 in high nibbles); pinned by
+  `test_q4_0_canonical_layout`. Previously interleaved `(2j, 2j+1)` — real
+  Q4_0 files would dequantize scrambled.
+
+### Edit Signatures (M9, `--preset edit`)
+
+- `weight-atlas qimpact` generalized into `paired` with presets: the
+  `qimpact` subcommand is preserved as an alias of `paired --preset quant`
+  (default). New `paired --preset edit` measures the weight-space delta
+  B−A (rel_l2, cos, dspec, delta_stable_rank, spectral_share) and classifies
+  the edit kind.
+- `edit_signature.classification` decision tree: `identical` → `low_rank_localized`
+  (abliteration-like, band mass share ≥ 0.7) / `low_rank_diffuse` →
+  `full_rank_uniform` (quantization-like) / `diffuse`. Edit bands group
+  contiguous layers whose edited-tensor median rel-L2 exceeds the noise-floor
+  threshold; each band lists its concentrated slots.
+- Opt-in `edit.u1_coherence`: mean pairwise cosine of the delta's top left
+  singular vector across edited tensors sharing an output dim (sign-fixed to
+  the pca convention). Shared `stats/spectrum.py`
+  `spectrum_of_matrix`/`top_left_singular_vector` (exact ≤512 else seeded
+  Halko rSVD, serialized behind `_spectrum_lock`).
+- Noise-floor policy: compares loader + per-tensor `dtype` fingerprints;
+  `mismatched` appends a warning that the edit signal may be at/below
+  quantization noise. Recorded in `noise_floor` + `warnings`.
+- Output: `compare_summary.json` (adds `preset`, `edit_signature`
+  {classification, stats, bands, `hotspot_ranking_rel_l2`}, `noise_floor`),
+  `field_edit_*` TIFFs, and `edit_*.png` sheets (log-anchored rel-L2 and Δ
+  stable-rank, per-layer profile strip). Paired sheet renderer caps the
+  raster to a pixel budget so large smooth fields stay cheap to draw.
+- `specs/atlas_spec.v2.4.json`: new canonical-only `edit` block (spec_version
+  unchanged — additive extension).
+
 ### Name Mapping — Gemma-4 "ultra/heretic" (MoE) support
 
 - `core/name_map.py`: new GGUF rules for Gemma-4's extra per-layer tensors:

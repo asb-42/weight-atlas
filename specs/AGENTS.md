@@ -45,6 +45,26 @@ scales, grid, render, compare, blender) plus the activity protocol schema.
   them. Keep the fallback tables in sync with the v2.4 block when the mapping
   changes.
 
+## `qimpact` block (canonical-only)
+
+- The **canonical default spec** (v2.4) carries a `qimpact` block: metrics,
+  `operator_impact`, `db_range`, `colormap`, `profile_strip`, `type_map`,
+  `chunk_size` (M9 quantization impact). Older spec versions (v1–v2.3)
+  deliberately have no `qimpact` key — `AtlasSpec` defaults it to `{}` and
+  the pipeline uses documented defaults. Same canonical-only policy as
+  `name_map`.
+
+## `edit` block (canonical-only)
+
+- The **canonical default spec** (v2.4) also carries an `edit` block (M9 edit
+  signatures / abliteration, `--preset edit`): metrics (`rel_l2`, `cos`,
+  `dspec`, `delta_stable_rank`, `spectral_share`), `u1_coherence` (opt-in),
+  `rank_low`, `band_threshold_factor`, `band_floor`, `band_mass_share`,
+  `rel_l2_log_range`, `rank_log_range`, `colormap`, `profile_strip`,
+  `chunk_size`. Older spec versions have no `edit` key — `AtlasSpec` defaults
+  it to `{}` and the pipeline uses documented defaults. Same canonical-only
+  policy as `name_map`/`qimpact`.
+
 ## Work Guidance
 
 - Read `src/weight_atlas/core/types.py` before adding a key to confirm how it

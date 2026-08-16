@@ -28,6 +28,28 @@
     "diverging_clip": 0.98,
     "aligned_interp": "linear"
   },
+  "qimpact": {
+    "metrics": ["sqnr_db", "rel_l2", "cos", "zflip", "dmax", "dspec"],
+    "operator_impact": false,
+    "db_range": [5, 60],
+    "colormap": "magma_r",
+    "profile_strip": true,
+    "type_map": true,
+    "chunk_size": 1048576
+  },
+  "edit": {
+    "metrics": ["rel_l2", "cos", "dspec", "delta_stable_rank", "spectral_share"],
+    "u1_coherence": false,
+    "rank_low": 2.0,
+    "band_threshold_factor": 3.0,
+    "band_floor": 1e-4,
+    "band_mass_share": 0.7,
+    "rel_l2_log_range": [-4.0, -0.5],
+    "rank_log_range": [-1.0, 3.0],
+    "colormap": "magma_r",
+    "profile_strip": true,
+    "chunk_size": 1048576
+  },
   "embedding": {
     "method": "pca",
     "grid": 256,

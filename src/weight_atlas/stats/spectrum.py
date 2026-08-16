@@ -94,6 +94,54 @@ def _randomized_singular_values(m: np.ndarray, seed: int) -> np.ndarray:
     return np.linalg.svd(b.astype(np.float64), compute_uv=False)
 
 
+def spectrum_of_matrix(m: np.ndarray, seed: int = 0) -> np.ndarray:
+    """Truncated singular values of a raw 2-D matrix (no handle/caching).
+
+    Array-based twin of ``truncated_spectrum`` for derived payloads such as
+    the edit-delta ``B - A`` in the paired pipeline, which are never
+    ``TensorHandle``s. Same dispatch and lock as ``truncated_spectrum``:
+    exact SVD for ``min(m, n) <= SMALL``, else the seeded Halko rSVD.
+    """
+    x = to_matrix(np.asarray(m))
+    with _spectrum_lock:
+        if min(x.shape) <= SMALL:
+            return np.linalg.svd(x.astype(np.float64), compute_uv=False)
+        return _randomized_singular_values(x, seed)
+
+
+def top_left_singular_vector(m: np.ndarray, seed: int = 0) -> np.ndarray:
+    """Top left singular vector u1 of a raw 2-D matrix (sign-fixed).
+
+    Same dispatch as ``spectrum_of_matrix``; the returned vector is
+    normalized and sign-fixed so the largest-|component| entry is positive
+    (the same convention as ``embedding/pca.py``), making pairwise
+    u1-coherence comparisons meaningful. Used by the edit preset's
+    ``u1_coherence`` metric (opt-in).
+    """
+    x = to_matrix(np.asarray(m))
+    with _spectrum_lock:
+        if min(x.shape) <= SMALL:
+            u, _, _ = np.linalg.svd(x.astype(np.float64), full_matrices=False)
+            u1 = u[:, 0].copy()
+        else:
+            rng = np.random.default_rng(seed)
+            k = min(K, min(x.shape))
+            omega = rng.standard_normal((x.shape[1], k)).astype(np.float32)
+            y = x @ omega
+            for _ in range(Q):
+                y = x @ (x.T @ y)
+            q, _ = np.linalg.qr(y)
+            b = q.T @ x
+            u_small, _, _ = np.linalg.svd(b.astype(np.float64), full_matrices=False)
+            u1 = (q.astype(np.float64)) @ u_small[:, 0]
+            n = float(np.linalg.norm(u1))
+            if n > 0:
+                u1 = u1 / n
+    if u1[np.argmax(np.abs(u1))] < 0:
+        u1 = -u1
+    return u1
+
+
 def entropy_rank(s: np.ndarray) -> float:
     """Effective rank = exp(-sum(p_i * log p_i)) where p = s / sum(s).
 

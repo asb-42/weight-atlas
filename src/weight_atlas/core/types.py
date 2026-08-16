@@ -123,6 +123,8 @@ class AtlasSpec:
     blender: dict[str, Any] = field(default_factory=dict)
     compare: dict[str, Any] = field(default_factory=dict)
     embedding: dict[str, Any] = field(default_factory=dict)
+    qimpact: dict[str, Any] = field(default_factory=dict)
+    edit: dict[str, Any] = field(default_factory=dict)
     vision_slots: list[str] = field(default_factory=list)
     vision_channels: dict[str, Any] = field(default_factory=dict)
     expert_channels: dict[str, Any] = field(default_factory=dict)
@@ -141,6 +143,8 @@ class AtlasSpec:
             seeds=dict(raw["seeds"]),
             blender=dict(raw.get("blender", {})),
             compare=dict(raw.get("compare", {})),
+            qimpact=dict(raw.get("qimpact", {})),
+            edit=dict(raw.get("edit", {})),
             vision_slots=list(raw.get("vision_slots", [])),
             vision_channels=dict(raw.get("vision_channels", {})),
             expert_channels=dict(raw.get("expert_channels", {})),

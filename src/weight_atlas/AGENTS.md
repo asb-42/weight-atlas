@@ -60,6 +60,9 @@ compare two scanned models. The web UI (api + ui) is the primary interface.
   smoothing, degenerations, TIFF I/O.
 - `src/weight_atlas/loaders/AGENTS.md` — safetensors/GGUF loaders and
   dequantisation (mxfp4, gguf_dequant).
+- `src/weight_atlas/paired/AGENTS.md` — M9 paired pipeline (qimpact + edit
+  signatures): name-level pairing, chunked float64 metrics, Δ-spectrum,
+  edit classification/bands, fixed-anchor sheets.
 - `src/weight_atlas/render/AGENTS.md` — renderers: matplotlib sheet, preview,
   Blender terrain (+ OBJ export).
 

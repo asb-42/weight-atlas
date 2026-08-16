@@ -513,6 +513,19 @@ class JobQueue:
             write_tif(delta_path, summary.channels[channel].delta)
             all_artefacts.append(delta_path)
 
+            # Additive M9 artefacts: per-channel |delta| rasters that the
+            # noise-floor veil consumes.
+            field_delta_raw = out / f"field_delta_{channel}_raw.tif"
+            write_tif(field_delta_raw, summary.channels[channel].delta)
+            all_artefacts.append(field_delta_raw)
+            from weight_atlas.fields.smoothing import smooth, upsample
+            field_delta_smooth = out / f"field_delta_{channel}_smooth.tif"
+            write_tif(
+                field_delta_smooth,
+                smooth(upsample(summary.channels[channel].delta, int(spec.grid.get("upsample", 1))), float(spec.grid.get("smooth_sigma", 1.0))),
+            )
+            all_artefacts.append(field_delta_smooth)
+
             # Render delta sheet PNGs so the compare report has visuals.
             try:
                 import weight_atlas.compare.render  # noqa: F401 — registers "delta"

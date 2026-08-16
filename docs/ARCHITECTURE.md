@@ -545,6 +545,170 @@ token_embd / embed_tokens ─► project ─► embedding_{pca,umap}.npy
 - **Metadata**: `embedding_meta.json` records method, explained variance,
   `n_components`, sign convention, and scatter subsample/seed.
 
+## Quantization Impact (M9)
+
+### Data flow
+```
+weights (A) ────────────────┐
+                             ├─► impact.py (name-level pairing, chunked
+weights (B) ────────────────┘      float64 metrics, jobs=N)
+                                     │
+                                     ├─► field_impact_<metric>_{raw,smooth}.tif
+                                     ├─► field_qtype_raw.tif + qtype_map.json
+                                     ├─► field_expert_impact_<slot>_<metric>_*.tif
+                                     ├─► field_vision_impact_<metric>_*.tif
+                                     ├─► impact_summary.json
+                                     └─► impact_*.png (fixed-anchor sheets)
+                                                     │
+                           compare --noise-floor ────┘ (sub-floor delta veil)
+```
+
+### Design decisions
+
+- **Pairing is a name-level join** (NOT `align.py` field alignment): tensors pair
+  on `map_name(name)` → identical `(layer, slot)` plus matching tensor name.
+  Same `(layer, slot)` with different names across formats (GGUF `blk.N.attn_q`
+  vs HF `self_attn.q_proj`) pair via slot+layer and record both names.
+  Tensors present on one side only (MTP head, attn_sinks, vision tower) are
+  `"skipped"` (never a shape-mismatch crash). Shape mismatch on a paired tensor
+  → ValueError listing the tensor. Expert tensors key on
+  `("expert", layer, moe_slot, expert_id)`; vision tensors on their block/slot;
+  non-layer tensors (embed, lm_head) pair by slot with `layer=None` encoded as
+  -1 in the sortable join key.
+- **Metrics**: `sqnr_db` (10·log10(‖A‖²/‖B−A‖²)), `rel_l2`, `cos`, `zflip`
+  (zero-ness flip fraction), `dmax` (max |Δ|); `dspec` (spectral norm of B−A via
+  seeded rSVD, `spec.seeds.svd`) is opt-in via `qimpact.operator_impact` and is
+  never emitted as all-NaN fields when disabled.
+- **Reference side**: `--ref-side a|b` picks the signal energy in the
+  SQNR/rel-L2 numerator (difference energy is symmetric). `sqnr_db`/`rel_l2`
+  are asymmetric by definition.
+- **Chunked float64 accumulation**: per 1M-element chunk (`qimpact.chunk_size`)
+  accumulators for Σa², Σb², Σab, Σd², max|Δ|, zero-flip count. Sequential
+  chunk order per tensor; tensor-level parallelism via `jobs=N` thread pool
+  (threadpoolctl pins BLAS to 1 thread). Byte-identical for any `jobs`.
+- **Strict-only**: impact measurement hard-rejects any non-`"strict"` mode
+  with ValueError (identical tensor shapes and layer indices required). Use the
+  compare subcommand for aligned/cross-architecture comparison.
+- **Fixed-anchor sheets**: impact sheets bypass `filled_norm` and
+  `per_row_normalize`; `qimpact.db_range` (default [5, 60] dB) maps directly to
+  the `qimpact.colormap` (default `magma_r`), preserving absolute dB anchors
+  across models. Title appends `· q-impact`. Profile strip = 1×L per-layer
+  median rel-L2 (hot colormap). qtype map = discrete tab20 map of the
+  non-reference side's quantization types.
+- **Fingerprint dtype**: scan fingerprints record a per-tensor `dtype` for all
+  handles (not just GGUF `ggml_type`), so impact summaries can report type maps
+  for safetensors reference models too.
+- **Determinism**: all TIFFs, PNGs (fixed metadata), summary JSON, and the
+  SHA-256 manifest are byte-identical for identical inputs. PNG metadata fixed
+  (`Software: weight-atlas`, `Creation Time: 1970-01-01T00:00:00Z`).
+- **Noise-floor veil**: `compare --noise-floor CALIB_DIR` reads the calibration
+  compare job's `field_delta_<channel>_raw.tif`; cells where current
+  |delta| ≤ calibration |delta| get a grey veil (alpha=0.25, `Greys` cmap) on
+  the delta sheet, and the title appends `· noise-floor veiled`. The mask is
+  computed on the raw full-width grid and aligned to column-dropped sheets.
+  Compare jobs always emit `field_delta_<channel>_{raw,smooth}.tif` so any
+  compare can serve as a noise-floor calibration source.
+
+### Spec extension
+The `atlas_spec.v2.4.json` may include a `qimpact` block (canonical-only,
+like `name_map` — older spec versions simply lack the key):
+```json
+{
+  "qimpact": {
+    "metrics": ["sqnr_db", "rel_l2", "cos", "zflip", "dmax", "dspec"],
+    "operator_impact": false,
+    "db_range": [5, 60],
+    "colormap": "magma_r",
+    "profile_strip": true,
+    "type_map": true,
+    "chunk_size": 1048576
+  }
+}
+```
+`spec_version` stays 4 (additive extension documented here per specs policy).
+
+### Edit preset (`--preset edit`, edit signatures / abliteration)
+
+`run_paired` gained a second preset. `qimpact` remains the default; `edit`
+measures the weight-space delta B−A and classifies *what kind of edit* a model
+difference is. CLI: `weight-atlas paired SCAN_A SCAN_B --preset edit [--weights-a W] [--weights-b W]`.
+The `qimpact` subcommand stays available as an alias of `paired`.
+
+- **Δ-spectrum**: per pair, `dspec` (spectral norm of B−A), `delta_stable_rank`
+  (‖Δ‖_F²/σ₁(Δ)², i.e. the participation ratio of the delta spectrum),
+  `spectral_share` (σ₁(Δ)²/‖Δ‖_F²), and `rel_l2`/`cos` on the weights. The
+  delta spectrum always computes for the edit preset (unlike quant's opt-in
+  `operator_impact`), because classification needs it. Reuses
+  `stats/spectrum.py` `spectrum_of_matrix`/`top_left_singular_vector`
+  (exact SVD ≤ 512 else seeded Halko k=16 q=2, serialized behind
+  `_spectrum_lock`).
+- **Classification** (`edit_signature.classification`, first-match-wins):
+  - `identical`: no tensor exceeds `band_floor` rel-L2.
+  - median `delta_stable_rank` over edited tensors ≤ `rank_low` (default 2):
+    - `band_mass_share ≥ band_mass_share` (default 0.7) → `low_rank_localized`
+      (abliteration-like: rank-1-ish Δ concentrated in a layer band).
+    - else → `low_rank_diffuse`.
+  - full-rank: no bands → `full_rank_uniform` (quantization/rounding-like);
+    else → `diffuse` (full finetune with layer localization).
+- **Edit bands**: per-layer median rel-L2 over *edited* tensors only (unedited
+  layers count 0, so a slot-concentrated edit stands out); layers above
+  `max(band_floor, band_threshold_factor × all-layer median)` form contiguous
+  bands. Each band records `start_layer`/`end_layer`/`n_layers` and the
+  concentrated slots (per-slot within-band median > band median). `band_mass_share`
+  = band layer mass / total layer mass.
+- **u1 coherence** (opt-in `edit.u1_coherence`): per pair, the top left
+  singular vector of the delta; across edited tensors sharing an output dim,
+  the mean pairwise cosine. Sign-fixed (largest-|component| positive, same as
+  `embedding/pca.py`) so the comparison is meaningful. Δ-spectrum fields stay
+  non-NaN when disabled.
+- **Noise floor**: `_noise_floor_policy` compares loader + per-tensor `dtype`
+  fingerprints; `identical` policy means the pair shares a dequant pipeline
+  (edit signal trustworthy); `mismatched` appends a warning that the signal
+  may be at/below quantization noise. Recorded in `noise_floor` + `warnings`.
+- **Output**: edit preset writes `compare_summary.json` (body adds `preset`,
+  `edit_signature` {classification, stats, bands, `hotspot_ranking_rel_l2`},
+  `noise_floor`) plus `field_edit_*` TIFFs and `edit_*.png` sheets
+  (rel-L2 log-anchored via `edit.rel_l2_log_range`, Δ stable-rank via
+  `edit.rank_log_range`, per-layer profile strip). The paired sheet renderer
+  caps the raster to `_MAX_RENDER_PIXELS` so huge smooth fields stay
+  cheap to draw.
+- **Spec block** (canonical-only, like `qimpact`):
+```json
+{
+  "edit": {
+    "metrics": ["rel_l2", "cos", "dspec", "delta_stable_rank", "spectral_share"],
+    "u1_coherence": false,
+    "rank_low": 2.0,
+    "band_threshold_factor": 3.0,
+    "band_floor": 1e-4,
+    "band_mass_share": 0.7,
+    "rel_l2_log_range": [-4, -0.5],
+    "rank_log_range": [-1, 3],
+    "colormap": "magma_r",
+    "profile_strip": true,
+    "chunk_size": 1048576
+  }
+}
+```
+`spec_version` stays 4 (additive extension).
+
+### impact_summary.json Schema
+```json
+{
+  "ref_side": "a",
+  "model_a": { "loader": "...", "n_tensors": 0, "quantization": {} },
+  "model_b": { "loader": "...", "n_tensors": 0, "quantization": {} },
+  "alignment": { "mode": "strict", "n_pairs": 0, "n_skipped": 0,
+                 "skipped": [ { "name": "...", "side": "a", "reason": "not in B" } ] },
+  "global": { "median_sqnr_db": 0.0, "p05_sqnr_db": 0.0, "median_rel_l2": 0.0 },
+  "per_type": { "ggml_2": { "n": 0, "median_sqnr_db": 0.0 } },
+  "hotspot_ranking": [ { "layer": 0, "slot": "...", "name_a": "...",
+                         "name_b": "...", "sqnr_db": 0.0, "rel_l2": 0.0 } ],
+  "warnings": []
+}
+```
+
+
 ## Extras (lazy)
 
 `umap` extra is declared (only in `.[umap]`) and `embedding/umap.py` is
