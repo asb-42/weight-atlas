@@ -2,9 +2,9 @@
 
 ## Purpose
 
-Test suite (400+ tests, 568 current) covering loaders, fields, render,
-compare, api, determinism, paired (qimpact + edit signatures), and degradation
-paths. The suite is the quality gate for every change.
+Test suite (400+ tests, 599 current) covering loaders, fields, render,
+compare, api, LLM query API, determinism, paired (qimpact + edit signatures),
+and degradation paths. The suite is the quality gate for every change.
 
 ## Ownership
 

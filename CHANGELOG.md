@@ -1,5 +1,27 @@
 ## [Unreleased]
 
+### LLM Query API (v0.2)
+
+- New read-only REST layer for LLM agents (spec
+  `docs/2026-08-16_weight-atlas-api-spec-v0.2.md`, implemented): `api/query.py`
+  pure read-side engine + `api/query_routes.py` APIRouter mounted at `/api`.
+  `model_id` == DONE scan job ID; a model is any DONE job with
+  `fingerprint.json`.
+- Endpoints: `/api` (self-description), `/api/schema`, `/api/models`,
+  `/api/model/{id}` + `.../summary`, `.../layer/{n}`, `.../anomalies`,
+  `.../query`, `.../compare`, `.../histogram`, `.../tensor/{name}`, `.../delta`.
+- Deterministic bodies: fixed ordering, no timestamps in analytics, floats
+  rounded to 4 decimals; `/query` caps at 500 rows with `has_more`/`next_offset`
+  pagination and `fields` column trimming. Parsed fingerprints cached by
+  (path, mtime_ns, size), max 16 entries.
+- Unified error envelope `{error: {code, type, message, hint}}` via `QueryError`
+  (handled in `main.py`).
+- Tiered `/delta`: tier 1 weight-space when a DONE paired/edit compare job pairs
+  the two scans, else tier 2 fingerprint statistic diff.
+- New `tests/test_query_api.py` (31 tests) covering discovery, metadata, layer,
+  anomalies, query filtering/sorting/pagination, compare slices, histogram,
+  tensor detail, and both delta tiers.
+
 ### Quantization Impact (M9)
 
 - New `weight-atlas qimpact` subcommand: measures per-tensor quantization

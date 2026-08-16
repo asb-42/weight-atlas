@@ -248,9 +248,10 @@ Browser ─► FastAPI routes ─► JobQueue (SQLite) ─► In-process worker 
 ```
 src/weight_atlas/api/
 ├── __init__.py
-├── main.py          # FastAPI app factory
+├── main.py          # FastAPI app factory (+ QueryError handler)
 ├── jobs.py          # JobQueue (SQLite + worker)
-└── routes.py        # HTTP routes
+├── routes.py        # HTTP routes (web UI)
+└── query_routes.py  # LLM query API routes (/api, /api/model/*)
 
 src/weight_atlas/ui/
 ├── templates/       # Jinja2 templates
@@ -279,6 +280,57 @@ uv sync --extra web
 uvicorn weight_atlas.api.main:app --reload
 # Open http://localhost:8000
 ```
+
+## Web API / LLM Query API (v0.2)
+
+Machine-readable read endpoints for LLM agents, mounted alongside the web UI
+(spec: `docs/2026-08-16_weight-atlas-api-spec-v0.2.md`). The web UI stays the
+interface for humans; the API is the interface for agents.
+
+### Design contracts
+
+- **model_id == job_id**: a "model" in the API is any DONE scan job whose
+  `out_dir/fingerprint.json` exists. No separate model registry — the job DB is
+  the source of truth.
+- **Read-side engine is pure**: `api/query.py` holds the analytics (records,
+  baselines, slices, anomalies, histograms, deltas, discovery/schema) as pure
+  functions over `fingerprint.json`; `api/query_routes.py` is a thin
+  `APIRouter` factory mapping query params → engine calls.
+- **Determinism is a feature**: fixed ordering, no timestamps in analytical
+  output, floats rounded to 4 decimals; `/query` caps at 500 rows with
+  `has_more`/`next_offset` pagination.
+- **Fingerprint caching**: parsed fingerprints are cached keyed by
+  `(path, mtime_ns, size)` (max 16 entries), so re-scans are picked up without
+  reloading multi-MB JSON per request.
+- **Error envelope**: every error is `{error: {code, type, message, hint}}`
+  raised as `QueryError` in the engine and handled in `main.py`.
+- **Derived type labels**: `slot` is the authoritative grouping (raster
+  columns); `type` is a display label (`self_attn.q_proj`, `mlp.gate_proj`,
+  `expert.{id}.{gate|up|down}_proj`, …) via `_SLOT_TYPE` + `derive_type`.
+  Type filters use prefix semantics (`self_attn` matches `self_attn.q_proj`).
+- **Slice grammar**: dot-concatenated `key:value` predicates
+  (`layer:42.type:mlp.gate_proj`); splitter only breaks on dots followed by a
+  known key so dotted type values survive.
+- **Tiered `/delta`**: tier 1 (weight-space) when a DONE paired/edit compare
+  job pairs the two scans (`model_path == "dir_a|dir_b"` + `preset == "edit"`
+  in `compare_summary.json`); else tier 2 diffs fingerprint statistics.
+
+### Routes
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api` | GET | Self-description (discovery) |
+| `/api/schema` | GET | Machine-readable field schema |
+| `/api/models` | GET | List all completed scans |
+| `/api/model/{model_id}` | GET | Scan metadata + baseline |
+| `/api/model/{model_id}/summary` | GET | Model-wide aggregates (group by type/layer) |
+| `/api/model/{model_id}/layer/{n}` | GET | All tensors in one layer, intra-layer comparison |
+| `/api/model/{model_id}/anomalies` | GET | Statistically unusual tensors (p99 default) |
+| `/api/model/{model_id}/query` | GET | Filtered, sorted, paginated tensor list |
+| `/api/model/{model_id}/compare` | GET | Two slices within one model |
+| `/api/model/{model_id}/histogram` | GET | Distribution of a metric |
+| `/api/model/{model_id}/tensor/{name}` | GET | Full detail for one tensor |
+| `/api/model/{model_id}/delta` | GET | Cross-scan comparison (weight-space tier preferred) |
 
 ## Comparison/Delta Layer (M4)
 

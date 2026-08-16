@@ -6,10 +6,13 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from weight_atlas.api import jobs as jobmod
+from weight_atlas.api.query import QueryError
+from weight_atlas.api.query_routes import create_query_router
 from weight_atlas.api.routes import create_router
 from weight_atlas.core.types import get_default_spec_path, load_default_spec
 from weight_atlas.render import (  # noqa: F401 — registers renderers
@@ -79,6 +82,13 @@ def create_app(
 
     router = create_router(job_queue, templates, _spec_path, _output_root, _model_roots)
     app.include_router(router)
+
+    query_router = create_query_router(job_queue)
+    app.include_router(query_router)
+
+    @app.exception_handler(QueryError)
+    async def query_error_handler(_request: Request, exc: QueryError) -> JSONResponse:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_body())
 
     return app
 

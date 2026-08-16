@@ -8,8 +8,10 @@ scan/render/compare, and provides file-browsing and result endpoints. The UI
 
 ## Ownership
 
-- `main.py` (app factory), `routes.py` (all HTTP endpoints), `jobs.py`
-  (persistent job queue + worker thread).
+- `main.py` (app factory + QueryError handler), `routes.py` (web UI HTTP
+  endpoints), `query_routes.py` (LLM query API endpoints, spec v0.2),
+  `query.py` (read-side query engine), `jobs.py` (persistent job queue +
+  worker thread).
 - The `ui/` templates + static files are consumed here but owned by the
   parent (weight_atlas) doc; coordinate UI changes through `routes.py` /
   `main.py`.
@@ -44,6 +46,15 @@ scan/render/compare, and provides file-browsing and result endpoints. The UI
   enqueueing.
 - **Errors surface on the job**: worker catches exceptions → `job.status =
   FAILED` + `job.error`; the API never raises unhandled.
+- **LLM query API is a separate router**: `query_routes.py` owns the read-only
+  `/api`, `/api/schema`, `/api/models`, `/api/model/{model_id}/*` endpoints
+  (spec `docs/2026-08-16_weight-atlas-api-spec-v0.2.md`); `routes.py` owns the
+  web UI. `model_id` == DONE scan job's `job_id`; a model is a DONE job whose
+  `out_dir/fingerprint.json` exists. All analytics live in `query.py` (pure
+  functions over the fingerprint) — never inline statistics in the router.
+  Errors use the spec's `{error: {code, type, message, hint}}` envelope via
+  `QueryError` (handled in `main.py`). Response bodies must stay
+  deterministic: fixed ordering, no timestamps, floats rounded to 4 decimals.
 - **Model detail is tabbed sub-pages**: `GET /models/{id}` is a light overview;
   sheets/terrain/stats/spec load as htmx fragments via `?tab=`. The statistics
   table is server-paginated (200 rows/page, clamped) — never render the full

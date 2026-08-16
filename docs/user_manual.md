@@ -310,9 +310,10 @@ LLM agents can analyse model weight topology without ingesting the full
 fingerprint table. The web UI stays the interface for humans; the API is the
 interface for agents.
 
-> **Status**: design proposal — see `docs/2026-08-16_weight-atlas-api-spec-v0.2.md`
-> for the full specification (endpoints, data model, error codes, roadmap).
-> The read endpoints below are the current plan.
+> **Status**: implemented (v0.2) — see
+> `docs/2026-08-16_weight-atlas-api-spec-v0.2.md` for the full specification
+> (endpoints, data model, error codes). All read endpoints below are live;
+> `model_id` is a completed scan's job ID.
 
 ### Discovery
 
