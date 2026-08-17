@@ -21,7 +21,7 @@ def sd_box(p: np.ndarray, half: float = 1.0) -> np.ndarray:
     q = np.abs(p) - half
     outside = np.sqrt(np.sum(np.maximum(q, 0.0) ** 2, axis=-1))
     inside = np.minimum(np.max(q, axis=-1), 0.0)
-    return outside + inside
+    return np.asarray(outside + inside, dtype=np.float64)
 
 
 def menger_sdf(points: np.ndarray, iterations: int, scale: float = 3.0) -> np.ndarray:
