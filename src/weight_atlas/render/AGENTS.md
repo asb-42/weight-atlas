@@ -3,13 +3,15 @@
 ## Purpose
 
 Visualise scanned fields: matplotlib topographic sheets (hillshade + tint +
-contours), preview thumbnails, and Blender 3D terrain renders (+ OBJ mesh).
+contours), preview thumbnails, Blender 3D terrain renders (+ OBJ mesh), and
+statistics-driven fractal terrain (fBm).
 
 ## Ownership
 
 - `matplotlib_sheet.py` (registered `"sheet"`), `preview.py` (registered
   `"preview"`), `blender/` (`blender_wrapper.py` + `render_terrain.py`,
-  registered `"blender"`). `compare/render/delta_sheet.py` is owned by the
+  registered `"blender"`), `fractal/` (`fbm.py`, `params.py`, `wrapper.py`,
+  registered `"fractal"`). `compare/render/delta_sheet.py` is owned by the
   compare doc.
 
 ## Local Contracts
@@ -53,6 +55,22 @@ contours), preview thumbnails, and Blender 3D terrain renders (+ OBJ mesh).
 - **OBJ export**: 256² bilinear downsample (same `resample_bilinear` helper
   as the renderer, not nearest-neighbour), plain text, diffable, uses the
   same normalisation as the PNG render.
+- **Fractal renderer** (`fractal/`): genuine fractal geometry, not a texture.
+  Per-slot fBm parameters (octaves ← effective_rank, persistence ← kurtosis,
+  lacunarity ← sparsity, base_freq ← spectral_norm) come from the slot's real
+  statistics via `spec.fractal.mapping` (linear min→max over observed slot
+  range, clamped; NaN → target midpoint). Pure NumPy value noise on a fixed
+  integer-lattice hash (`_hash_lattice`, splitmix64) — no RNG, byte-identical
+  for identical inputs. Each slot column is its own fBm strip (fixed per-slot
+  seed = base seed + slot index × 1009); tint is a second strip (seed + 17).
+  Rendered through the same `render_terrain.py` pipeline
+  (`terrain_fractal.png` + `terrain_fractal.obj`).
+- **Fractal renders once per model**: output depends on fingerprint + seed,
+  not the channel. The API/CLI call `render()` once per channel (height, tint,
+  rough, vision_*); a per-instance dedupe keyed on `(out_dir, seed)` makes
+  Blender run once and every channel reuse the identical artefacts (the primary
+  language raster's layout, never overwritten by the smaller vision layout).
+  Requires `field.col_labels` (slot columns).
 
 ## Work Guidance
 
@@ -64,5 +82,11 @@ contours), preview thumbnails, and Blender 3D terrain renders (+ OBJ mesh).
 ## Verification
 
 - `tests/test_blender_wrapper.py`, `tests/test_preview_renderer.py`,
-  `tests/test_render_cli.py`, `tests/test_determinism.py`. Run via
-  `cd /media/data/coding/weight-atlas && .venv/bin/python -m pytest tests/test_blender_wrapper.py tests/test_determinism.py`.
+  `tests/test_render_cli.py`, `tests/test_fractal_renderer.py`,
+  `tests/test_determinism.py`. Run via
+  `cd /media/data/coding/weight-atlas && .venv/bin/python -m pytest tests/test_blender_wrapper.py tests/test_fractal_renderer.py tests/test_determinism.py`.
+
+## Child DOX Index
+
+- `fractal/AGENTS.md` — statistics-driven fBm terrain renderer (deterministic
+  value noise, per-slot parameter mapping).

@@ -18,6 +18,7 @@
   "grid":  {"upsample": 8, "smooth_sigma": 1.0},
   "sheet": {"contour_levels": 12, "light_azdeg": 315, "light_altdeg": 45, "dpi": 150, "per_row_normalize": true, "drop_empty_cols": false},
 "blender": {"grid": 1024,"resolution": 2048,"z_scale": 0.3,"pitch": 18.0,"clip": 0.01,"adaptive_z_scale": false,"subsurf_levels": 1,"fill_light_energy": 0.35},
+"fractal": {"seed": 0, "cell_h": 8, "cell_w": 8, "mapping": {"octaves": {"stat": "effective_rank", "lo": 4, "hi": 8}, "persistence": {"stat": "kurtosis", "lo": 0.4, "hi": 0.7}, "lacunarity": {"stat": "sparsity", "lo": 1.8, "hi": 2.4}, "base_freq": {"stat": "spectral_norm", "lo": 1.0, "hi": 2.5}}},
   "compare": {
     "modes": ["strict", "aligned"],
     "default_mode": "strict",
@@ -33,7 +34,7 @@
     "subsample_scatter": 5000,
     "seeds": {"pca": 0, "umap": 0}
   },
-  "seeds": {"svd": 0},
+  "seeds": {"svd": 0, "fractal": 0},
   "vision_slots": [
     "v_attn_q", "v_attn_k", "v_attn_v", "v_attn_qkv", "v_attn_o",
     "v_attn_norm", "v_mlp_norm", "v_mlp_gate", "v_mlp_up", "v_mlp_down", "v_mlp",

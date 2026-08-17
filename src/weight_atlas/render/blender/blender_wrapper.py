@@ -150,6 +150,47 @@ def _get_spec_value(spec: AtlasSpec, key: str, default: Any) -> Any:
     return default
 
 
+def build_blender_env() -> dict[str, str]:
+    """Environment for the Blender subprocess.
+
+    Blender ships its own Python interpreter, which often lacks numpy. Expose
+    the site-packages of the running weight-atlas process (which has numpy) to
+    the Blender script via PYTHONPATH so the terrain script can load the
+    heightmap .npy files.
+    """
+    site_dirs = [p for p in sys.path if "site-packages" in p]
+    blender_env = dict(os.environ)
+    if site_dirs:
+        existing = blender_env.get("PYTHONPATH")
+        blender_env["PYTHONPATH"] = os.pathsep.join(site_dirs) + (
+            (os.pathsep + existing) if existing else ""
+        )
+    return blender_env
+
+
+def run_blender_command(cmd: list[str], blender_env: dict[str, str]) -> None:
+    """Run a headless Blender command, failing on exit code or script crash.
+
+    Blender exits 0 even when the ``-P`` script raises a Python traceback; a
+    stale PNG must never be served as a fresh render, so the traceback guard
+    is part of the determinism contract.
+    """
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, timeout=600, env=blender_env
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Blender render failed (exit {result.returncode}):\n"
+            f"STDOUT:\n{result.stdout}\n"
+            f"STDERR:\n{result.stderr}"
+        )
+    if "Traceback (most recent call last)" in result.stderr:
+        raise RuntimeError(
+            "Blender script crashed (Blender still exits 0):\n"
+            f"STDERR:\n{result.stderr}"
+        )
+
+
 @register_renderer("blender")
 class BlenderRenderer:
     """Blender headless renderer – registry ID ``"blender"``.
@@ -191,17 +232,7 @@ class BlenderRenderer:
 
         produced: list[Path] = []
 
-        # Blender ships its own Python interpreter, which often lacks numpy.
-        # Expose the site-packages of the running weight-atlas process (which
-        # has numpy) to the Blender script via PYTHONPATH so the terrain script
-        # can load the heightmap .npy files.
-        site_dirs = [p for p in sys.path if "site-packages" in p]
-        blender_env = dict(os.environ)
-        if site_dirs:
-            existing = blender_env.get("PYTHONPATH")
-            blender_env["PYTHONPATH"] = os.pathsep.join(site_dirs) + (
-                (os.pathsep + existing) if existing else ""
-            )
+        blender_env = build_blender_env()
 
         # Render smooth version
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -227,21 +258,7 @@ class BlenderRenderer:
                 subsurf_levels=subsurf,
                 fill_light_energy=fill_energy,
             )
-
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=600, env=blender_env
-            )
-            if result.returncode != 0:
-                raise RuntimeError(
-                    f"Blender render failed (exit {result.returncode}):\n"
-                    f"STDOUT:\n{result.stdout}\n"
-                    f"STDERR:\n{result.stderr}"
-                )
-            if "Traceback (most recent call last)" in result.stderr:
-                raise RuntimeError(
-                    "Blender script crashed (Blender still exits 0):\n"
-                    f"STDERR:\n{result.stderr}"
-                )
+            run_blender_command(cmd, blender_env)
 
             if out_png_smooth.exists():
                 produced.append(out_png_smooth)
@@ -272,21 +289,7 @@ class BlenderRenderer:
                     subsurf_levels=subsurf,
                     fill_light_energy=fill_energy,
                 )
-
-                result = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=600, env=blender_env
-                )
-                if result.returncode != 0:
-                    raise RuntimeError(
-                        f"Blender render failed (exit {result.returncode}):\n"
-                        f"STDOUT:\n{result.stdout}\n"
-                        f"STDERR:\n{result.stderr}"
-                    )
-                if "Traceback (most recent call last)" in result.stderr:
-                    raise RuntimeError(
-                        "Blender script crashed (Blender still exits 0):\n"
-                        f"STDERR:\n{result.stderr}"
-                    )
+                run_blender_command(cmd, blender_env)
 
                 if out_png_raw.exists():
                     produced.append(out_png_raw)

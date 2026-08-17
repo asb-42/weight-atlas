@@ -1,5 +1,29 @@
 ## [Unreleased]
 
+### Fractal Terrain Renderer (fBm)
+
+- New `"fractal"` renderer (`weight-atlas render OUT_DIR --renderer fractal`,
+  also via `/api/jobs/{id}/render/fractal` + "Render Fractal Terrain" button
+  on the model overview): genuine per-slot fBm geometry whose parameters are
+  derived from real tensor statistics — effective_rank → octaves, kurtosis →
+  persistence, sparsity → lacunarity, spectral_norm → base_freq (spec
+  `fractal.mapping`, linear slot-range scaling, NaN → midpoint).
+- Pure NumPy value noise on a fixed splitmix64 integer-lattice hash (no RNG,
+  no timestamps) → byte-identical `terrain_fractal.png` + `terrain_fractal.obj`
+  for identical inputs; the height field *is* the fractal, not a texture.
+- Per-slot character: each slot column is its own fBm strip (fixed per-slot
+  seed = base seed + slot index), tint is a second independently-seeded strip.
+- Rendered through the existing Blender terrain pipeline (`render_terrain.py`,
+  same smoothing/lights/metadata-strip), so fractal and plain terrain renders
+  are directly comparable.
+- One render per model: the fractal depends on the fingerprint + seed, not the
+  channel — per-instance dedupe means the per-channel API/CLI loop runs Blender
+  once and all channels reuse the identical artefacts (the primary language
+  raster's layout, never overwritten by the smaller vision layout).
+- New spec keys `fractal` + `seeds.fractal` added to all spec versions
+  (v1–v2.4, additive, spec_version unchanged). New `tests/test_fractal_renderer.py`
+  (19 tests, dry-run — mocked subprocess).
+
 ### Blender Terrain Geometry Smoothing
 
 - Geometry smoothing (terrain, not raw values): height is now bilinearly

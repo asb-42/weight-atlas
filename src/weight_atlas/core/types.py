@@ -121,6 +121,7 @@ class AtlasSpec:
     sheet: dict[str, Any]
     seeds: dict[str, Any]
     blender: dict[str, Any] = field(default_factory=dict)
+    fractal: dict[str, Any] = field(default_factory=dict)
     compare: dict[str, Any] = field(default_factory=dict)
     embedding: dict[str, Any] = field(default_factory=dict)
     qimpact: dict[str, Any] = field(default_factory=dict)
@@ -142,6 +143,7 @@ class AtlasSpec:
             sheet=dict(raw["sheet"]),
             seeds=dict(raw["seeds"]),
             blender=dict(raw.get("blender", {})),
+            fractal=dict(raw.get("fractal", {})),
             compare=dict(raw.get("compare", {})),
             qimpact=dict(raw.get("qimpact", {})),
             edit=dict(raw.get("edit", {})),

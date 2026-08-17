@@ -20,7 +20,8 @@ scales, grid, render, compare, blender) plus the activity protocol schema.
 - **Keep versions in sync**: shared extension keys must exist in all spec
   versions — e.g. `compare.aligned_interp` (linear/nearest) and the
   `blender` block keys (`pitch`, `clip`, `adaptive_z_scale`,
-  `subsurf_levels`, `fill_light_energy`). Adding a key to v2.4 but not v1 is
+  `subsurf_levels`, `fill_light_energy`) and the `fractal` block keys
+  (`seed`, `cell_h`, `cell_w`, `mapping`). Adding a key to v2.4 but not v1 is
   a contract violation.
 - **Spec version is hard**: `spec_version` mismatch is a hard reject in
   compare. Never bump `spec_version` for additive extensions — document them
@@ -29,9 +30,11 @@ scales, grid, render, compare, blender) plus the activity protocol schema.
   without schema validation, so extensions are safe; keep them optional with
   documented defaults.
 - **Consumers**: channels (stats + scale), `grid` (upsample/smooth), `sheet`
-  (contours/lighting/dpi), `blender` (render settings), `compare`
-  (alignment/mode/interp), `embedding` (PCA/UMAP method), `name_map`
-  (tensor-name → slot mapping registry, read by `core/name_map.py`).
+  (contours/lighting/dpi), `blender` (render settings), `fractal` (fBm
+  renderer mapping: `seed`, `cell_h`/`cell_w`, per-target `stat` + `lo`/`hi`
+  range), `compare` (alignment/mode/interp), `embedding` (PCA/UMAP method),
+  `name_map` (tensor-name → slot mapping registry, read by
+  `core/name_map.py`).
 
 ## Name-mapping registry (`name_map` block)
 

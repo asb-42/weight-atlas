@@ -17,6 +17,7 @@ from weight_atlas.api.routes import create_router
 from weight_atlas.core.types import get_default_spec_path, load_default_spec
 from weight_atlas.render import (  # noqa: F401 — registers renderers
     blender,
+    fractal,
     matplotlib_sheet,
     preview,
 )

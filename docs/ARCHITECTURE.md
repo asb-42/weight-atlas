@@ -183,6 +183,71 @@ default 1).
 `spec_version` stays 4 (additive extension documented here per spec; never
 bump for new keys).
 
+## Fractal Terrain Pipeline
+
+### Data flow
+```
+fingerprint.json ─► slot_stat_medians ─► stats_to_params ─► slot_fractal_params
+                                                            │
+                                    slot_fractal_field (fBm)├─► .npy tempdir
+                                    (per-slot strips)      │
+                                                            ▼
+                                     render_terrain.py (bpy) ─► terrain_fractal.png
+                                                                 └──► terrain_fractal.obj
+```
+
+### Design decisions
+
+- **Genuine fractal geometry, not a texture**: per-slot fBm parameters
+  (octaves, persistence, lacunarity, base frequency) are derived from the
+  slot's *real* tensor statistics — effective_rank → octaves, kurtosis →
+  persistence, sparsity → lacunarity, spectral_norm → base_freq (spec
+  `fractal.mapping`). The height field *is* the fractal; statistics feed the
+  formula, not a heightmap with a fractal painted on top.
+- **Per-slot character**: each slot column in the raster is its own fBm strip
+  (fixed per-slot seed = base seed + slot index), so adjacent slots with
+  different stats render visibly different self-similar structure. Layout
+  mirrors the (layers × slots) raster (`fractal.cell_h`/`cell_w` cells per
+  logical cell).
+- **Rendered through the same Blender pipeline**: the fractal height/tint
+  fields reuse `render_terrain.py` (same smoothing, lights, subsurf, PNG
+  metadata stripping), so fractal and plain terrain renders are directly
+  comparable. Tint is a second, independently-seeded per-slot fBm strip.
+- **Determinism**: pure NumPy value noise on a fixed integer-lattice hash
+  (no RNG, no timestamps) → byte-identical PNG + OBJ for identical inputs.
+- **One render per model**: the fractal depends on the fingerprint + seed,
+  not the channel. The API/CLI call `render()` once per channel (height, tint,
+  rough, vision_*); a per-instance dedupe keyed on `(out_dir, seed)` makes
+  Blender run once and all channels reuse the identical artefacts (the primary
+  language raster's layout, never overwritten by the smaller vision layout).
+
+### Spec extension
+
+The `atlas_spec.v2.4.json` may include a `fractal` block (all optional,
+defaults shown):
+```json
+{
+  "fractal": {
+    "seed": 0,
+    "cell_h": 8,
+    "cell_w": 8,
+    "mapping": {
+      "octaves":     {"stat": "effective_rank", "lo": 4, "hi": 8},
+      "persistence": {"stat": "kurtosis",       "lo": 0.4, "hi": 0.7},
+      "lacunarity":  {"stat": "sparsity",       "lo": 1.8, "hi": 2.4},
+      "base_freq":   {"stat": "spectral_norm",  "lo": 1.0, "hi": 2.5}
+    }
+  }
+}
+```
+`seed`: base lattice seed (also `seeds.fractal`); `cell_h`/`cell_w`: fractal
+cells per logical layer/slot; `mapping`: per-target stat + linear
+min→max range (clamped). Slots with NaN stats fall back to the target range
+midpoint.
+
+`spec_version` stays 4 (additive extension documented here per spec; never
+bump for new keys).
+
 ### Smoke test
 
 `scripts/smoke_blender.sh` (local, not CI):

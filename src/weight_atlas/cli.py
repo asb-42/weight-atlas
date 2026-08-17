@@ -17,6 +17,7 @@ from weight_atlas.core.registry import get_renderer
 from weight_atlas.core.types import AtlasSpec, load_default_spec
 from weight_atlas.render import (
     blender,  # noqa: F401 — registers renderer
+    fractal,  # noqa: F401 — registers renderer
     matplotlib_sheet,  # noqa: F401 — registers renderer
 )
 from weight_atlas.scan import scan as run_scan

@@ -42,6 +42,8 @@ def _isolated_registry():
     importlib.reload(safetensors_loader)
     importlib.reload(matplotlib_sheet)
     importlib.reload(gguf_loader)
+    import weight_atlas.render.fractal.wrapper as fractal_wrapper
+    importlib.reload(fractal_wrapper)
 
 
 @pytest.fixture
