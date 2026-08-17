@@ -38,6 +38,12 @@ fields, compute per-channel deltas, rank hotspots, and emit a compare report.
   widths, NOT `len(spec.slots)` as a floor (no phantom upsampled columns).
 - **Determinism**: delta TIFFs, compare JSON, and delta sheets must be
   byte-identical for identical inputs (NaN positions excluded via masks).
+- **Sheet vs profile scaling**: the sheet's diverging colormap scales to the
+  cell-level robust vmax (`_compute_vmax`); the per-row profile strip must
+  compute its OWN vmax from its row RMS values — never reuse the cell vmax.
+  When the bulk of cells are ~identical, the robust cap collapses the cell
+  vmax toward ~0 and reusing it saturates every profile bar to the top of the
+  "hot" colormap (a fully white `delta_profile_<channel>.png`).
 - **NaN discipline**: deltas are NaN where either field is NaN; hotspot
   ranking and metrics filter NaN explicitly (never treat as zero value).
 - **CompareSummary.alignment**: always expose mode, layer counts, common grid,
@@ -55,5 +61,6 @@ fields, compute per-channel deltas, rank hotspots, and emit a compare report.
 - `tests/test_compare.py` covers alignment, delta, summary, determinism;
   `tests/test_moe.py` covers expert panels. Run via
   `cd /media/data/coding/weight-atlas && .venv/bin/python -m pytest tests/test_compare.py`.
-- `tests/test_compare.py` has 61 tests (aligned nearest/linear, phantom-column
-  guard, different-slot-count padding, delta shapes, hotspot ranking).
+- `tests/test_compare.py` has 62 tests (aligned nearest/linear, phantom-column
+  guard, different-slot-count padding, delta shapes, hotspot ranking,
+  profile-strip self-scaling regression).

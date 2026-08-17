@@ -699,3 +699,37 @@ class TestDeltaSheetVmax:
         # Robust cap should keep vmax well below the outlier magnitude
         assert vmax < 0.5
         assert vmax > 0.05  # still large enough to show the bulk
+
+    def test_profile_does_not_reuse_cell_vmax(self, simple_spec, tmp_path):
+        """The profile strip must scale to its own per-row RMS values.
+
+        Regression: a channel whose bulk cells are ~unchanged collapses the
+        cell-level vmax (robust cap → ~0), and reusing it for the profile
+        saturated every bar to the top of the "hot" colormap = a fully white
+        delta_profile_<channel>.png."""
+        from weight_atlas.compare.render.delta_sheet import DeltaSheet, _compute_vmax
+
+        # Rows have increasing change strength (varying per-row RMS), bulk cells are
+# small but non-zero — so the robust cap collapses the sheet-level vmax the
+# way the real tint channel does, while the profile needs its own scale.
+        rng = np.random.default_rng(7)
+        data = rng.normal(0, 0.001, (40, 40))
+        for i in range(40):
+            data[i, i] = 0.1 + 0.02 * i
+        # Sheet-level vmax collapses because the bulk cells are ~zero.
+        cell_vmax = _compute_vmax(data, 0.98)
+        assert cell_vmax < 0.2
+
+        renderer = DeltaSheet()
+        out = tmp_path / "render"
+        paths = renderer.render(data, simple_spec, out, channel="height", mode="strict")
+        profile_path = next(p for p in paths if p.name == "delta_profile_height.png")
+
+        # The profile strip must not be washed out to white.
+        from PIL import Image
+
+        arr = np.asarray(Image.open(profile_path).convert("RGB"))
+        white = (arr > 250).all(axis=2).mean()
+        # The figure background is white but the strip (center band) must show
+        # color: at least 20% of pixels must be non-white.
+        assert white < 0.8

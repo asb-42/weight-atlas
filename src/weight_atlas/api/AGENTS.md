@@ -55,6 +55,12 @@ scan/render/compare, and provides file-browsing and result endpoints. The UI
   the worker. The compare page candidate list only surfaces DONE **scan**
   jobs (`job_type == "scan"`) — render jobs may point their `out_dir` at a
   compare output dir and must never be offered as a model to compare.
+- **Compare report shows model names**: `GET /compare/{job_id}` derives the
+  display names from `job.model_path` (`"dir_a|dir_b"` → `dir_a.name` /
+  `dir_b.name`) and passes them to the template as `model_a_name` /
+  `model_b_name` — the fingerprint carries no human-readable display name, so
+  the scan dir names are the labels shown on the report instead of bare
+  "A"/"B".
 - **Errors surface on the job**: worker catches exceptions → `job.status =
   FAILED` + `job.error`; the API never raises unhandled.
 - **LLM query API is a separate router**: `query_routes.py` owns the read-only

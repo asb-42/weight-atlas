@@ -157,7 +157,7 @@ class DeltaSheet:
 
         # Render profile strip if requested
         if render_profile:
-            profile_path = self._render_profile(data, spec, out, channel, mode, vmax, model_a, model_b)
+            profile_path = self._render_profile(data, spec, out, channel, mode, model_a, model_b)
             produced.append(profile_path)
 
         return produced
@@ -249,7 +249,6 @@ class DeltaSheet:
         out: Path,
         channel: str,
         mode: str,
-        vmax: float,
         model_a: str = "",
         model_b: str = "",
     ) -> Path:
@@ -267,9 +266,15 @@ class DeltaSheet:
 
         fig, ax = plt.subplots(figsize=(max(6, n_cols * 0.5), 1.0))
 
+        # Scale the strip to the profile's own values, NOT the sheet's
+        # cell-level vmax: a channel whose bulk is unchanged (many ~zero
+        # cells) collapses the sheet vmax to a tiny value, and reusing it here
+        # would saturate every bar to the top of the "hot" colormap (white).
+        profile_vmax = _compute_vmax(profile.reshape(-1, 1), _get_diverging_clip(spec))
+
         # Plot as 1×L strip using hot colormap
         profile_2d = profile.reshape(1, -1)
-        norm = TwoSlopeNorm(vmin=0, vcenter=vmax / 2, vmax=vmax) if vmax > 0 else CenteredNorm()
+        norm = TwoSlopeNorm(vmin=0, vcenter=profile_vmax / 2, vmax=profile_vmax) if profile_vmax > 0 else CenteredNorm()
 
         ax.imshow(
             profile_2d,

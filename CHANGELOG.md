@@ -1,5 +1,22 @@
 ## [Unreleased]
 
+### Compare: profile strips self-scale + report shows model names
+
+- **Bug**: `delta_profile_<channel>.png` was completely white for the tint
+  channel. The profile strip reused the sheet's cell-level `vmax`; tint cells
+  are ~identical (median |Δ| ≈ 0.0005) so the robust cap collapsed vmax to
+  ~0.003 while per-row RMS values reach ~0.31 — every bar saturated to the
+  top of the "hot" colormap (white).
+- **Fix**: `_render_profile` now computes its own vmax from the per-row RMS
+  values (`_compute_vmax(profile.reshape(-1, 1), clip)`) instead of reusing
+  the sheet's cell vmax. Re-rendered profiles are consistent with the sheet
+  (~52% plot-background white).
+- **UI**: the Compare Report page now shows the compared model names (derived
+  from the compare job's `dir_a`/`dir_b` directory names) in the header,
+  alignment banner, and loader table instead of bare "A"/"B".
+- Tests: `tests/test_compare.py` — profile-strip self-scaling regression
+  (now 62 tests); `tests/test_api.py` — compare report renders model names.
+
 ### Compare: nearest-mode alignment with different slot counts
 
 - **Bug**: `aligned` + `nearest` comparison of two models with different

@@ -629,6 +629,49 @@ class TestComparePageCandidates:
         assert str(scan_job.out_dir) in html
         assert str(compare_out) not in html
 
+    def test_compare_report_shows_model_names(
+        self, tmp_path: Path, spec_path: Path
+    ) -> None:
+        """The compare report must show the compared model names, not just
+        "model A"/"model B"."""
+        import uuid
+
+        from weight_atlas.api.jobs import Job, JobQueue
+
+        db_path = tmp_path / "jobs.db"
+        queue = JobQueue(db_path, on_job=lambda j: None)
+
+        dir_a = tmp_path / "Qwen3.8-27B-GGUF"
+        dir_b = tmp_path / "Huihui-Qwen3.8-27B-abliterated-GGUF"
+        dir_a.mkdir(exist_ok=True)
+        dir_b.mkdir(exist_ok=True)
+        out_dir = tmp_path / "compare_a_vs_b_abcd1234"
+        out_dir.mkdir(exist_ok=True)
+        (out_dir / "compare_summary.json").write_text('{"channels": {}}')
+
+        now = "2026-01-01T00:00:00"
+        compare_job = Job(
+            job_id=str(uuid.uuid4()),
+            model_path=f"{dir_a}|{dir_b}",
+            out_dir=str(out_dir),
+            spec_path=str(spec_path),
+            status=JobStatus.DONE,
+            created_at=now,
+            updated_at=now,
+            message="Complete",
+            job_type="compare",
+            compare_mode="aligned",
+        )
+        queue._save(compare_job)  # noqa: SLF001
+
+        app = create_app(db_path=db_path, spec_path=spec_path, output_root=tmp_path / "output")
+        client = TestClient(app)
+        resp = client.get(f"/compare/{compare_job.job_id}")
+        assert resp.status_code == 200
+        html = resp.text
+        assert "Qwen3.8-27B-GGUF" in html
+        assert "Huihui-Qwen3.8-27B-abliterated-GGUF" in html
+
 
 class TestArtefactRoute:
     def test_artefact_route_serves_png(self, client: TestClient, fake_model: Path, tmp_path: Path) -> None:

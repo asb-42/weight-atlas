@@ -23,6 +23,9 @@
 {% endblock %}
 {% block content %}
 <h2>Compare Report</h2>
+{% if model_a_name and model_b_name %}
+<h3>{{ model_a_name }} vs {{ model_b_name }}</h3>
+{% endif %}
 <p><a href="/compare">← New comparison</a></p>
 
 {% if job.status != "done" %}
@@ -50,8 +53,8 @@
             rows are normalized depth t∈[0,1] and resampled to a common grid of
             {{ compare_summary.alignment.n_rows_common }} rows —
             they are <strong>not</strong> absolute layer indices.
-            Model A has {{ compare_summary.alignment.n_rows_a }} layers, model B
-            {{ compare_summary.alignment.n_rows_b }} layers.
+            Model A ({{ model_a_name or "A" }}) has {{ compare_summary.alignment.n_rows_a }} layers, model B
+            ({{ model_b_name or "B" }}) has {{ compare_summary.alignment.n_rows_b }} layers.
         </p>
         {% if compare_summary.alignment.interp == "nearest" %}
         <p>
@@ -127,12 +130,12 @@
         </thead>
         <tbody>
             <tr>
-                <td>A</td>
+                <td>{{ model_a_name or "A" }}</td>
                 <td>{{ compare_summary.loaders.a }}</td>
                 <td>{{ compare_summary.model_a.quantization | tojson if compare_summary.model_a.quantization else "-" }}</td>
             </tr>
             <tr>
-                <td>B</td>
+                <td>{{ model_b_name or "B" }}</td>
                 <td>{{ compare_summary.loaders.b }}</td>
                 <td>{{ compare_summary.model_b.quantization | tojson if compare_summary.model_b.quantization else "-" }}</td>
             </tr>

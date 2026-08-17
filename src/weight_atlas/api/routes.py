@@ -469,6 +469,12 @@ def create_router(
         except ValueError:
             out_dir_rel = str(out_dir)
 
+        # Compare job model_path is "dir_a|dir_b"; the dir names are the best
+        # human-readable labels (the fingerprint carries no display name).
+        model_parts = str(job.model_path).split("|")
+        model_a_name = Path(model_parts[0]).name if len(model_parts) > 0 and model_parts[0] else ""
+        model_b_name = Path(model_parts[1]).name if len(model_parts) > 1 and model_parts[1] else ""
+
         return templates.TemplateResponse(
             request,
             "compare_report.html",
@@ -482,6 +488,8 @@ def create_router(
                 "compare_summary": compare_summary,
                 "delta_pngs": [str(p.name) for p in delta_pngs],
                 "out_dir": out_dir_rel,
+                "model_a_name": model_a_name,
+                "model_b_name": model_b_name,
             },
         )
 
