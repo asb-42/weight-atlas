@@ -24,9 +24,11 @@ from weight_atlas.render.blender.blender_wrapper import (
     write_obj,
 )
 from weight_atlas.render.blender.render_terrain import (
+    _strip_png_metadata,
     compute_effective_z_scale,
     compute_ortho_scale,
     normalise_height,
+    resample_bilinear,
 )
 
 
@@ -130,6 +132,38 @@ class TestBuildBlenderCommand:
         assert args_after_sep[args_after_sep.index("--z-scale") + 1] == "0.3"
         assert "--resolution" in args_after_sep
         assert args_after_sep[args_after_sep.index("--resolution") + 1] == "2048"
+
+    def test_subsurf_and_fill_args_present(self, tmp_path: Path):
+        cmd = build_blender_command(
+            blender_path=tmp_path / "blender",
+            script_path=tmp_path / "s.py",
+            height_npy=tmp_path / "h.npy",
+            tint_npy=tmp_path / "t.npy",
+            out_png=tmp_path / "o.png",
+            grid=1024,
+            z_scale=0.3,
+            resolution=2048,
+            subsurf_levels=2,
+            fill_light_energy=0.4,
+        )
+        args_after_sep = cmd[cmd.index("--") + 1:]
+        assert args_after_sep[args_after_sep.index("--subsurf-levels") + 1] == "2"
+        assert args_after_sep[args_after_sep.index("--fill-light-energy") + 1] == "0.4"
+
+    def test_subsurf_fill_defaults(self, tmp_path: Path):
+        cmd = build_blender_command(
+            blender_path=tmp_path / "blender",
+            script_path=tmp_path / "s.py",
+            height_npy=tmp_path / "h.npy",
+            tint_npy=tmp_path / "t.npy",
+            out_png=tmp_path / "o.png",
+            grid=1024,
+            z_scale=0.3,
+            resolution=2048,
+        )
+        args_after_sep = cmd[cmd.index("--") + 1:]
+        assert args_after_sep[args_after_sep.index("--subsurf-levels") + 1] == "1"
+        assert args_after_sep[args_after_sep.index("--fill-light-energy") + 1] == "0.35"
 
     def test_new_args_present(self, tmp_path: Path):
         cmd = build_blender_command(
@@ -306,6 +340,31 @@ class TestBlenderRenderer:
             with mock.patch.dict(os.environ, {"WEIGHT_ATLAS_BLENDER": str(fake_blender)}), pytest.raises(RuntimeError, match="Blender render failed"):
                 renderer.render(mock.MagicMock(), spec, out)
 
+    def test_render_catches_blender_script_traceback(self, tmp_artefacts: Path):
+        """Blender exits 0 even when the -P script crashes; a Python traceback
+        in stderr must fail the render (else stale PNGs are silently served)."""
+        spec = mock.MagicMock()
+        renderer = BlenderRenderer()
+        out = tmp_artefacts / "render"
+        out.mkdir(parents=True, exist_ok=True)
+
+        fake_blender = tmp_artefacts / "blender"
+        fake_blender.write_text("#!/bin/sh\necho ok\n")
+        fake_blender.chmod(0o755)
+
+        stderr = (
+            "Blender 4.0.2\n"
+            "Traceback (most recent call last):\n"
+            '  File "/x/render_terrain.py", line 199, in make_grid_mesh\n'
+            "AttributeError: 'Object' object has no attribute 'shade_smooth'\n"
+        )
+        with mock.patch("subprocess.run") as mock_run:
+            mock_run.return_value = mock.MagicMock(
+                returncode=0, stdout="", stderr=stderr
+            )
+            with mock.patch.dict(os.environ, {"WEIGHT_ATLAS_BLENDER": str(fake_blender)}), pytest.raises(RuntimeError, match="Blender script crashed"):
+                renderer.render(mock.MagicMock(), spec, out)
+
 
 class TestWriteObj:
     def test_writes_valid_obj(self, tmp_path: Path):
@@ -355,6 +414,129 @@ class TestWriteObj:
         vertex_lines = [ln for ln in lines if ln.startswith("v ")]
         # Always downsampled to 256x256
         assert len(vertex_lines) == 256 * 256
+
+
+class TestStripPngMetadata:
+    def test_removes_date_and_render_time(self, tmp_path: Path):
+        """Blender stamps Date/RenderTime tEXt chunks; stripping them is what
+        makes two renders byte-identical. Build a minimal PNG and check."""
+        import struct
+        import zlib
+
+        def chunk(typ: bytes, payload: bytes) -> bytes:
+            return (
+                struct.pack(">I", len(payload))
+                + typ
+                + payload
+                + struct.pack(">I", zlib.crc32(typ + payload))
+            )
+
+        ihdr = struct.pack(">IIBBBBB", 2, 2, 8, 2, 0, 0, 0)
+        rows = b"".join(b"\x00" + b"\x00\x00\x00\x00\x00\x00" for _ in range(2))
+        idat = zlib.compress(rows)
+        png = (
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", ihdr)
+            + chunk(b"tEXt", b"Date\x002026/08/17 07:49:32")
+            + chunk(b"tEXt", b"RenderTime\x0000:02.83")
+            + chunk(b"tEXt", b"Software\x00weight-atlas")
+            + chunk(b"IDAT", idat)
+            + chunk(b"IEND", b"")
+        )
+        p = tmp_path / "test.png"
+        p.write_bytes(png)
+        _strip_png_metadata(str(p))
+        out = p.read_bytes()
+        assert b"Date" not in out
+        assert b"RenderTime" not in out
+        assert b"Software" in out
+        assert out[:8] == b"\x89PNG\r\n\x1a\n"
+
+    def test_still_valid_png(self, tmp_path: Path):
+        """The rewritten file must remain a decodable PNG."""
+        import struct
+        import zlib
+
+        def chunk(typ: bytes, payload: bytes) -> bytes:
+            return (
+                struct.pack(">I", len(payload))
+                + typ
+                + payload
+                + struct.pack(">I", zlib.crc32(typ + payload))
+            )
+
+        ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+        idat = zlib.compress(b"\x00\x80\x80\x80")
+        png = (
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", ihdr)
+            + chunk(b"tEXt", b"RenderTime\x0000:02.84")
+            + chunk(b"IDAT", idat)
+            + chunk(b"IEND", b"")
+        )
+        p = tmp_path / "test.png"
+        p.write_bytes(png)
+        _strip_png_metadata(str(p))
+        from PIL import Image
+        im = Image.open(p)
+        im.load()  # decode
+        assert im.size == (1, 1)
+
+    def test_non_png_untouched(self, tmp_path: Path):
+        p = tmp_path / "not.png"
+        p.write_bytes(b"not a png")
+        _strip_png_metadata(str(p))
+        assert p.read_bytes() == b"not a png"
+
+
+class TestResampleBilinear:
+    def test_identity_when_same_size(self):
+        arr = np.random.default_rng(1).random((64, 64))
+        out = resample_bilinear(arr, 64)
+        np.testing.assert_allclose(out, arr)
+
+    def test_upsample_constant(self):
+        arr = np.full((4, 4), 2.0)
+        out = resample_bilinear(arr, 16)
+        assert out.shape == (16, 16)
+        np.testing.assert_allclose(out, 2.0)
+
+    def test_downsample_constant(self):
+        arr = np.full((16, 16), 2.0)
+        out = resample_bilinear(arr, 4)
+        assert out.shape == (4, 4)
+        np.testing.assert_allclose(out, 2.0)
+
+    def test_interpolation_is_smooth(self):
+        # Bilinear of a ramp must not step like nearest-neighbour.
+        arr = np.arange(16, dtype=float).reshape(4, 4)
+        out = resample_bilinear(arr, 8)
+        # Interior row should be monotonic (a nearest-neighbour resample of a
+        # 4->8 upscale produces plateaus).
+        row = out[3]
+        assert np.all(np.diff(row) > 0)
+
+    def test_deterministic(self):
+        arr = np.random.default_rng(2).random((8, 8))
+        a = resample_bilinear(arr, 16)
+        b = resample_bilinear(arr, 16)
+        np.testing.assert_array_equal(a, b)
+
+    def test_nan_hole_preserved(self):
+        arr = np.ones((4, 4))
+        arr[1, 1] = np.nan
+        out = resample_bilinear(arr, 8)
+        # The hole should still contain NaN in its neighbourhood.
+        assert np.isnan(out).any()
+        # Far from the hole, values stay finite.
+        assert np.isfinite(out[0, 0])
+
+    def test_preserves_extrema(self):
+        # Corner/edge-aligned sampling keeps the corner value exact.
+        arr = np.zeros((4, 4))
+        arr[0, 0] = 1.0
+        out = resample_bilinear(arr, 16)
+        assert out[0, 0] == 1.0
 
 
 class TestNormaliseHeight:

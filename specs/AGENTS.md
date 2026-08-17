@@ -19,8 +19,9 @@ scales, grid, render, compare, blender) plus the activity protocol schema.
   re-format whole files (`json.dump(indent=…)` is forbidden).
 - **Keep versions in sync**: shared extension keys must exist in all spec
   versions — e.g. `compare.aligned_interp` (linear/nearest) and the
-  `blender` block keys (`pitch`, `clip`, `adaptive_z_scale`). Adding a key to
-  v2.4 but not v1 is a contract violation.
+  `blender` block keys (`pitch`, `clip`, `adaptive_z_scale`,
+  `subsurf_levels`, `fill_light_energy`). Adding a key to v2.4 but not v1 is
+  a contract violation.
 - **Spec version is hard**: `spec_version` mismatch is a hard reject in
   compare. Never bump `spec_version` for additive extensions — document them
   in `docs/ARCHITECTURE.md` instead.

@@ -139,18 +139,18 @@ field_tint_smooth.tif ──┘                                          │
 
 - **Engine**: `BLENDER_WORKBENCH` (headless-safe, deterministic, no GPU/EGL requirement). Cycles deferred as beauty-option to backlog.
 - **Binary resolution**: `WEIGHT_ATLAS_BLENDER` env var → `shutil.which("blender")` → clear error message with install hint. No pip dependency.
-- **Mesh**: 1024² grid (spec value), vertex-Z from height (normalised + z-scaled), vertex-color from tint. Mesh generation via `foreach_set` for performance.
+- **Mesh**: 1024² grid (spec value), vertex-Z from height (normalised + z-scaled), vertex-color from tint. Mesh generation via `foreach_set` for performance. Geometry smoothing (terrain, not raw values): height is bilinearly resampled to the grid (`resample_bilinear`, pure NumPy — no scipy inside bpy), the mesh is smooth-shaded (auto-smooth 30° cutoff) and Catmull-Clark subdivided (`blender.subsurf_levels`, default 1, 0=off).
 - **Camera**: orthographic, fixed 18° pitch (not top-down; reveals relief while
   staying orthographic — no perspective distortion, comparable across models).
   ortho_scale computed from pitch + effective z-scale so the tilted grid stays
   in frame (never smaller than 2.2).
-- **Lighting**: Sun lamp, azimuth 315° (NW), altitude 45°, energy 1.0. Studio shading with vertex colors.
+- **Lighting**: Workbench STUDIO shading with vertex colors and `use_scene_lights`/`use_scene_world` enabled (without these the scene SUNs are a no-op in the render). Two fixed SUNs: NW key (azimuth 315°, altitude 45°, energy 1.0) plus a soft SE fill (azimuth 135°, altitude 25°, energy `blender.fill_light_energy`, default 0.35) so the shadow side of the terrain reads instead of blacking out.
 - **Height normalisation**: robust percentile clip (1–99%, spec `clip`) before
   rescaling to [0,1] — a single outlier hotspot can no longer flatten the bulk.
   `adaptive_z_scale` (opt-in) rescales Z so relief std is constant across
   fields (base_z_scale / std, capped at 5.0); **breaks absolute-amplitude
   comparability** — document as purely visual.
-- **OBJ export**: plain-text Wavefront OBJ at 256² downsample, written directly by wrapper (no bpy-ops). Deterministic, diffable fingerprint artefact, uses the same robust normalisation as the PNG render.
+- **OBJ export**: plain-text Wavefront OBJ at 256² bilinear downsample (same `resample_bilinear` helper as the renderer, not nearest-neighbour), written directly by wrapper (no bpy-ops). Deterministic, diffable fingerprint artefact, uses the same robust normalisation as the PNG render.
 - **World**: fixed dark grey (0.05, 0.05, 0.05), no HDR/noise.
 - **Determinism**: same height+tint inputs → byte-identical PNG (locally verified by smoke test) + byte-identical OBJ (unit tested). Workbench must provide pixel-identical output; if not, documented in smoke-test log with root-cause analysis (never SSIM).
 
@@ -165,7 +165,9 @@ The `atlas_spec.v2.4.json` may include a `blender` block (all optional, defaults
     "z_scale": 0.3,
     "pitch": 18.0,
     "clip": 0.01,
-    "adaptive_z_scale": false
+    "adaptive_z_scale": false,
+    "subsurf_levels": 1,
+    "fill_light_energy": 0.35
   }
 }
 ```
@@ -173,6 +175,10 @@ The `atlas_spec.v2.4.json` may include a `blender` block (all optional, defaults
 `clip`: percentile band for robust height normalisation (0 = plain min/max).
 `adaptive_z_scale`: if true, effective z = `z_scale / std(height)` (capped at
 5.0) — amplifies weak relief but makes amplitudes relative, not absolute.
+`subsurf_levels`: Catmull-Clark subdivision levels (0 = raw flat-shaded mesh,
+default 1).
+`fill_light_energy`: energy of the soft SE fill sun lifting the shadow side
+(default 0.35; 0 disables the fill).
 
 `spec_version` stays 4 (additive extension documented here per spec; never
 bump for new keys).

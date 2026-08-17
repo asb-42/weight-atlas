@@ -19,16 +19,30 @@ contours), preview thumbnails, and Blender 3D terrain renders (+ OBJ mesh).
 - **Determinism is a feature**: sheets, previews, PNGs, and the OBJ export
   must be byte-identical for identical inputs. Workbench engine (no GPU
   sampling noise), fixed world colour, fixed light, no timestamps in PNG.
+  Blender stamps every PNG with `Date`/`RenderTime` tEXt chunks; the terrain
+  script strips them after rendering (`_strip_png_metadata`), so two renders
+  of the same input are byte-identical.
 - **Blender is external**: binary resolved from `WEIGHT_ATLAS_BLENDER` env →
   `shutil.which("blender")`; never a pip dependency. Never assert on Blender
   output in this repo's tests — they are dry-run (mocked subprocess.run);
   real renders run on a separate machine via `scripts/smoke_blender.sh`.
+  **Blender exits 0 even when the `-P` script crashes** — the wrapper fails
+  the render if stderr contains a Python traceback, so stale PNGs can never be
+  served as fresh output.
 - **Blender terrain**: orthographic camera at fixed pitch (spec
   `blender.pitch`, default 18°) — orthographic projection preserved, so
   renders stay comparable across models. Height is robustly normalised
   (percentile clip `blender.clip`, default 1–99%) so outliers cannot flatten
   the bulk. `adaptive_z_scale` (opt-in) rescales Z to constant relief std —
   purely visual, breaks absolute-amplitude comparability; document as such.
+- **Blender geometry smoothing (terrain, not raw values)**: height is
+  bilinearly resampled to the grid (`resample_bilinear`, pure NumPy — no scipy
+  inside bpy), the mesh is smooth-shaded (auto-smooth 30° cutoff) and
+  Catmull-Clark subdivided (`blender.subsurf_levels`, default 1, 0=off).
+  Rendering uses Workbench STUDIO with `use_scene_lights`/`use_scene_world`
+  enabled so the scene SUNs apply: a NW key (azimuth 315°, 45° alt, energy 1)
+  plus a soft SE fill (`blender.fill_light_energy`, default 0.35). Without
+  `use_scene_lights` the SUNs are a no-op in the render.
 - **Sheet renderer**: the matplotlib sheet is a pure height map (hillshade +
   hypsometric tint + contours from the height channel only). Optional display
   knobs in `spec.sheet` (defaults off): `normalized_depth` (project rows onto
@@ -36,8 +50,9 @@ contours), preview thumbnails, and Blender 3D terrain renders (+ OBJ mesh).
   `drop_empty_cols` (drop all-NaN slot columns display-only — never the TIFF
   fields; only fully-empty columns/slot-blocks drop, title lists them).
   `per_row_normalize` (default off) normalizes each row independently.
-- **OBJ export**: 256² downsample, plain text, diffable, uses the same
-  normalisation as the PNG render.
+- **OBJ export**: 256² bilinear downsample (same `resample_bilinear` helper
+  as the renderer, not nearest-neighbour), plain text, diffable, uses the
+  same normalisation as the PNG render.
 
 ## Work Guidance
 

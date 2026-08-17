@@ -24,7 +24,7 @@ import numpy as np
 from weight_atlas.core.registry import register_renderer
 from weight_atlas.core.types import AtlasSpec, Field2D
 from weight_atlas.fields.tif_io import read_tif
-from weight_atlas.render.blender.render_terrain import normalise_height
+from weight_atlas.render.blender.render_terrain import normalise_height, resample_bilinear
 
 # Spec defaults for Blender-specific settings
 _DEFAULT_GRID = 1024
@@ -33,6 +33,8 @@ _DEFAULT_Z_SCALE = 0.3
 _DEFAULT_PITCH = 18.0
 _DEFAULT_CLIP = 0.01
 _DEFAULT_ADAPTIVE_Z_SCALE = False
+_DEFAULT_SUBSURF_LEVELS = 1
+_DEFAULT_FILL_LIGHT_ENERGY = 0.35
 _OBJ_DOWNSAMPLE = 256
 
 
@@ -77,6 +79,8 @@ def build_blender_command(
     pitch: float = _DEFAULT_PITCH,
     clip: float = _DEFAULT_CLIP,
     adaptive_z_scale: bool = _DEFAULT_ADAPTIVE_Z_SCALE,
+    subsurf_levels: int = _DEFAULT_SUBSURF_LEVELS,
+    fill_light_energy: float = _DEFAULT_FILL_LIGHT_ENERGY,
 ) -> list[str]:
     """Construct the command-line for a headless Blender render."""
     cmd = [
@@ -92,6 +96,8 @@ def build_blender_command(
         "--clip", str(clip),
         "--resolution", str(resolution),
         "--pitch", str(pitch),
+        "--subsurf-levels", str(subsurf_levels),
+        "--fill-light-energy", str(fill_light_energy),
     ]
     if adaptive_z_scale:
         cmd.append("--adaptive-z-scale")
@@ -101,15 +107,14 @@ def build_blender_command(
 def write_obj(height: np.ndarray, tint: np.ndarray, out: Path) -> None:
     """Write a Wavefront OBJ mesh (plain text, diffable).
 
-    The mesh is a downsample of the smooth height field to 256² vertices,
-    normalised with the same robust percentile clip as the PNG render.
+    The mesh is a bilinear downsample of the smooth height field to 256²
+    vertices, normalised with the same robust percentile clip as the PNG
+    render. Bilinear (not nearest-neighbour) so the mesh surface is
+    continuous, matching the renderer's geometry smoothing.
     """
-    # Downsample
-    src_h, src_w = height.shape
+    # Bilinear downsample to 256² (same helper the renderer uses).
     target = _OBJ_DOWNSAMPLE
-    row_idx = (np.arange(target) * (src_h - 1) / (target - 1)).astype(int)
-    col_idx = (np.arange(target) * (src_w - 1) / (target - 1)).astype(int)
-    h_small = height[np.ix_(row_idx, col_idx)]
+    h_small = resample_bilinear(height, target)
 
     # Robust normalise (same helper as the PNG renderer)
     h_norm = normalise_height(h_small, _DEFAULT_CLIP)
@@ -181,6 +186,8 @@ class BlenderRenderer:
         pitch = float(_get_spec_value(spec, "pitch", _DEFAULT_PITCH))
         clip = float(_get_spec_value(spec, "clip", _DEFAULT_CLIP))
         adaptive = bool(_get_spec_value(spec, "adaptive_z_scale", _DEFAULT_ADAPTIVE_Z_SCALE))
+        subsurf = int(_get_spec_value(spec, "subsurf_levels", _DEFAULT_SUBSURF_LEVELS))
+        fill_energy = float(_get_spec_value(spec, "fill_light_energy", _DEFAULT_FILL_LIGHT_ENERGY))
 
         produced: list[Path] = []
 
@@ -217,6 +224,8 @@ class BlenderRenderer:
                 pitch=pitch,
                 clip=clip,
                 adaptive_z_scale=adaptive,
+                subsurf_levels=subsurf,
+                fill_light_energy=fill_energy,
             )
 
             result = subprocess.run(
@@ -226,6 +235,11 @@ class BlenderRenderer:
                 raise RuntimeError(
                     f"Blender render failed (exit {result.returncode}):\n"
                     f"STDOUT:\n{result.stdout}\n"
+                    f"STDERR:\n{result.stderr}"
+                )
+            if "Traceback (most recent call last)" in result.stderr:
+                raise RuntimeError(
+                    "Blender script crashed (Blender still exits 0):\n"
                     f"STDERR:\n{result.stderr}"
                 )
 
@@ -255,6 +269,8 @@ class BlenderRenderer:
                     pitch=pitch,
                     clip=clip,
                     adaptive_z_scale=adaptive,
+                    subsurf_levels=subsurf,
+                    fill_light_energy=fill_energy,
                 )
 
                 result = subprocess.run(
@@ -264,6 +280,11 @@ class BlenderRenderer:
                     raise RuntimeError(
                         f"Blender render failed (exit {result.returncode}):\n"
                         f"STDOUT:\n{result.stdout}\n"
+                        f"STDERR:\n{result.stderr}"
+                    )
+                if "Traceback (most recent call last)" in result.stderr:
+                    raise RuntimeError(
+                        "Blender script crashed (Blender still exits 0):\n"
                         f"STDERR:\n{result.stderr}"
                     )
 

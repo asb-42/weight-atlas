@@ -1,5 +1,28 @@
 ## [Unreleased]
 
+### Blender Terrain Geometry Smoothing
+
+- Geometry smoothing (terrain, not raw values): height is now bilinearly
+  resampled to the render grid (`resample_bilinear`, pure NumPy — no scipy
+  inside bpy) instead of nearest-neighbour block-sampling.
+- Mesh is smooth-shaded (auto-smooth 30° cutoff) and Catmull-Clark
+  subdivided (`blender.subsurf_levels`, default 1, 0=off) so the terrain
+  renders as continuous relief rather than flat facets.
+- Workbench lighting now enables `use_scene_lights`/`use_scene_world` (the
+  scene SUNs were previously a no-op in the render) and adds a soft SE fill
+  sun (`blender.fill_light_energy`, default 0.35) lifting the shadow side.
+- OBJ export downsample is now bilinear too (same `resample_bilinear` helper).
+- New spec keys `subsurf_levels` + `fill_light_energy` added to all spec
+  versions (v1–v2.4, additive, spec_version unchanged). Determinism contract
+  unchanged — all steps are fixed topology/light operations.
+- Fixes found while verifying on a machine with Blender 4.0: `shade_smooth()`
+  is a bpy.ops operator on 4.0 (not an Object method) — the script crashed
+  every render; fixed via the `mesh.polygons[].use_smooth` flag. The wrapper
+  now fails the render on a Python traceback in Blender's stderr (Blender
+  exits 0 even when `-P` crashes), so stale PNGs are no longer silently
+  served as fresh output. Blender's `Date`/`RenderTime` PNG tEXt chunks are
+  stripped after rendering so two renders are truly byte-identical.
+
 ### LLM Query API (v0.2)
 
 - New read-only REST layer for LLM agents (spec
