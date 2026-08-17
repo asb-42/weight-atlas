@@ -1,5 +1,20 @@
 ## [Unreleased]
 
+### Compare: only scan outputs are valid inputs
+
+- **Bug**: the compare page listed *all* DONE jobs except compares as model
+  candidates — including render jobs. Delta renders of a comparison point
+  their `out_dir` at the compare output dir, so that compare dir appeared in
+  the Model A/B dropdowns as if it were a scanned model. Submitting it failed
+  inside the worker with `manifest.json not found in <dir>` (compare outputs
+  have `compare_summary.json` + `delta_*.tif`, never a manifest).
+- **Fixes**: the compare page candidate list now only surfaces DONE **scan**
+  jobs (`job_type == "scan"`); and `POST /api/compare` validates up front
+  that `dir_a`/`dir_b` each contain `manifest.json` (400 "not a scan output
+  directory" instead of a deferred job failure).
+- Tests: `tests/test_api.py` — compare page lists only scan jobs, and the
+  compare endpoint rejects/accepts non-scan/scan dirs (3 tests).
+
 ### Fractal Terrain Renderer (fBm)
 
 - New `"fractal"` renderer (`weight-atlas render OUT_DIR --renderer fractal`,

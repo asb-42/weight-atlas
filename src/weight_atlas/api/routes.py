@@ -369,10 +369,13 @@ def create_router(
     @router.get("/compare", response_class=HTMLResponse)
     async def compare_page(request: Request) -> HTMLResponse:
         """Compare page: select two models to compare."""
-        # List completed scan jobs as candidates
+        # List completed scan jobs as candidates. Only scan outputs carry the
+        # manifest.json + field_*.tif artefacts a comparison consumes; render
+        # jobs may point their out_dir at a compare output directory (delta
+        # renders), which has no manifest and would fail the comparison.
         candidates = []
         for job in job_queue.list_jobs(limit=100):
-            if job.status == JobStatus.DONE and job.job_type != "compare":
+            if job.status == JobStatus.DONE and job.job_type == "scan":
                 candidates.append(
                     {
                         "job_id": job.job_id,
@@ -412,6 +415,16 @@ def create_router(
             raise HTTPException(status_code=404, detail=f"dir_b not found: {dir_b}")
         _require_allowed(dir_a)
         _require_allowed(dir_b)
+
+        # A comparison consumes scan artefacts (manifest.json + field_*.tif).
+        # Compare/render output dirs (delta sheets, etc.) have no manifest and
+        # would fail inside the worker; reject them up front with a clear 400.
+        for label, d in (("dir_a", dir_a), ("dir_b", dir_b)):
+            if not (d / "manifest.json").exists():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{label} is not a scan output directory (no manifest.json): {d}",
+                )
 
         # Unique output dir: same-named models in different roots would otherwise
         # overwrite each other's compare results.

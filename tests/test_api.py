@@ -98,6 +98,43 @@ class TestJobCreation:
         assert data["status"] == "queued"
         assert "job_id" in data
 
+    def test_compare_rejects_non_scan_directory(
+        self, client: TestClient, tmp_path: Path, fake_model: Path
+    ) -> None:
+        """A comparison must reject a compare/render output dir (no
+        manifest.json) up front instead of failing inside the worker."""
+        scan_dir = tmp_path / "scan_valid"
+        scan_dir.mkdir(exist_ok=True)
+        (scan_dir / "manifest.json").write_text("{}")
+
+        # A "model" dir that is actually a compare output — no manifest.
+        compare_dir = tmp_path / "compare_a_vs_b_abcd1234"
+        compare_dir.mkdir(exist_ok=True)
+        (compare_dir / "compare_summary.json").write_text("{}")
+
+        # dir_b is the real scan dir, dir_a is the compare output → rejected.
+        resp = client.post(
+            "/api/compare",
+            json={"dir_a": str(compare_dir), "dir_b": str(scan_dir)},
+        )
+        assert resp.status_code == 400
+        assert "not a scan output directory" in resp.json()["detail"]
+
+    def test_compare_accepts_scan_directories(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """Two valid scan dirs (with manifest.json) pass validation."""
+        dir_a = tmp_path / "scan_a"
+        dir_b = tmp_path / "scan_b"
+        for d in (dir_a, dir_b):
+            d.mkdir(exist_ok=True)
+            (d / "manifest.json").write_text("{}")
+        resp = client.post(
+            "/api/compare",
+            json={"dir_a": str(dir_a), "dir_b": str(dir_b)},
+        )
+        assert resp.status_code == 200
+
     def test_create_job_missing_path(self, client: TestClient) -> None:
         response = client.post("/api/jobs", json={})
         assert response.status_code == 400
@@ -539,6 +576,58 @@ class TestJobQueueDB:
             queue.list_jobs()
         growth = fd_count() - before
         assert growth < 30, f"file descriptors leaked: {growth}"
+
+
+class TestComparePageCandidates:
+    def test_compare_page_lists_only_scan_jobs(
+        self, client: TestClient, fake_model: Path, tmp_path: Path
+    ) -> None:
+        """Render jobs pointing at compare output dirs must not appear as
+        compare candidates (they lack manifest.json / field_*.tif)."""
+        import uuid
+
+        from weight_atlas.api.jobs import Job, JobQueue
+
+        db_path = tmp_path / "jobs.db"
+        queue = JobQueue(db_path, on_job=lambda j: None)
+
+        now = "2026-01-01T00:00:00"
+        scan_job = Job(
+            job_id=str(uuid.uuid4()),
+            model_path=str(fake_model),
+            out_dir=str(tmp_path / "scan_out"),
+            spec_path="",
+            status=JobStatus.DONE,
+            created_at=now,
+            updated_at=now,
+            message="Complete",
+            job_type="scan",
+        )
+        compare_out = tmp_path / "compare_a_vs_b_abcd1234"
+        compare_out.mkdir(exist_ok=True)
+        (compare_out / "compare_summary.json").write_text("{}")
+        render_job = Job(
+            job_id=str(uuid.uuid4()),
+            model_path=str(fake_model),
+            out_dir=str(compare_out),
+            spec_path="",
+            status=JobStatus.DONE,
+            created_at=now,
+            updated_at=now,
+            message="Complete",
+            job_type="render",
+            renderer="sheet",
+        )
+        queue._save(scan_job)  # noqa: SLF001
+        queue._save(render_job)  # noqa: SLF001
+
+        app = create_app(db_path=db_path, spec_path=None, output_root=tmp_path / "output")
+        client = TestClient(app)
+        resp = client.get("/compare")
+        assert resp.status_code == 200
+        html = resp.text
+        assert str(scan_job.out_dir) in html
+        assert str(compare_out) not in html
 
 
 class TestArtefactRoute:

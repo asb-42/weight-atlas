@@ -48,7 +48,13 @@ scan/render/compare, and provides file-browsing and result endpoints. The UI
   allowed roots (models/ + scan output dirs) — `_require_allowed` guard.
 - **Compare payload**: `POST /api/compare` accepts `mode` (strict/aligned)
   and `interp` (linear/nearest); validate unknown values with 400 before
-  enqueueing.
+  enqueueing. Both `dir_a`/`dir_b` must be actual scan output dirs —
+  `manifest.json` presence is validated up front (400 otherwise), because a
+  comparison consumes scan artefacts (`manifest.json` + `field_*.tif`) and a
+  compare/render output dir (delta sheets, etc.) would otherwise fail inside
+  the worker. The compare page candidate list only surfaces DONE **scan**
+  jobs (`job_type == "scan"`) — render jobs may point their `out_dir` at a
+  compare output dir and must never be offered as a model to compare.
 - **Errors surface on the job**: worker catches exceptions → `job.status =
   FAILED` + `job.error`; the API never raises unhandled.
 - **LLM query API is a separate router**: `query_routes.py` owns the read-only
