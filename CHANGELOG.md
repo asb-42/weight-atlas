@@ -73,6 +73,29 @@
   expert/vision skipping, and layout-keyed dedupe tests (now 36 tests,
   dry-run).
 
+### Fractal SDF sculpture garden (usable relief + variation)
+
+- **Root cause**: the SDF mosaic normalised *all* axes by the lateral span, so
+  ~6.4-unit-tall objects were crushed to z ≈ ±0.009 in a ±1.1 frame — the
+  render was a perfectly symmetric grid of flat boxes. Parameters barely
+  varied (iterations {1,2,3}, scales ~{2.5,3.0,3.5}) and tint was a flat
+  blue→orange column gradient, so the output read as noise-free, symmetric,
+  and flat.
+- **Fixes**: the mosaic now normalises the lateral footprint into the
+  [-1, 1]² frame while keeping real z-relief — objects stand up to
+  `fractal.sdf.relief` (default 1.0, *before* the render's `z_scale`
+  exaggeration, so relief matches the fBm terrain). `fractal.sdf.variation`
+  (default true) breaks grid symmetry via a deterministic per-cell size
+  (0.6–1.4) and yaw from the cell-lattice splitmix64 hash (seeded by the
+  fractal seed, no RNG). Tint is now meaningful: `fractal.sdf.tint_stat`
+  (default `"effective_rank"`) normalises a real per-slot statistic onto
+  [0, 1] (`slot_stat_tint`, missing/NaN → 0.5) so each sculpture's colour
+  carries the slot's statistic instead of a column gradient.
+- New spec keys `fractal.sdf.variation`/`relief`/`tint_stat` added to all spec
+  versions (v1–v2.4, additive, spec_version unchanged).
+  `tests/test_fractal_renderer.py` extended with relief, variation,
+  slot_tint, and `slot_stat_tint` tests (now 40 tests, dry-run).
+
 ### Blender Terrain Geometry Smoothing
 
 - Geometry smoothing (terrain, not raw values): height is now bilinearly

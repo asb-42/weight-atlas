@@ -213,3 +213,31 @@ def slot_sdf_params(
             row["power"] = params.get("power", {}).get(slot, _SDF_DEFAULTS["power"])
         out[slot] = row
     return out
+
+
+def slot_stat_tint(
+    out_dir: Path,
+    slots: list[str],
+    stat: str = "effective_rank",
+) -> dict[str, float]:
+    """Per-slot colour values in [0, 1] from a real slot statistic.
+
+    Reads the fingerprint stats, normalises the chosen ``stat`` (default
+    ``effective_rank``) across the finite observed slot range onto [0, 1],
+    and maps slots with missing/NaN stats to the midpoint 0.5. Deterministic;
+    this is what makes each sculpture's colour carry meaning instead of a
+    flat column gradient.
+    """
+    stats = load_fingerprint_stats(out_dir, slots)
+    values = [stats.get(s, {}).get(stat, float("nan")) for s in slots]
+    finite = [v for v in values if isinstance(v, (int, float)) and np.isfinite(v)]
+    lo = float(min(finite)) if finite else float("nan")
+    hi = float(max(finite)) if finite else float("nan")
+
+    out: dict[str, float] = {}
+    for s, v in zip(slots, values, strict=True):
+        if not (isinstance(v, (int, float)) and np.isfinite(v)) or not np.isfinite(lo) or hi <= lo:
+            out[s] = 0.5
+        else:
+            out[s] = float((v - lo) / (hi - lo))
+    return out

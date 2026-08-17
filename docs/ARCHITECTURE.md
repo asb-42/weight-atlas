@@ -224,8 +224,18 @@ fingerprint.json ─► slot_stat_medians ─► stats_to_params ─► slot_sdf
   (iterations/power/scale ← slot stats via `fractal.sdf.mapping`) with a
   deterministic naive Surface Nets iso-extraction. Objects are normalised per
   cell (each fills its footprint regardless of family/params) and merged into
-  one mosaic mesh; tint encodes the slot column. Iteration counts are clamped
-  to the lattice (`grid`) so coarse grids never alias into empty cells.
+  one mosaic mesh. The mosaic is a *sculpture garden*: the lateral footprint
+  normalises into the [-1, 1]² camera frame while z keeps real relief —
+  `fractal.sdf.relief` (default 1.0) scales the tallest object before the
+  render's `z_scale` exaggeration (default 0.3), so the SDF relief matches the
+  fBm terrain. `fractal.sdf.variation` (default true) breaks grid symmetry via
+  a deterministic per-cell size (0.6–1.4) and yaw derived from the cell
+  lattice hash (splitmix64, fractal seed) — no RNG. Colour is meaningful:
+  `fractal.sdf.tint_stat` (default `"effective_rank"`) normalises a real
+  per-slot statistic onto [0, 1] (`slot_stat_tint`, missing/NaN → 0.5), so
+  each sculpture is tinted by its slot's statistic instead of a flat column
+  gradient. Iteration counts are clamped to the lattice (`grid`) so coarse
+  grids never alias into empty cells.
 - **Rendered through the same Blender pipeline**: the fractal height/tint
   fields reuse `render_terrain.py` (same smoothing, lights, subsurf, PNG
   metadata stripping); the SDF mosaic reuses its world/light/camera/engine

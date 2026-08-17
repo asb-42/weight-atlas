@@ -72,7 +72,12 @@ statistics-driven fractal terrain (fBm).
   world/light/camera/engine helpers). Iterations clamp to `round(grid/6)` so
   coarse lattices never alias to empty cells; `fractal.sdf.max_cells`
   (default 1024) deterministically decimates oversized rasters so the mesh
-  stays buildable. Same Workbench determinism.
+  stays buildable. Objects stand with real relief (`fractal.sdf.relief`,
+  default 1.0 before the 0.3 z exaggeration — matches the fBm terrain),
+  `fractal.sdf.variation` (default true) adds deterministic per-cell size/yaw
+  from the cell lattice hash, and `fractal.sdf.tint_stat` (default
+  `"effective_rank"`) tints each sculpture by a real normalised slot
+  statistic. Same Workbench determinism.
 - **Fractal renders once per model**: output depends on fingerprint + seed,
   not the channel. The API/CLI call `render()` once per channel (height, tint,
   rough, vision_*); a per-instance dedupe keyed on

@@ -22,8 +22,8 @@ scales, grid, render, compare, blender) plus the activity protocol schema.
   `blender` block keys (`pitch`, `clip`, `adaptive_z_scale`,
   `subsurf_levels`, `fill_light_energy`) and the `fractal` block keys
   (`seed`, `cell_h`, `cell_w`, `mode` (`"fbm"`/`"sdf"`), `mapping`, `sdf`
-  (`family`, `grid`, `max_cells`, `mapping`)). Adding a key to v2.4 but not v1
-  is a contract violation.
+  (`family`, `grid`, `max_cells`, `variation`, `relief`, `tint_stat`,
+  `mapping`)). Adding a key to v2.4 but not v1 is a contract violation.
 - **Spec version is hard**: `spec_version` mismatch is a hard reject in
   compare. Never bump `spec_version` for additive extensions — document them
   in `docs/ARCHITECTURE.md` instead.
@@ -33,9 +33,10 @@ scales, grid, render, compare, blender) plus the activity protocol schema.
 - **Consumers**: channels (stats + scale), `grid` (upsample/smooth), `sheet`
   (contours/lighting/dpi), `blender` (render settings), `fractal` (fBm/SDF
   renderer mapping: `seed`, `cell_h`/`cell_w`, `mode`, per-target `stat` +
-  `lo`/`hi` range; `sdf` block adds `family`/`grid`/`max_cells`/`mapping`),
-  `compare` (alignment/mode/interp), `embedding` (PCA/UMAP method),
-  `name_map` (tensor-name → slot mapping registry, read by
+  `lo`/`hi` range; `sdf` block adds `family`/`grid`/`max_cells`,
+  `variation`/`relief`/`tint_stat` (sculpture-garden appearance) and
+  `mapping`), `compare` (alignment/mode/interp), `embedding` (PCA/UMAP
+  method), `name_map` (tensor-name → slot mapping registry, read by
   `core/name_map.py`).
 
 ## Name-mapping registry (`name_map` block)

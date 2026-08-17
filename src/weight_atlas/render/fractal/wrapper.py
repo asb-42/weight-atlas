@@ -35,8 +35,12 @@ from weight_atlas.render.blender.blender_wrapper import (
 )
 from weight_atlas.render.blender.render_terrain import normalise_height, resample_bilinear
 from weight_atlas.render.fractal.fbm import slot_fractal_field
-from weight_atlas.render.fractal.mosaic import build_sdf_mosaic
-from weight_atlas.render.fractal.params import slot_fractal_params, slot_sdf_params
+from weight_atlas.render.fractal.mosaic import _DEFAULT_RELIEF, build_sdf_mosaic
+from weight_atlas.render.fractal.params import (
+    slot_fractal_params,
+    slot_sdf_params,
+    slot_stat_tint,
+)
 
 # Spec defaults (same fallbacks as the blender block).
 _DEFAULT_GRID = 1024
@@ -207,6 +211,7 @@ class FractalRenderer:
                 z_scale=z_scale,
                 pitch=pitch,
                 fill_energy=fill_energy,
+                seed=seed,
             )
             self._last_produced = list(produced)
             return produced
@@ -271,6 +276,7 @@ class FractalRenderer:
         z_scale: float,
         pitch: float,
         fill_energy: float,
+        seed: int,
     ) -> list[Path]:
         """Render the per-slot SDF mosaic (Menger/Mandelbulb sculpture garden).
 
@@ -278,13 +284,24 @@ class FractalRenderer:
         ``fractal.sdf.mapping``), renders it via ``render_sdf.py`` and exports
         the full-resolution OBJ. Deterministic (pure NumPy SDF + surface
         nets; same Workbench pipeline as the fBm mode).
+
+        Per-cell character: ``fractal.sdf.variation`` (default True) gives
+        each object a deterministic size/yaw from the cell lattice hash
+        (seeded by the fractal seed), ``fractal.sdf.relief`` (default 1.0) is
+        the target vertical relief (before the render's ``z_scale``
+        exaggeration), and ``fractal.sdf.tint_stat`` (default
+        ``"effective_rank"``) picks which slot statistic drives the colour.
         """
         sdf_cfg = fractal_cfg.get("sdf", {})
         family = str(sdf_cfg.get("family", "menger"))
         sdf_grid = int(sdf_cfg.get("grid", 16))
         max_cells = int(sdf_cfg.get("max_cells", _DEFAULT_MAX_CELLS))
+        variation = bool(sdf_cfg.get("variation", True))
+        relief = float(sdf_cfg.get("relief", _DEFAULT_RELIEF))
+        tint_stat = str(sdf_cfg.get("tint_stat", "effective_rank"))
 
         params = slot_sdf_params(out.parent, slots, fractal_cfg, sdf_grid)
+        slot_tint = slot_stat_tint(out.parent, slots, tint_stat)
         verts, faces, tint = build_sdf_mosaic(
             n_rows=n_rows,
             n_cols=n_cols,
@@ -295,6 +312,10 @@ class FractalRenderer:
             cell_h=cell_h,
             cell_w=cell_w,
             max_cells=max_cells,
+            seed=seed,
+            variation=variation,
+            relief=relief,
+            slot_tint=slot_tint,
         )
 
         script_path = Path(__file__).resolve().parent.parent / "blender" / "render_sdf.py"

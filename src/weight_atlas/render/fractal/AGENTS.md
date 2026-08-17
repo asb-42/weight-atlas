@@ -13,7 +13,7 @@ field (default) and a per-slot mosaic of mini-SDFs (Menger/Mandelbulb).
   `value_noise`, `fbm`, `terrain_field`, `slot_fractal_field`).
 - `params.py` — stat→param mapping (`slot_stat_medians`,
   `load_fingerprint_stats`, `stats_to_params`, `slot_fractal_params`,
-  `slot_sdf_params`).
+  `slot_sdf_params`, `slot_stat_tint`).
 - `sdf.py` — deterministic SDF families (`menger_sdf`, `mandelbulb_sdf`,
   `sdf_volume`).
 - `surface_nets.py` — deterministic naive Surface Nets iso-extraction
@@ -46,6 +46,17 @@ field (default) and a per-slot mosaic of mini-SDFs (Menger/Mandelbulb).
   aspect-preserving strides — sampled objects keep their true row/col
   positions and tints, only their count is bounded. Without the cap an
   896-expert panel would produce 80k+ objects (~115M verts) and crash Blender.
+- **SDF sculpture garden**: each object stands with real vertical relief —
+  the mosaic normalises the lateral footprint into the [-1, 1]² frame and maps
+  z so the tallest object reaches `fractal.sdf.relief` (default 1.0) *before*
+  the render script's `z_scale` exaggeration (default 0.3), so relief matches
+  the fBm terrain. `fractal.sdf.variation` (default true) breaks grid symmetry
+  with a deterministic per-cell size (0.6–1.4) and yaw from the cell lattice
+  hash (splitmix64, seeded by the fractal seed) — no RNG. Tint is driven by a
+  real per-slot statistic: `fractal.sdf.tint_stat` (default
+  `"effective_rank"`) is normalised across finite slot stats onto [0, 1] via
+  `slot_stat_tint` (missing/NaN → 0.5), so colour carries meaning instead of a
+  flat column gradient.
 - **Primary raster only**: the fractal is one artefact per model built from
   the primary language raster. Expert (`expert_*`) and vision (`vision_*`)
   channels are skipped entirely (`render()` returns `[]`) — their auxiliary
@@ -82,12 +93,14 @@ field (default) and a per-slot mosaic of mini-SDFs (Menger/Mandelbulb).
 
 ## Verification
 
-- `tests/test_fractal_renderer.py` (36 tests): fbm determinism/range, slot
+- `tests/test_fractal_renderer.py` (40 tests): fbm determinism/range, slot
   field shape/determinism/distinct columns, param mapping ranges, NaN→midpoint
   fallback, per-slot seeds, SDF determinism/inside-outside, surface-nets
   watertight/outward/deterministic sphere, mosaic shape/footprint/tint,
-  mosaic decimation (large rasters bounded + deterministic), expert/vision
-  channel skipping, layout-keyed dedupe, dry-run subprocess + artefacts +
-  traceback guard, byte-identical OBJ, per-channel dedupe, SDF-mode dry-run +
-  determinism. Run via
+  mosaic relief (objects stand), variation (per-cell size/yaw) and
+  slot_tint mapping, slot_stat_tint normalisation, mosaic decimation (large
+  rasters bounded + deterministic), expert/vision channel skipping,
+  layout-keyed dedupe, dry-run subprocess + artefacts + traceback guard,
+  byte-identical OBJ, per-channel dedupe, SDF-mode dry-run + determinism. Run
+  via
   `cd /media/data/coding/weight-atlas && .venv/bin/python -m pytest tests/test_fractal_renderer.py`.

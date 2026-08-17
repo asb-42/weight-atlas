@@ -10,7 +10,7 @@
   "grid":  {"upsample": 8, "smooth_sigma": 1.0},
   "sheet": {"contour_levels": 12, "light_azdeg": 315, "light_altdeg": 45, "dpi": 150, "per_row_normalize": true, "drop_empty_cols": false},
 "blender": {"grid": 1024,"resolution": 2048,"z_scale": 0.3,"pitch": 18.0,"clip": 0.01,"adaptive_z_scale": false,"subsurf_levels": 1,"fill_light_energy": 0.35},
-"fractal": {"seed": 0, "cell_h": 8, "cell_w": 8, "mode": "fbm", "mapping": {"octaves": {"stat": "effective_rank", "lo": 4, "hi": 8}, "persistence": {"stat": "kurtosis", "lo": 0.4, "hi": 0.7}, "lacunarity": {"stat": "sparsity", "lo": 1.8, "hi": 2.4}, "base_freq": {"stat": "spectral_norm", "lo": 1.0, "hi": 2.5}}, "sdf": {"family": "menger", "grid": 16, "max_cells": 1024, "mapping": {"iterations": {"stat": "effective_rank", "lo": 1, "hi": 4}, "scale": {"stat": "kurtosis", "lo": 2.5, "hi": 3.5}, "power": {"stat": "kurtosis", "lo": 2, "hi": 8}}}},
+"fractal": {"seed": 0, "cell_h": 8, "cell_w": 8, "mode": "fbm", "mapping": {"octaves": {"stat": "effective_rank", "lo": 4, "hi": 8}, "persistence": {"stat": "kurtosis", "lo": 0.4, "hi": 0.7}, "lacunarity": {"stat": "sparsity", "lo": 1.8, "hi": 2.4}, "base_freq": {"stat": "spectral_norm", "lo": 1.0, "hi": 2.5}}, "sdf": {"family": "menger", "grid": 16, "max_cells": 1024, "variation": true, "relief": 1.0, "tint_stat": "effective_rank", "mapping": {"iterations": {"stat": "effective_rank", "lo": 1, "hi": 4}, "scale": {"stat": "kurtosis", "lo": 2.5, "hi": 3.5}, "power": {"stat": "kurtosis", "lo": 2, "hi": 8}}}},
   "compare": {
     "modes": ["strict", "aligned"],
     "default_mode": "strict",

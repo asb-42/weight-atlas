@@ -18,6 +18,7 @@ from weight_atlas.render.fractal.params import (
     slot_fractal_params,
     slot_sdf_params,
     slot_stat_medians,
+    slot_stat_tint,
     stats_to_params,
 )
 from weight_atlas.render.fractal.sdf import menger_sdf, sdf_volume
@@ -296,6 +297,64 @@ class TestSdf:
         )
         assert len(verts) > 0 and len(faces) > 0
         assert len(tint) == len(verts)
+
+    def test_build_sdf_mosaic_relief_scales_z(self):
+        """Objects stand up: tallest vertex reaches the requested relief."""
+        params = {"a": {"iterations": 2, "scale": 3.0}}
+        verts, _, _ = build_sdf_mosaic(
+            1, 1, ["a"], params, "menger", 12, cell_h=8, cell_w=8, relief=0.5
+        )
+        assert verts[:, 2].min() >= -1e-9
+        assert verts[:, 2].max() <= 0.5 + 1e-9
+        assert verts[:, 2].max() > 0.1  # real height, not flat
+
+    def test_build_sdf_mosaic_variation_rotates_and_scales_cells(self):
+        """Per-cell deterministic size/yaw breaks grid symmetry."""
+        params = {"a": {"iterations": 2, "scale": 3.0}}
+        base, _, _ = build_sdf_mosaic(
+            2, 2, ["a", "b"], params, "menger", 12, cell_h=8, cell_w=8,
+            seed=0, variation=False,
+        )
+        varied, _, _ = build_sdf_mosaic(
+            2, 2, ["a", "b"], params, "menger", 12, cell_h=8, cell_w=8,
+            seed=0, variation=True,
+        )
+        assert not np.allclose(base, varied)
+        # Same seed → identical variation.
+        again, _, _ = build_sdf_mosaic(
+            2, 2, ["a", "b"], params, "menger", 12, cell_h=8, cell_w=8,
+            seed=0, variation=True,
+        )
+        np.testing.assert_array_equal(varied, again)
+
+    def test_build_sdf_mosaic_slot_tint_maps_per_cell(self):
+        """slot_tint drives per-cell colour; missing slots fall back to 0.5."""
+        params = {"a": {"iterations": 2, "scale": 3.0}, "b": {"iterations": 2, "scale": 3.0}}
+        _, _, tint = build_sdf_mosaic(
+            2, 2, ["a", "b"], params, "menger", 12, cell_h=8, cell_w=8,
+            slot_tint={"a": 0.1, "b": 0.9},
+        )
+        assert tint.min() >= 0.0 and tint.max() <= 1.0
+        # Both mapped slots contribute distinct tints.
+        assert len(np.unique(tint)) >= 2
+        _, _, tint_fallback = build_sdf_mosaic(
+            2, 2, ["a", "b"], params, "menger", 12, cell_h=8, cell_w=8,
+            slot_tint={"a": 0.1},
+        )
+        # Unmapped slot b falls back to the midpoint, still within range.
+        assert tint_fallback.min() >= 0.0 and tint_fallback.max() <= 1.0
+
+    def test_slot_stat_tint_normalizes_across_slots(self, tmp_path: Path):
+        """slot_stat_tint maps a per-slot stat to [0, 1]; NaN → 0.5."""
+        out_dir = tmp_path / "scan"
+        out_dir.mkdir()
+        spec = _make_spec(tmp_path, out_dir)
+        slots = spec.slots
+        tint = slot_stat_tint(out_dir, slots, "effective_rank")
+        assert set(tint) == set(slots)
+        assert all(0.0 <= v <= 1.0 for v in tint.values())
+        # Deterministic for identical inputs.
+        assert slot_stat_tint(out_dir, slots, "effective_rank") == tint
 
     def test_sdf_render_mode_dry_run(self, tmp_path: Path):
         """Dry-run: mode='sdf' produces PNG + OBJ via the SDF bpy script."""
