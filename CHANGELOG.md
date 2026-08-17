@@ -1,5 +1,22 @@
 ## [Unreleased]
 
+### Compare: nearest-mode alignment with different slot counts
+
+- **Bug**: `aligned` + `nearest` comparison of two models with different
+  slot counts (e.g. Qwen3.8-27B-GGUF 66 cols vs Huihui-Qwen3.8-27B-abliterated
+  67 cols) failed inside the worker with
+  `operands could not be broadcast together with shapes (65,66) (65,67)`:
+  `_resample_rows_nearest` matched rows by depth but left each field's native
+  column count untouched, so the delta computation broadcast two mismatched
+  arrays.
+- **Fix**: nearest-mode alignment now pads the narrower field's right side to
+  the common width (max of the two real widths) with NaN columns — missing
+  slots are absent (NaN), never fabricated — and warns on the slot-count
+  mismatch. `linear` mode already resampled both fields to the common grid.
+- Tests: `tests/test_compare.py` — different-slot-count padding reaches the
+  common grid, padded slots are NaN, and the full delta pipeline completes
+  (now 61 tests).
+
 ### Compare: only scan outputs are valid inputs
 
 - **Bug**: the compare page listed *all* DONE jobs except compares as model

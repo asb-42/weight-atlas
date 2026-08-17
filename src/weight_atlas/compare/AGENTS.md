@@ -21,6 +21,12 @@ fields, compute per-channel deltas, rank hotspots, and emit a compare report.
   holes). Source of truth: `compute_compare_summary(interp=...)`, spec key
   `compare.aligned_interp`. Aligned rows are normalized depth, NOT absolute
   layer indices — surface this in `CompareSummary.alignment` + warnings.
+- **Different slot counts in aligned mode**: when A and B have different
+  column widths (different architectures/specs), `"nearest"` pads the
+  narrower field's right side to the common width (max of the two real
+  widths) with NaN columns — missing slots are absent, never fabricated —
+  so the delta never broadcasts mismatched shapes. `"linear"` resamples both
+  to the common grid directly. Both paths warn on the width mismatch.
 - **Hard-reject on spec_version mismatch**: `check_compatibility` raises
   ValueError; tool_version mismatch warns only.
 - **Column labels track real field width**: `col_labels` are derived from
@@ -49,3 +55,5 @@ fields, compute per-channel deltas, rank hotspots, and emit a compare report.
 - `tests/test_compare.py` covers alignment, delta, summary, determinism;
   `tests/test_moe.py` covers expert panels. Run via
   `cd /media/data/coding/weight-atlas && .venv/bin/python -m pytest tests/test_compare.py`.
+- `tests/test_compare.py` has 61 tests (aligned nearest/linear, phantom-column
+  guard, different-slot-count padding, delta shapes, hotspot ranking).

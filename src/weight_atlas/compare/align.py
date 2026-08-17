@@ -179,6 +179,13 @@ def _align_normalized(
     if interp == "nearest":
         field_a_aligned, layer_map_a = _resample_rows_nearest(field_a, n_rows_common)
         field_b_aligned, layer_map_b = _resample_rows_nearest(field_b, n_rows_common)
+        # Nearest resampling matches real layers row-by-row but keeps each
+        # field's native column count. Pad the narrower field to the common
+        # width with NaN columns (missing slots are absent, never fabricated),
+        # otherwise a 66-col vs 67-col pair never converges and delta
+        # broadcasting fails.
+        field_a_aligned = _pad_columns(field_a_aligned, n_cols_common)
+        field_b_aligned = _pad_columns(field_b_aligned, n_cols_common)
     elif interp == "linear":
         field_a_aligned = _resample_field(field_a, n_rows_common, n_cols_common)
         field_b_aligned = _resample_field(field_b, n_rows_common, n_cols_common)
@@ -191,6 +198,11 @@ def _align_normalized(
         warnings.append(
             f"different layer counts (A={n_rows_a}, B={n_rows_b}), "
             f"resampled to {n_rows_common} common depth grid"
+        )
+    if n_cols_a != n_cols_b:
+        warnings.append(
+            f"different slot counts (A={n_cols_a}, B={n_cols_b}), padded to "
+            f"{n_cols_common} common columns — missing slots are NaN (absent)"
         )
     if n_cols_common != len(spec.slots):
         warnings.append(
@@ -237,6 +249,19 @@ def _resample_rows_nearest(field: np.ndarray, n_rows: int) -> tuple[np.ndarray, 
     t = np.linspace(0, 1, n_rows)
     src_idx = np.round(t * (n_src - 1)).astype(int)
     return field[src_idx, :], [int(i) for i in src_idx]
+
+
+def _pad_columns(field: np.ndarray, n_cols: int) -> np.ndarray:
+    """Pad a field's right side with NaN columns up to ``n_cols``.
+
+    Used by nearest-mode alignment when the two fields have different slot
+    counts: missing slots are absent (NaN), never fabricated. Fields already
+    at ``n_cols`` (or wider) are returned unchanged.
+    """
+    if field.shape[1] >= n_cols:
+        return field
+    pad = np.full((field.shape[0], n_cols - field.shape[1]), np.nan, dtype=field.dtype)
+    return np.concatenate([field, pad], axis=1)
 
 
 def _resample_field(field: np.ndarray, n_rows: int, n_cols: int) -> np.ndarray:

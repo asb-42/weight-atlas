@@ -264,6 +264,22 @@ class TestAlignNormalized:
         assert result.col_labels == spec.slots[:-1]
         assert any("truncated" in w for w in result.warnings)
 
+    def test_nearest_different_slot_counts_pad_to_common(self, spec):
+        """Nearest-mode alignment of fields with different slot counts must
+        pad the narrower field to the common width with NaN columns, so the
+        delta computation never broadcasts mismatched shapes."""
+        a = np.zeros((4, 6))
+        b = np.zeros((8, 7))
+        result = align(a, b, spec, mode="aligned", interp="nearest")
+        assert result.data_a.shape == (64, 7)
+        assert result.data_b.shape == (64, 7)
+        # The padded column (the one B has and A lacks) is NaN in A.
+        assert np.isnan(result.data_a[:, 6]).all()
+        assert any("slot counts" in w for w in result.warnings)
+        # Full pipeline must not throw on the mismatch.
+        delta = compute_delta(result, "height", spec)
+        assert delta.delta.shape == (64, 7)
+
 
 # ---------------------------------------------------------------------------
 # Delta computation
