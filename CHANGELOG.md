@@ -24,6 +24,55 @@
   (v1–v2.4, additive, spec_version unchanged). New `tests/test_fractal_renderer.py`
   (19 tests, dry-run — mocked subprocess).
 
+### Fractal SDF Mode (per-slot mini-SDF mosaic)
+
+- New `fractal.mode = "sdf"` for the `"fractal"` renderer: instead of an fBm
+  height field, each slot cell renders its own 3D Menger-sponge or Mandelbulb
+  object — a per-slot mosaic of mini-SDFs ("sculpture garden").
+- Own deterministic SDF families in pure NumPy (`menger_sdf`, `mandelbulb_sdf`,
+  masked bail-out so high-power Mandelbulbs stay finite) extracted with a
+  deterministic naive Surface Nets iso-extraction (watertight, outward
+  normals) — no external tools (Mandelbulber etc.) that would break the
+  byte-identity contract.
+- Per-slot SDF parameters (iterations/power/scale ← slot stats via spec
+  `fractal.sdf.mapping`) with iteration counts clamped to `round(grid/6)` so
+  coarse lattices never alias into empty cells.
+- Rendered via new `render_sdf.py` bpy script reusing the terrain pipeline's
+  world/light/camera/engine helpers; OBJ export is the full-resolution mosaic
+  mesh. Same determinism: byte-identical PNG + OBJ for identical inputs.
+- New spec keys `fractal.mode` + `fractal.sdf` added to all spec versions
+  (v1–v2.4, additive, spec_version unchanged). `tests/test_fractal_renderer.py`
+  extended with SDF/surface-nets/mosaic tests (now 32 tests, dry-run).
+- UI toggle: "Fractal mode" `<select>` (fBm/SDF mosaic) next to the Render
+  Fractal Terrain button. The selection is sent as a `fractal_mode` form field
+  and overlaid onto the job's recorded spec's `fractal.mode` for that render
+  only (via `job.sheet_knobs` — the recorded spec is never mutated). The
+  fractal dedupe cache key now includes `mode` so fBm and SDF renders of the
+  same model never cross-pollinate. New tests for the mode knob in
+  `tests/test_api.py` (2 tests).
+
+### Fractal SDF scalability (expert-panel fix)
+
+- **Root cause**: the SDF mosaic builds one mini-SDF per (row × col) raster
+  cell. MoE expert panels (`expert_mlp_*`, one column per expert) made the
+  first rendered channel a 92×896 = 82,432-cell raster → ~46 min of naive
+  Surface Nets extraction (single-core, ~33 ms/cell) and a ~115M-vert mesh
+  that crashed Blender with SIGSEGV while loading it (`from_pydata`). The
+  job then ended "done" with the failure recorded in `artefacts`.
+- **Fixes**: (1) the fractal is now built from the primary language raster
+  only — `expert_*`/`vision_*` channels are skipped (`render()` returns `[]`),
+  so an expert panel can never define the layout; (2) new spec key
+  `fractal.sdf.max_cells` (default 1024) deterministically decimates rasters
+  that exceed it with aspect-preserving strides (objects keep their true
+  row/col positions and tints) — the expert channel now builds in ~33 s to
+  1.4M verts instead of 46 min to 115M verts; (3) the fractal dedupe key now
+  includes the layout `(n_rows, n_cols, slot labels)` so channels with
+  different rasters can never cross-contaminate the cache.
+- Added to all spec versions (v1–v2.4, additive, spec_version unchanged).
+  `tests/test_fractal_renderer.py` extended with decimation/determinism,
+  expert/vision skipping, and layout-keyed dedupe tests (now 36 tests,
+  dry-run).
+
 ### Blender Terrain Geometry Smoothing
 
 - Geometry smoothing (terrain, not raw values): height is now bilinearly

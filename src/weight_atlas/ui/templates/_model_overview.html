@@ -64,7 +64,14 @@
         <button hx-post="/api/jobs/{{ job.job_id }}/render/blender" hx-target="#render-status" hx-swap="innerHTML" hx-indicator="#render-spinner">
             Render Terrain (Blender)
         </button>
-        <button hx-post="/api/jobs/{{ job.job_id }}/render/fractal" hx-target="#render-status" hx-swap="innerHTML" hx-indicator="#render-spinner">
+        <label class="render-option">
+            <select id="opt-fractal-mode" name="fractal_mode">
+                <option value="fbm">fBm</option>
+                <option value="sdf">SDF mosaic</option>
+            </select>
+            <span>Fractal mode</span>
+        </label>
+        <button hx-post="/api/jobs/{{ job.job_id }}/render/fractal" hx-include="#opt-fractal-mode" hx-target="#render-status" hx-swap="innerHTML" hx-indicator="#render-spinner">
             Render Fractal Terrain
         </button>
         <button hx-post="/api/jobs/{{ job.job_id }}/rescan" hx-target="#render-status" hx-swap="innerHTML" hx-indicator="#render-spinner" class="btn-danger">
@@ -73,7 +80,7 @@
         <span id="render-spinner" class="htmx-indicator"><span class="spinner"></span> Working...</span>
         <span id="render-status"></span>
     </div>
-    <p class="hint">Sheets: hillshade + hypsometric tint + contours. Previews: auto-leveled 8-bit PNG for quick inspection. Terrain (Blender): orthographic top-view terrain rendered headlessly with Blender (requires a Blender binary on PATH or WEIGHT_ATLAS_BLENDER). Fractal terrain: per-slot fBm terrain whose octaves/persistence/lacunarity derive from the slot's real stats (effective_rank/kurtosis/sparsity/spectral_norm). Re-scan: re-run full scan pipeline with current spec (overwrites existing artefacts). Imported scans need the original model path set above before re-scanning.</p>
+    <p class="hint">Sheets: hillshade + hypsometric tint + contours. Previews: auto-leveled 8-bit PNG for quick inspection. Terrain (Blender): orthographic top-view terrain rendered headlessly with Blender (requires a Blender binary on PATH or WEIGHT_ATLAS_BLENDER). Fractal terrain: per-slot fractal geometry whose parameters derive from the slot's real stats (effective_rank/kurtosis/sparsity/spectral_norm); "Fractal mode" selects fBm (height field) or SDF mosaic (Menger/Mandelbulb sculpture garden). Re-scan: re-run full scan pipeline with current spec (overwrites existing artefacts). Imported scans need the original model path set above before re-scanning.</p>
     <p class="hint">Sheet options: "Normalized depth" projects the layer axis to 0–100 % depth (better cross-model comparability; off by default); "Drop empty columns" compresses fully-NaN slot columns out of the sheet display. Both apply to the next render only and leave the recorded spec untouched.</p>
 </section>
 

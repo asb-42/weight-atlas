@@ -194,6 +194,15 @@ fingerprint.json ─► slot_stat_medians ─► stats_to_params ─► slot_fra
                                                             ▼
                                      render_terrain.py (bpy) ─► terrain_fractal.png
                                                                  └──► terrain_fractal.obj
+
+                                   ── SDF mode (fractal.mode = "sdf") ──
+fingerprint.json ─► slot_stat_medians ─► stats_to_params ─► slot_sdf_params
+                                                            │
+                                    sdf_volume + surface_nets ├─► .npy tempdir
+                                    build_sdf_mosaic         │
+                                    (per-slot mini-SDFs)     ▼
+                                     render_sdf.py (bpy) ─► terrain_fractal.png
+                                                               └──► terrain_fractal.obj
 ```
 
 ### Design decisions
@@ -209,17 +218,42 @@ fingerprint.json ─► slot_stat_medians ─► stats_to_params ─► slot_fra
   different stats render visibly different self-similar structure. Layout
   mirrors the (layers × slots) raster (`fractal.cell_h`/`cell_w` cells per
   logical cell).
+- **SDF mode is a per-slot mosaic of mini-SDFs** (`fractal.mode = "sdf"`):
+  instead of a height field, each slot cell gets its own 3D Menger-sponge or
+  Mandelbulb object, extracted from the slot's SDF parameters
+  (iterations/power/scale ← slot stats via `fractal.sdf.mapping`) with a
+  deterministic naive Surface Nets iso-extraction. Objects are normalised per
+  cell (each fills its footprint regardless of family/params) and merged into
+  one mosaic mesh; tint encodes the slot column. Iteration counts are clamped
+  to the lattice (`grid`) so coarse grids never alias into empty cells.
 - **Rendered through the same Blender pipeline**: the fractal height/tint
   fields reuse `render_terrain.py` (same smoothing, lights, subsurf, PNG
-  metadata stripping), so fractal and plain terrain renders are directly
+  metadata stripping); the SDF mosaic reuses its world/light/camera/engine
+  helpers via `render_sdf.py`. Fractal and plain terrain renders stay directly
   comparable. Tint is a second, independently-seeded per-slot fBm strip.
-- **Determinism**: pure NumPy value noise on a fixed integer-lattice hash
-  (no RNG, no timestamps) → byte-identical PNG + OBJ for identical inputs.
+- **Determinism**: pure NumPy value noise on a fixed integer-lattice hash and
+  pure NumPy SDF + surface-nets (no RNG, no timestamps) → byte-identical PNG
+  + OBJ for identical inputs.
 - **One render per model**: the fractal depends on the fingerprint + seed,
   not the channel. The API/CLI call `render()` once per channel (height, tint,
-  rough, vision_*); a per-instance dedupe keyed on `(out_dir, seed)` makes
-  Blender run once and all channels reuse the identical artefacts (the primary
-  language raster's layout, never overwritten by the smaller vision layout).
+  rough, vision_*); a per-instance dedupe keyed on
+  `(out_dir, seed, mode, layout)` makes Blender run once and all channels
+  reuse the identical artefacts. `mode` + layout are part of the key so fBm
+  and SDF renders, and channels with different rasters, never cross-pollinate
+  the dedupe cache.
+- **Primary raster only, cell budget**: the fractal is built from the primary
+  language raster — `expert_*` (one column per expert) and `vision_*` channels
+  are skipped, so an 896-expert panel can never define the layout. Rasters
+  exceeding `fractal.sdf.max_cells` (default 1024) are deterministically
+  decimated with aspect-preserving strides (objects keep their true positions
+  and tints); without this an expert panel would be 80k+ objects (~115M verts)
+  and crash Blender.
+- **Per-render mode toggle**: the UI's "Fractal mode" `<select>` sends a
+  `fractal_mode` form field to `/api/jobs/{id}/render/fractal`; the worker
+  overlays it onto the recorded spec's `fractal.mode` for that render only
+  (same `job.sheet_knobs` / `_apply_sheet_knobs` flow as the sheet checkboxes)
+  — the scan's spec stays untouched, re-renders without the field fall back to
+  the recorded mode.
 
 ### Spec extension
 
@@ -231,19 +265,35 @@ defaults shown):
     "seed": 0,
     "cell_h": 8,
     "cell_w": 8,
+    "mode": "fbm",
     "mapping": {
       "octaves":     {"stat": "effective_rank", "lo": 4, "hi": 8},
       "persistence": {"stat": "kurtosis",       "lo": 0.4, "hi": 0.7},
       "lacunarity":  {"stat": "sparsity",       "lo": 1.8, "hi": 2.4},
       "base_freq":   {"stat": "spectral_norm",  "lo": 1.0, "hi": 2.5}
+    },
+    "sdf": {
+      "family": "menger",
+      "grid": 16,
+      "max_cells": 1024,
+      "mapping": {
+        "iterations": {"stat": "effective_rank", "lo": 1, "hi": 4},
+        "scale":      {"stat": "kurtosis",       "lo": 2.5, "hi": 3.5},
+        "power":      {"stat": "kurtosis",       "lo": 2, "hi": 8}
+      }
     }
   }
 }
 ```
 `seed`: base lattice seed (also `seeds.fractal`); `cell_h`/`cell_w`: fractal
-cells per logical layer/slot; `mapping`: per-target stat + linear
+cells per logical layer/slot; `mode`: `"fbm"` (height field, default) or
+`"sdf"` (per-slot mini-SDF mosaic); `mapping`: per-target stat + linear
 min→max range (clamped). Slots with NaN stats fall back to the target range
-midpoint.
+midpoint. `sdf.family`: `"menger"` (uses `scale`) or `"mandelbulb"` (uses
+`power`); `sdf.grid`: SDF lattice per mini-SDF; `sdf.max_cells`: max number
+of mini-SDF objects per mosaic (larger rasters are deterministically
+decimated); `sdf.mapping`: same stat→range mechanism, iterations clamped to
+`round(grid/6)` so the lattice resolves the fold features.
 
 `spec_version` stays 4 (additive extension documented here per spec; never
 bump for new keys).

@@ -104,6 +104,36 @@ def build_blender_command(
     return cmd
 
 
+def build_blender_command_sdf(
+    blender_path: Path,
+    script_path: Path,
+    verts_npy: Path,
+    faces_npy: Path,
+    tint_npy: Path,
+    out_png: Path,
+    z_scale: float,
+    resolution: int,
+    pitch: float = _DEFAULT_PITCH,
+    fill_light_energy: float = _DEFAULT_FILL_LIGHT_ENERGY,
+) -> list[str]:
+    """Construct the command-line for a headless Blender SDF mesh render."""
+    cmd = [
+        str(blender_path),
+        "-b",  # headless (no GUI)
+        "-P", str(script_path),  # execute Python script
+        "--",  # script args follow
+        "--verts", str(verts_npy),
+        "--faces", str(faces_npy),
+        "--tint", str(tint_npy),
+        "--out", str(out_png),
+        "--z-scale", str(z_scale),
+        "--resolution", str(resolution),
+        "--pitch", str(pitch),
+        "--fill-light-energy", str(fill_light_energy),
+    ]
+    return cmd
+
+
 def write_obj(height: np.ndarray, tint: np.ndarray, out: Path) -> None:
     """Write a Wavefront OBJ mesh (plain text, diffable).
 

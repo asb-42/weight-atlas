@@ -173,3 +173,43 @@ def slot_fractal_params(
             "seed": int(seed) + i * 1009,
         }
     return out
+
+
+_SDF_DEFAULTS: dict[str, float] = {
+    "iterations": 3.0,
+    "power": 4.0,
+    "scale": 3.0,
+}
+
+
+def slot_sdf_params(
+    out_dir: Path,
+    slots: list[str],
+    fractal_cfg: Mapping[str, Any],
+    grid: int,
+) -> dict[str, dict[str, float]]:
+    """Per-slot SDF (menger/mandelbulb) parameters from the slot stats.
+
+    Same fingerprint → per-slot-median → stats_to_params pipeline as the fBm
+    mode, but with the spec's ``fractal.sdf.mapping`` table (iterations ←
+    effective_rank, plus scale for menger or power for mandelbulb). Iterations
+    are clamped so the fold features stay resolvable at the given ``grid``
+    (a coarse lattice aliases high-iteration Mengers into empty cells).
+    Deterministic.
+    """
+    sdf_cfg = fractal_cfg.get("sdf", {}) if fractal_cfg else {}
+    mapping = sdf_cfg.get("mapping", {})
+    family = str(sdf_cfg.get("family", "menger"))
+    stats = load_fingerprint_stats(out_dir, slots)
+    params = stats_to_params(slot_stats=stats, mapping=mapping)
+
+    max_iter = max(1, int(round(int(grid) / 6)))
+    out: dict[str, dict[str, float]] = {}
+    for slot in slots:
+        row = {"iterations": float(min(max_iter, max(1, int(round(params.get("iterations", {}).get(slot, _SDF_DEFAULTS["iterations"]))))))}
+        if family == "menger":
+            row["scale"] = params.get("scale", {}).get(slot, _SDF_DEFAULTS["scale"])
+        else:
+            row["power"] = params.get("power", {}).get(slot, _SDF_DEFAULTS["power"])
+        out[slot] = row
+    return out

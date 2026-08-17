@@ -204,14 +204,25 @@ class JobQueue:
         return datetime.now(UTC).isoformat(timespec="seconds")
 
     def _apply_sheet_knobs(self, spec: Any, knobs: dict[str, Any]) -> Any:
-        """Return a copy of ``spec`` with per-render sheet overrides applied.
+        """Return a copy of ``spec`` with per-render overrides applied.
 
-        Only the ``sheet`` block is touched (e.g. ``normalized_depth``,
-        ``drop_empty_cols``); the scan's recorded spec stays unchanged.
+        The ``sheet`` block is overlaid with its display knobs
+        (``normalized_depth``, ``drop_empty_cols``) and the ``fractal`` block
+        with the fractal-mode knob (``fractal_mode`` → ``fractal.mode``); the
+        scan's recorded spec stays unchanged.
         """
         sheet = dict(getattr(spec, "sheet", {}) or {})
-        sheet.update(knobs)
-        return replace(spec, sheet=sheet)
+        for key in ("normalized_depth", "drop_empty_cols"):
+            if key in knobs:
+                sheet[key] = knobs[key]
+        new_spec = replace(spec, sheet=sheet)
+
+        fractal_mode = knobs.get("fractal_mode")
+        if fractal_mode:
+            fractal = dict(getattr(spec, "fractal", {}) or {})
+            fractal["mode"] = fractal_mode
+            new_spec = replace(new_spec, fractal=fractal)
+        return new_spec
 
     def _save(self, job: Job) -> None:
         import json

@@ -65,12 +65,25 @@ statistics-driven fractal terrain (fBm).
   seed = base seed + slot index × 1009); tint is a second strip (seed + 17).
   Rendered through the same `render_terrain.py` pipeline
   (`terrain_fractal.png` + `terrain_fractal.obj`).
+- **Fractal SDF mode** (`fractal.mode = "sdf"`): per-slot mosaic of mini-SDFs
+  (Menger/Mandelbulb). `sdf_volume` + `surface_nets` (both pure NumPy,
+  deterministic) extract each slot cell's object; `build_sdf_mosaic` merges
+  them into one mesh rendered via `render_sdf.py` (reuses the terrain script's
+  world/light/camera/engine helpers). Iterations clamp to `round(grid/6)` so
+  coarse lattices never alias to empty cells; `fractal.sdf.max_cells`
+  (default 1024) deterministically decimates oversized rasters so the mesh
+  stays buildable. Same Workbench determinism.
 - **Fractal renders once per model**: output depends on fingerprint + seed,
   not the channel. The API/CLI call `render()` once per channel (height, tint,
-  rough, vision_*); a per-instance dedupe keyed on `(out_dir, seed)` makes
-  Blender run once and every channel reuse the identical artefacts (the primary
-  language raster's layout, never overwritten by the smaller vision layout).
-  Requires `field.col_labels` (slot columns).
+  rough, vision_*); a per-instance dedupe keyed on
+  `(out_dir, seed, mode, layout)` makes Blender run once and every channel
+  reuse the identical artefacts. `mode` + layout are part of the key so fBm
+  and SDF renders, and channels with different rasters, never cross-pollinate
+  the dedupe cache. The fractal is built from the primary language raster
+  only — `expert_*` and `vision_*` channels are skipped. Requires
+  `field.col_labels` (slot columns). The fractal-mode toggle (`fractal_mode`
+  form field) overlays onto `spec.fractal.mode` per-render via
+  `job.sheet_knobs`.
 
 ## Work Guidance
 
@@ -88,5 +101,6 @@ statistics-driven fractal terrain (fBm).
 
 ## Child DOX Index
 
-- `fractal/AGENTS.md` — statistics-driven fBm terrain renderer (deterministic
-  value noise, per-slot parameter mapping).
+- `fractal/AGENTS.md` — statistics-driven fractal terrain renderer: fBm
+  (deterministic value noise, per-slot parameter mapping) and SDF modes
+  (per-slot mini-SDF mosaic, surface nets).

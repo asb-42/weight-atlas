@@ -538,12 +538,18 @@ def create_router(
             raise HTTPException(status_code=404, detail=f"unknown renderer: {renderer}") from None
 
         form = await request.form()
-        sheet_knobs: dict[str, bool] = {}
+        sheet_knobs: dict[str, str | bool] = {}
         if renderer == "sheet" or renderer == "preview":
             # Only the raster sheet renderers consume these knobs.
             for key in ("normalized_depth", "drop_empty_cols"):
                 if key in form:
                     sheet_knobs[key] = True
+        elif renderer == "fractal":
+            # Fractal-mode toggle (fbm/sdf) overlays onto the recorded spec
+            # for this render only.
+            fractal_mode = form.get("fractal_mode")
+            if fractal_mode in ("fbm", "sdf"):
+                sheet_knobs["fractal_mode"] = fractal_mode
 
         new_job = job_queue.submit_render(job_id, renderer, sheet_knobs=sheet_knobs)
         return Response(

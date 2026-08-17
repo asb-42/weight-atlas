@@ -749,6 +749,40 @@ class TestRenderEndpoint:
         assert render_job["job_type"] == "render"
         assert render_job["sheet_knobs"] == {}
 
+    def test_render_fractal_with_mode_enqueues_override(
+        self, client, tmp_path: Path, fake_model: Path
+    ) -> None:
+        """POSTing a fractal_mode to the fractal render route enqueues the override."""
+        resp = client.post("/api/jobs", json={"model_path": str(fake_model)})
+        assert resp.status_code == 200
+        job_id = resp.json()["job_id"]
+
+        r = client.post(
+            f"/api/jobs/{job_id}/render/fractal",
+            data={"fractal_mode": "sdf"},
+        )
+        assert r.status_code == 202
+        render_job_id = r.headers["HX-Redirect"].split("/")[-1]
+        render_job = client.get(f"/api/jobs/{render_job_id}").json()
+        assert render_job["sheet_knobs"] == {"fractal_mode": "sdf"}
+
+    def test_render_fractal_rejects_unknown_mode(
+        self, client, tmp_path: Path, fake_model: Path
+    ) -> None:
+        """An invalid fractal_mode must be dropped, not enqueued."""
+        resp = client.post("/api/jobs", json={"model_path": str(fake_model)})
+        assert resp.status_code == 200
+        job_id = resp.json()["job_id"]
+
+        r = client.post(
+            f"/api/jobs/{job_id}/render/fractal",
+            data={"fractal_mode": "bogus"},
+        )
+        assert r.status_code == 202
+        render_job_id = r.headers["HX-Redirect"].split("/")[-1]
+        render_job = client.get(f"/api/jobs/{render_job_id}").json()
+        assert render_job["sheet_knobs"] == {}
+
     def test_render_unknown_renderer_404(self, client, tmp_path: Path, fake_model: Path) -> None:
         """An unknown renderer id must 404 before enqueueing."""
         resp = client.post("/api/jobs", json={"model_path": str(fake_model)})

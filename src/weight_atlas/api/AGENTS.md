@@ -32,12 +32,17 @@ scan/render/compare, and provides file-browsing and result endpoints. The UI
   (`re-queued after stale running`) — a job marked running by a process that
   died after startup would otherwise show as stuck/running forever.
 - **Per-render sheet overrides**: `job.sheet_knobs` (JSON dict, `sheet_knobs`
-  column) carries optional display knobs (`normalized_depth`,
-  `drop_empty_cols`) for a single render. The worker overlays them onto the
-  spec's `sheet` block (`_apply_sheet_knobs`, dataclasses.replace) before
-  rendering — the scan's recorded spec is never mutated. The UI sends them as
-  checkbox form fields to `/api/jobs/{id}/render/sheet`; only the raster sheet
-  renderers accept them, the Blender renderer ignores them. Default empty.
+  column) carries optional per-render overrides for a single render. The
+  worker overlays them onto the spec (`_apply_sheet_knobs`,
+  dataclasses.replace) before rendering — the scan's recorded spec is never
+  mutated. Sheet display knobs (`normalized_depth`, `drop_empty_cols`) map
+  onto the spec's `sheet` block; the UI sends them as checkbox form fields to
+  `/api/jobs/{id}/render/sheet`. The fractal-mode knob (`fractal_mode` =
+  `fbm`/`sdf`) overlays onto the spec's `fractal.mode`; the UI sends it as a
+  `<select name="fractal_mode">` alongside the `/render/fractal` button.
+  Only the raster sheet renderers accept sheet knobs, only the fractal
+  renderer accepts `fractal_mode`; unknown knob values are dropped. Default
+  empty.
 - **Deterministic job IDs**: `uuid4` is fine (not an output artefact).
 - **File browsing is confined**: `GET /api/browse` must never escape the
   allowed roots (models/ + scan output dirs) — `_require_allowed` guard.

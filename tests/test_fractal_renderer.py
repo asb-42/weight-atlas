@@ -13,11 +13,15 @@ import pytest
 from weight_atlas.core.registry import get_renderer
 from weight_atlas.core.types import AtlasSpec, Field2D
 from weight_atlas.render.fractal.fbm import fbm, slot_fractal_field, value_noise
+from weight_atlas.render.fractal.mosaic import build_sdf_mosaic
 from weight_atlas.render.fractal.params import (
     slot_fractal_params,
+    slot_sdf_params,
     slot_stat_medians,
     stats_to_params,
 )
+from weight_atlas.render.fractal.sdf import menger_sdf, sdf_volume
+from weight_atlas.render.fractal.surface_nets import surface_nets
 from weight_atlas.render.fractal.wrapper import FractalRenderer
 
 
@@ -181,6 +185,202 @@ class TestParams:
         assert p["attn_q"]["octaves"] in range(4, 9)
 
 
+class TestSdf:
+    def test_menger_sdf_deterministic(self):
+        coords = np.random.default_rng(4).random((16, 16, 3)) * 2 - 1
+        a = menger_sdf(coords, 3, 3.0)
+        b = menger_sdf(coords, 3, 3.0)
+        np.testing.assert_array_equal(a, b)
+
+    def test_menger_sdf_inside_outside(self):
+        # The sponge's solid corner columns are inside (negative); the carved
+        # centre hole and a far corner are outside (positive).
+        assert menger_sdf(np.array([[0.5, 0.5, 0.5]]), 2, 3.0)[0] < 0
+        assert menger_sdf(np.array([[0.0, 0.0, 0.0]]), 2, 3.0)[0] > 0
+        assert menger_sdf(np.array([[2.0, 2.0, 2.0]]), 2, 3.0)[0] > 0
+
+    def test_surface_nets_watertight_sphere(self):
+        # A sphere has a clean closed surface: every edge shared by exactly
+        # two faces (no boundary, no T-junction) → watertight.
+        n = 16
+        axis = np.linspace(-1.5, 1.5, n + 1)
+        zz, yy, xx = np.meshgrid(axis, axis, axis, indexing="ij")
+        vol = np.sqrt(xx * xx + yy * yy + zz * zz) - 1.0
+        verts, faces = surface_nets(vol)
+        assert len(verts) > 0 and len(faces) > 0
+
+        from collections import Counter
+        edge_count = Counter()
+        for a, b, c in faces:
+            for e in ((int(a), int(b)), (int(b), int(c)), (int(c), int(a))):
+                edge_count[tuple(sorted(e))] += 1
+        assert all(v == 2 for v in edge_count.values())
+
+    def test_surface_nets_outward_normals_sphere(self):
+        # Centre the sphere at the origin; all face normals must point away
+        # from the centroid (outward orientation).
+        n = 16
+        axis = np.linspace(-1.5, 1.5, n + 1)
+        zz, yy, xx = np.meshgrid(axis, axis, axis, indexing="ij")
+        vol = np.sqrt(xx * xx + yy * yy + zz * zz) - 1.0
+        verts, faces = surface_nets(vol)
+        centre = verts.mean(axis=0)
+        for a, b, c in faces[:50]:
+            nrm = np.cross(verts[b] - verts[a], verts[c] - verts[a])
+            assert np.dot(nrm, verts[a] - centre) > 0
+
+    def test_surface_nets_deterministic(self):
+        n = 12
+        axis = np.linspace(-1.3, 1.3, n + 1)
+        zz, yy, xx = np.meshgrid(axis, axis, axis, indexing="ij")
+        vol = np.sqrt(xx * xx + yy * yy + zz * zz) - 1.0
+        v1, f1 = surface_nets(vol)
+        v2, f2 = surface_nets(vol)
+        np.testing.assert_array_equal(v1, v2)
+        np.testing.assert_array_equal(f1, f2)
+
+    def test_sdf_volume_shape(self):
+        vol = sdf_volume("menger", {"iterations": 2, "scale": 3.0}, 8)
+        assert vol.shape == (9, 9, 9)
+        assert np.isfinite(vol).all()
+
+    def test_sdf_volume_unknown_family_raises(self):
+        with pytest.raises(ValueError, match="unknown SDF family"):
+            sdf_volume("bogus", {"iterations": 2}, 8)
+
+    def test_slot_sdf_params_deterministic_and_clamped(self, tmp_path: Path):
+        out_dir = tmp_path / "scan"
+        out_dir.mkdir()
+        spec = _make_spec(tmp_path, out_dir)
+        fractal = dict(spec.fractal)
+        fractal["sdf"] = {
+            "family": "menger",
+            "mapping": {
+                "iterations": {"stat": "effective_rank", "lo": 1, "hi": 10},
+                "scale": {"stat": "kurtosis", "lo": 2.5, "hi": 3.5},
+            },
+        }
+        p1 = slot_sdf_params(out_dir, spec.slots, fractal, 16)
+        p2 = slot_sdf_params(out_dir, spec.slots, fractal, 16)
+        assert p1 == p2
+        # grid=16 → max_iter = round(16/6) = 3; high lo→hi range must clamp.
+        assert all(1 <= row["iterations"] <= 3 for row in p1.values())
+        assert all(2.5 <= row["scale"] <= 3.5 for row in p1.values())
+
+    def test_build_sdf_mosaic_deterministic(self):
+        params = {
+            "a": {"iterations": 2, "scale": 3.0},
+            "b": {"iterations": 3, "scale": 3.0},
+        }
+        m1 = build_sdf_mosaic(2, 2, ["a", "b"], params, "menger", 12, cell_h=8, cell_w=8)
+        m2 = build_sdf_mosaic(2, 2, ["a", "b"], params, "menger", 12, cell_h=8, cell_w=8)
+        for a, b in zip(m1, m2, strict=True):
+            np.testing.assert_array_equal(a, b)
+
+    def test_build_sdf_mosaic_footprint_and_tint(self):
+        params = {"a": {"iterations": 2, "scale": 3.0}}
+        verts, faces, tint = build_sdf_mosaic(
+            1, 1, ["a"], params, "menger", 12, cell_h=8, cell_w=8
+        )
+        assert len(verts) > 0 and len(faces) > 0
+        assert len(tint) == len(verts)
+        # Footprint normalised to the [-1, 1]² render frame.
+        assert verts[:, 0].min() >= -1.0 - 1e-9 and verts[:, 0].max() <= 1.0 + 1e-9
+        assert verts[:, 1].min() >= -1.0 - 1e-9 and verts[:, 1].max() <= 1.0 + 1e-9
+        assert tint.min() >= 0.0 and tint.max() <= 1.0
+
+    def test_build_sdf_mosaic_mandelbulb(self):
+        params = {"a": {"iterations": 3, "power": 6.0}}
+        verts, faces, tint = build_sdf_mosaic(
+            1, 1, ["a"], params, "mandelbulb", 12, cell_h=8, cell_w=8
+        )
+        assert len(verts) > 0 and len(faces) > 0
+        assert len(tint) == len(verts)
+
+    def test_sdf_render_mode_dry_run(self, tmp_path: Path):
+        """Dry-run: mode='sdf' produces PNG + OBJ via the SDF bpy script."""
+        out_dir = tmp_path / "scan"
+        out_dir.mkdir()
+        spec = _make_spec(tmp_path, out_dir)
+        spec.fractal["mode"] = "sdf"
+        spec.fractal["sdf"] = {
+            "family": "menger",
+            "grid": 12,
+            "mapping": {
+                "iterations": {"stat": "effective_rank", "lo": 1, "hi": 4},
+                "scale": {"stat": "kurtosis", "lo": 2.5, "hi": 3.5},
+            },
+        }
+        out = out_dir / "render"
+        out.mkdir(parents=True, exist_ok=True)
+        field = Field2D(
+            channel="height",
+            data=np.zeros((3, 2)),
+            row_labels=["0", "1", "2"],
+            col_labels=["attn_q", "mlp_gate"],
+        )
+        renderer = FractalRenderer()
+
+        fake_blender = tmp_path / "blender"
+        fake_blender.write_text("#!/bin/sh\necho ok\n")
+        fake_blender.chmod(0o755)
+
+        with mock.patch("subprocess.run") as mock_run:
+            def _write_png(cmd, **kw):
+                (out / "terrain_fractal.png").write_bytes(b"PNG-DUMMY")
+                return mock.MagicMock(returncode=0, stdout="", stderr="")
+            mock_run.side_effect = _write_png
+            with mock.patch.dict(os.environ, {"WEIGHT_ATLAS_BLENDER": str(fake_blender)}):
+                produced = renderer.render(field, spec, out)
+
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        args = cmd[cmd.index("--") + 1:]
+        assert "render_sdf.py" in cmd[cmd.index("-P") + 1]
+        assert "--verts" in args and "--faces" in args and "--tint" in args
+        names = {p.name for p in produced}
+        assert "terrain_fractal.png" in names
+        assert "terrain_fractal.obj" in names
+        obj = (out / "terrain_fractal.obj").read_text()
+        assert obj.startswith("# weight-atlas fractal SDF mosaic OBJ")
+
+    def test_sdf_render_deterministic_obj(self, tmp_path: Path):
+        out_dir = tmp_path / "scan"
+        out_dir.mkdir()
+        spec = _make_spec(tmp_path, out_dir)
+        spec.fractal["mode"] = "sdf"
+        spec.fractal["sdf"] = {
+            "family": "menger",
+            "grid": 10,
+            "mapping": {
+                "iterations": {"stat": "effective_rank", "lo": 1, "hi": 3},
+                "scale": {"stat": "kurtosis", "lo": 2.5, "hi": 3.5},
+            },
+        }
+        field = Field2D(
+            channel="height",
+            data=np.zeros((3, 2)),
+            row_labels=["0", "1", "2"],
+            col_labels=["attn_q", "mlp_gate"],
+        )
+        renderer = FractalRenderer()
+
+        fake_blender = tmp_path / "blender"
+        fake_blender.write_text("#!/bin/sh\necho ok\n")
+        fake_blender.chmod(0o755)
+
+        objs = []
+        with mock.patch("subprocess.run") as mock_run:
+            mock_run.return_value = mock.MagicMock(returncode=0, stdout="", stderr="")
+            with mock.patch.dict(os.environ, {"WEIGHT_ATLAS_BLENDER": str(fake_blender)}):
+                for i in range(2):
+                    out = tmp_path / f"render_sdf{i}"
+                    out.mkdir(parents=True, exist_ok=True)
+                    renderer.render(field, spec, out)
+                    objs.append((out / "terrain_fractal.obj").read_bytes())
+        assert objs[0] == objs[1]
+
+
 class TestFractalRenderer:
     def test_registered_with_id_fractal(self):
         renderer_cls = get_renderer("fractal")
@@ -265,6 +465,121 @@ class TestFractalRenderer:
                     assert any(p.name == "terrain_fractal.png" for p in produced)
 
         mock_run.assert_called_once()
+
+    def test_expert_and_vision_channels_skipped(self, tmp_path: Path):
+        """Expert/vision rasters never define the fractal (primary raster only)."""
+        out_dir = tmp_path / "scan"
+        out_dir.mkdir()
+        spec = _make_spec(tmp_path, out_dir)
+        spec.fractal["mode"] = "sdf"
+        spec.fractal["sdf"] = {
+            "family": "menger",
+            "grid": 10,
+            "mapping": {
+                "iterations": {"stat": "effective_rank", "lo": 1, "hi": 4},
+                "scale": {"stat": "kurtosis", "lo": 2.5, "hi": 3.5},
+            },
+        }
+        out = out_dir / "render"
+        out.mkdir(parents=True, exist_ok=True)
+        renderer = FractalRenderer()
+
+        fake_blender = tmp_path / "blender"
+        fake_blender.write_text("#!/bin/sh\necho ok\n")
+        fake_blender.chmod(0o755)
+
+        with mock.patch("subprocess.run") as mock_run:
+            def _write_png(cmd, **kw):
+                (out / "terrain_fractal.png").write_bytes(b"PNG-DUMMY")
+                return mock.MagicMock(returncode=0, stdout="", stderr="")
+            mock_run.side_effect = _write_png
+            with mock.patch.dict(os.environ, {"WEIGHT_ATLAS_BLENDER": str(fake_blender)}):
+                # Primary raster renders first (sets the cache).
+                primary = Field2D(
+                    channel="height",
+                    data=np.zeros((3, 2)),
+                    row_labels=["0", "1", "2"],
+                    col_labels=["attn_q", "mlp_gate"],
+                )
+                produced = renderer.render(primary, spec, out)
+                assert any(p.name == "terrain_fractal.png" for p in produced)
+
+                # Expert panel (one column per expert) must be skipped.
+                expert = Field2D(
+                    channel="expert_mlp_down_height",
+                    data=np.zeros((3, 896)),
+                    row_labels=["0", "1", "2"],
+                    col_labels=[str(i) for i in range(896)],
+                )
+                assert renderer.render(expert, spec, out) == []
+
+                # Vision panel must be skipped too.
+                vision = Field2D(
+                    channel="vision_height",
+                    data=np.zeros((3, 18)),
+                    row_labels=["0", "1", "2"],
+                    col_labels=[f"v{i}" for i in range(18)],
+                )
+                assert renderer.render(vision, spec, out) == []
+
+        mock_run.assert_called_once()
+
+    def test_mosaic_decimates_large_rasters(self):
+        """Rasters exceeding max_cells are decimated deterministically."""
+        params = {"a": {"iterations": 2, "scale": 3.0}}
+        verts, faces, tint = build_sdf_mosaic(
+            92, 896, ["a"] * 896, params, "menger", 10, cell_h=8, cell_w=8
+        )
+        # 82,432 cells would be ~115M verts uncapped; the cap must bound it.
+        assert len(verts) < 2_000_000
+        assert len(tint) == len(verts)
+
+        # Deterministic: same input → same mesh.
+        v2, f2, t2 = build_sdf_mosaic(
+            92, 896, ["a"] * 896, params, "menger", 10, cell_h=8, cell_w=8
+        )
+        for a, b in zip((verts, faces, tint), (v2, f2, t2), strict=True):
+            np.testing.assert_array_equal(a, b)
+
+    def test_mosaic_small_raster_uncapped(self):
+        """Small rasters under max_cells keep one object per cell."""
+        params = {"a": {"iterations": 2, "scale": 3.0}}
+        one, _f, _t = build_sdf_mosaic(1, 1, ["a"], params, "menger", 10, cell_h=8, cell_w=8)
+        assert len(one) > 0
+
+    def test_dedupe_keyed_on_layout(self, tmp_path: Path):
+        """Channels with a different raster layout must not reuse the cache."""
+        out_dir = tmp_path / "scan"
+        out_dir.mkdir()
+        spec = _make_spec(tmp_path, out_dir)
+        out = out_dir / "render"
+        out.mkdir(parents=True, exist_ok=True)
+        renderer = FractalRenderer()
+
+        fake_blender = tmp_path / "blender"
+        fake_blender.write_text("#!/bin/sh\necho ok\n")
+        fake_blender.chmod(0o755)
+
+        with mock.patch("subprocess.run") as mock_run:
+            mock_run.return_value = mock.MagicMock(returncode=0, stdout="", stderr="")
+            with mock.patch.dict(os.environ, {"WEIGHT_ATLAS_BLENDER": str(fake_blender)}):
+                small = Field2D(
+                    channel="height",
+                    data=np.zeros((3, 2)),
+                    row_labels=["0", "1", "2"],
+                    col_labels=["attn_q", "mlp_gate"],
+                )
+                renderer.render(small, spec, out)
+
+                # Different layout (different slot labels) → new render.
+                other = Field2D(
+                    channel="height",
+                    data=np.zeros((3, 3)),
+                    row_labels=["0", "1", "2"],
+                    col_labels=["attn_q", "mlp_gate", "mlp_up"],
+                )
+                renderer.render(other, spec, out)
+        assert mock_run.call_count == 2
 
     def test_dry_run_traceback_guard(self, tmp_path: Path):
         """Blender exits 0 with a script traceback → render must fail."""
