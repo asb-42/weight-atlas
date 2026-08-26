@@ -177,7 +177,7 @@ class DeltaSheet:
         noise_floor_mask: np.ndarray | None = None,
     ) -> Path:
         """Render the main delta sheet."""
-        dpi = int(spec.sheet["dpi"])
+        dpi = int(spec.sheet.get("dpi", 150))  # tolerate older/custom specs
         n_rows, n_cols = data.shape
         figsize = (max(6, n_cols * 0.5), max(4, n_rows * 0.4))
 
@@ -253,7 +253,7 @@ class DeltaSheet:
         model_b: str = "",
     ) -> Path:
         """Render a 1×L profile strip (per-layer relative L2) — the 'ablitation bar'."""
-        dpi = int(spec.sheet["dpi"])
+        dpi = int(spec.sheet.get("dpi", 150))  # tolerate older/custom specs
         n_rows, n_cols = data.shape
 
         # Compute per-row relative L2 (relative to row norm)
