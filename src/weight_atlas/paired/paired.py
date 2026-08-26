@@ -954,13 +954,24 @@ def run_paired(
     jobs_n = _resolve_jobs(jobs)
 
     def _one(pair: tuple[TensorHandle, TensorHandle]) -> TensorImpact:
-        return _pair_metrics(
-            pair[0], pair[1], spec,
-            ref_side=ref_side,
-            compute_spectrum=compute_spectrum,
-            want_u1=want_u1,
-            chunk_size=chunk_size,
-        )
+        ha, hb = pair
+        try:
+            return _pair_metrics(
+                ha, hb, spec,
+                ref_side=ref_side,
+                compute_spectrum=compute_spectrum,
+                want_u1=want_u1,
+                chunk_size=chunk_size,
+            )
+        finally:
+            # Release both payloads as soon as this pair's metrics are done.
+            # Handles are memoized, so without a per-pair clear the union of
+            # all paired tensors from BOTH models accumulates in RAM until
+            # the end of the run (~4 bytes/param x 2 models); clearing here
+            # bounds peak memory to jobs_n x 2 tensors (+ one shared GGUF
+            # expert parent per concurrently processed family).
+            ha.clear()
+            hb.clear()
 
     if jobs_n > 1 and n_total > 1:
         from concurrent.futures import ThreadPoolExecutor
@@ -994,8 +1005,8 @@ def run_paired(
             if i % report_every == 0 or i == n_total - 1:
                 _report(0.08 + 0.72 * ((i + 1) / n_total), f"Measuring impact ({i + 1}/{n_total})...")
 
-    # Release model payloads: handles are memoized, so clear them now that all
-    # metrics are computed.
+    # Safety net: clear anything the per-pair cleanup missed (skipped /
+    # never-loaded handles). Clearing is idempotent for unloaded handles.
     for h in handles_a:
         h.clear()
     for h in handles_b:
