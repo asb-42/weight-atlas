@@ -66,12 +66,15 @@ def compute_delta(
     data_a = aligned.data_a
     data_b = aligned.data_b
 
-    # Summary metrics on raw stats (before scaling)
-    raw_flat_a = data_a[np.isfinite(data_a)].flatten()
-    raw_flat_b = data_b[np.isfinite(data_b)].flatten()
+    # Summary metrics on raw stats (before scaling). Both use the SAME
+    # position-aligned element set (intersection of the finite masks):
+    # masking independently shifts row-major order whenever the NaN
+    # footprints differ (missing slots, aligned-mode NaN column padding),
+    # and the cosine would then compare unrelated elements.
+    both_finite = np.isfinite(data_a) & np.isfinite(data_b)
 
     rel_l2 = _compute_rel_l2(data_a, data_b)
-    cosine_sim = _compute_cosine_sim(raw_flat_a, raw_flat_b)
+    cosine_sim = _compute_cosine_sim(data_a[both_finite], data_b[both_finite])
 
     # Apply scale to both fields for delta computation
     scale_spec = spec.channel_scale(channel)
@@ -130,17 +133,18 @@ def _compute_rel_l2(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def _compute_cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
-    """Compute cosine similarity between two vectors.
+    """Cosine similarity of two position-aligned element sets.
 
-    If vectors have different lengths, pads the shorter with zeros.
-    Returns 0.0 if either vector has zero norm.
+    ``a`` and ``b`` must be extracted at identical positions (the caller
+    intersects the finite masks). Mismatched sizes mean a misaligned
+    extraction — raise instead of zero-padding and comparing shifted
+    elements.
     """
-    # Pad to same length
-    max_len = max(a.size, b.size)
-    if a.size < max_len:
-        a = np.pad(a, (0, max_len - a.size))
-    if b.size < max_len:
-        b = np.pad(b, (0, max_len - b.size))
+    if a.size != b.size:
+        raise ValueError(
+            f"cosine_sim inputs must be position-aligned "
+            f"({a.size} vs {b.size} elements)"
+        )
 
     norm_a = float(np.linalg.norm(a))
     norm_b = float(np.linalg.norm(b))

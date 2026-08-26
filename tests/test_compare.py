@@ -315,6 +315,25 @@ class TestComputeDelta:
         # Identical fields should have cosine sim close to 1
         assert delta.cosine_sim > 0.99
 
+    def test_cosine_sim_aligned_under_divergent_nan_masks(self, field_a, simple_spec):
+        """Regression: NaN footprints that differ between A and B must not
+        shift the row-major element order (the old code masked each field
+        independently and zero-padded, comparing unrelated elements)."""
+        a = np.array([[1.0, 2.0], [3.0, 4.0]])
+        b = np.array([[np.nan, 2.0], [3.0, 4.0]])  # one hole only in B
+        aligned = align(a, b, simple_spec, mode="strict")
+        delta = compute_delta(aligned, "height", simple_spec)
+        # Position-aligned finite elements are identical → cosine exactly 1.
+        # The buggy independent-mask path produced ~0.68 here.
+        assert delta.cosine_sim == pytest.approx(1.0)
+
+    def test_cosine_sim_symmetric_holes_still_one(self, field_a, simple_spec):
+        a = np.array([[np.nan, 2.0], [3.0, 4.0]])
+        b = a.copy()
+        aligned = align(a, b, simple_spec, mode="strict")
+        delta = compute_delta(aligned, "height", simple_spec)
+        assert delta.cosine_sim == pytest.approx(1.0)
+
     def test_hotspot_in_valid_range(self, field_a, field_b, simple_spec):
         aligned = align(field_a, field_b, simple_spec, mode="strict")
         delta = compute_delta(aligned, "height", simple_spec)
@@ -358,11 +377,12 @@ class TestComputeCosineSim:
         b = np.array([0.0, 1.0])
         assert _compute_cosine_sim(a, b) == pytest.approx(0.0)
 
-    def test_different_length_pads(self):
+    def test_different_length_raises(self):
+        """Mismatched sizes mean misaligned extraction — must fail loudly."""
         a = np.array([1.0, 2.0])
         b = np.array([1.0, 2.0, 3.0])
-        result = _compute_cosine_sim(a, b)
-        assert -1.0 <= result <= 1.0
+        with pytest.raises(ValueError, match="position-aligned"):
+            _compute_cosine_sim(a, b)
 
 
 class TestSafeSubtract:
