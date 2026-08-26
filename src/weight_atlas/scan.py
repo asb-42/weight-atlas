@@ -49,15 +49,19 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _make_handles(tensor: TensorHandle) -> TensorStats:
-    """Compute all registered statistics for one tensor."""
+def _make_handles(tensor: TensorHandle, svd_seed: int = 0) -> TensorStats:
+    """Compute all registered statistics for one tensor.
+
+    ``svd_seed`` comes from the spec's ``seeds.svd`` so scan spectra and
+    paired-pipeline Δ-spectra share the same seeded rSVD contract.
+    """
     return TensorStats(
         name=tensor.name,
         shape=tensor.shape,
         frobenius=FrobeniusNorm().compute(tensor),
-        spectral_norm=SpectralNorm().compute(tensor),
-        effective_rank=EffectiveRank().compute(tensor),
-        stable_rank=StableRank().compute(tensor),
+        spectral_norm=SpectralNorm(seed=svd_seed).compute(tensor),
+        effective_rank=EffectiveRank(seed=svd_seed).compute(tensor),
+        stable_rank=StableRank(seed=svd_seed).compute(tensor),
         kurtosis=Kurtosis().compute(tensor),
         sparsity=Sparsity().compute(tensor),
         kernel_norm=KernelNorm().compute(tensor),
@@ -73,7 +77,7 @@ def _resolve_jobs(jobs: int | None) -> int:
     return max(1, min(8, os.cpu_count() or 1))
 
 
-def _stats_for_handle(h: TensorHandle) -> TensorStats:
+def _stats_for_handle(h: TensorHandle, svd_seed: int = 0) -> TensorStats:
     """Compute all statistics for one tensor.
 
     BLAS threading is capped once by ``scan()`` around the whole parallel
@@ -82,7 +86,7 @@ def _stats_for_handle(h: TensorHandle) -> TensorStats:
     OpenBLAS (observed on large MoE scans), so the limit must be applied a
     single time before the pool starts, not re-entered for every tensor.
     """
-    return _make_handles(h)
+    return _make_handles(h, svd_seed)
 
 
 def scan(
@@ -147,6 +151,9 @@ def scan(
     n_total = len(handles)
     report_every = max(1, n_total // 40) if n_total else 1
     jobs_n = _resolve_jobs(jobs)
+    # Shared rSVD seed: the paired pipeline reads the same spec key, so scan
+    # spectra and Δ-spectra stay comparable when it changes.
+    svd_seed = int(spec.seeds.get("svd", 0))
 
     # Tensors that materialize to >= 1 GiB float32 are handled serially to keep
     # peak RAM bounded even on models with very large tensors.
@@ -175,13 +182,15 @@ def scan(
             from concurrent.futures import ThreadPoolExecutor
 
             with ThreadPoolExecutor(max_workers=jobs_n) as ex:
-                for i, ts in ex.map(lambda i: (i, _stats_for_handle(handles[i])), items):
+                for i, ts in ex.map(
+                    lambda i: (i, _stats_for_handle(handles[i], svd_seed)), items
+                ):
                     handles[i].clear()
                     stats[i] = ts
                     _report_stats(i)
         else:
             for i in items:
-                ts = _stats_for_handle(handles[i])
+                ts = _stats_for_handle(handles[i], svd_seed)
                 handles[i].clear()
                 stats[i] = ts
                 _report_stats(i)
