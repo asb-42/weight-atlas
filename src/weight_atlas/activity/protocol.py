@@ -67,6 +67,16 @@ def _load_protocol_from_json(path: Path) -> ActivityProtocol:
         for s in raw["states"]
     )
 
+    if not states:
+        raise ValueError(f"protocol {path} defines no states")
+    if len({s.name for s in states}) != len(states):
+        raise ValueError(
+            f"protocol {path} has duplicate state names; captures are keyed "
+            "by name and would silently overwrite each other"
+        )
+    if any(s.max_len <= 0 for s in states):
+        raise ValueError(f"protocol {path} has a state with max_len <= 0")
+
     return ActivityProtocol(version=raw["version"], states=states)
 
 
@@ -79,10 +89,20 @@ def _register_protocol(version: str, path: Path) -> None:
     _PROTOCOLS[version] = _load_protocol_from_json(path)
 
 
-# Load built-in protocols
+# Load built-in protocols. The repo-root specs/ directory only exists in a
+# source checkout — in a wheel install the file is not packaged (yet), and a
+# silent empty registry would surface far away as "Unknown protocol version".
+# Fail loudly at import time instead so the missing artefact is obvious.
 _spec_dir = Path(__file__).resolve().parent.parent.parent.parent / "specs"
-if (_spec_dir / "activity_protocol.v1.json").exists():
-    _register_protocol("v1", _spec_dir / "activity_protocol.v1.json")
+_v1_path = _spec_dir / "activity_protocol.v1.json"
+if _v1_path.exists():
+    _register_protocol("v1", _v1_path)
+else:  # pragma: no cover - depends on install layout
+    raise RuntimeError(
+        f"activity protocol registry is empty: {_v1_path} does not exist. "
+        "The shipped protocol specs live in <repo>/specs/; run from a source "
+        "checkout or reinstall the package."
+    )
 
 
 def load_protocol(version: str = "v1") -> ActivityProtocol:
