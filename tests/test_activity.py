@@ -102,6 +102,32 @@ class TestHookMechanics:
         np.testing.assert_array_almost_equal(sums, np.ones_like(sums))
 
 
+class TestFirstHidden:
+    def test_tuple_output_unwraps_first(self):
+        from weight_atlas.activity.capture import _first_hidden
+
+        t = ("first", "second")
+        assert _first_hidden(t) == "first"
+
+    def test_model_output_unwraps_first(self):
+        """transformers ModelOutput is an OrderedDict, not a tuple — the old
+        isinstance(output, tuple) check left it unwrapped and crashed the
+        hook at ``hidden ** 2``."""
+        from weight_atlas.activity.capture import _first_hidden
+
+        class FakeModelOutput(dict):
+            def to_tuple(self):
+                return tuple(self.values())
+
+        out = FakeModelOutput(hidden_states="hs", attentions="att")
+        assert _first_hidden(out) == "hs"
+
+    def test_plain_tensor_passthrough(self):
+        from weight_atlas.activity.capture import _first_hidden
+
+        assert _first_hidden("tensor") == "tensor"
+
+
 # ---------------------------------------------------------------------------
 # Field assembly test
 # ---------------------------------------------------------------------------
