@@ -676,7 +676,9 @@ def create_router(
                 detail=f"File type not allowed: {path}. Allowed: {_artefact_allowlist}"
             )
 
-        # Security: ensure path doesn't escape out_dir
+        # Security: ensure path doesn't escape out_dir. resolve() already
+        # canonicalizes symlinks, so a single containment check on the
+        # resolved path covers both traversal and symlink escapes.
         out_dir = Path(job.out_dir).resolve()
         artefact_path = (out_dir / path).resolve()
 
@@ -688,14 +690,6 @@ def create_router(
 
         if not artefact_path.exists():
             raise HTTPException(status_code=404, detail=f"Artefact not found: {path}")
-
-        # Additional check: reject symlinks that escape out_dir
-        if artefact_path.is_symlink():
-            real_path = artefact_path.resolve()
-            try:
-                real_path.relative_to(out_dir)
-            except ValueError:
-                raise HTTPException(status_code=403, detail="Access denied: symlink escape") from None
 
         return FileResponse(artefact_path)
 
@@ -721,6 +715,7 @@ def create_router(
         out_dir = Path(job.out_dir).resolve()
         artifact_path = (out_dir / artifact_name).resolve()
 
+        # Resolved containment check covers traversal AND symlink escapes.
         try:
             artifact_path.relative_to(out_dir)
         except ValueError:
@@ -728,13 +723,6 @@ def create_router(
 
         if not artifact_path.exists():
             raise HTTPException(status_code=404, detail=f"Artifact not found: {artifact_name}")
-
-        if artifact_path.is_symlink():
-            real_path = artifact_path.resolve()
-            try:
-                real_path.relative_to(out_dir)
-            except ValueError:
-                raise HTTPException(status_code=403, detail="Access denied: symlink escape") from None
 
         from fastapi.responses import FileResponse
         return FileResponse(artifact_path)
