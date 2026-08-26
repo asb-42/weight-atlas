@@ -430,6 +430,13 @@ def scan(
         degen_report = diagnose_fields(fields_for_diag)
         if degen_report.warnings:
             fingerprint["warnings"] = fingerprint.get("warnings", []) + degen_report.warnings
+            # fingerprint.json was written before the field TIFFs existed, so
+            # the merge above happened after serialization — rewrite the file
+            # or the warnings are computed and silently dropped. The manifest
+            # below hashes this final content.
+            with open(fp_path, "w") as f:
+                json.dump(fingerprint, f, indent=2, sort_keys=True)
+                f.write("\n")
 
     _report(0.97, "Writing manifest...")
     manifest = {str(p.relative_to(out)): _sha256(p) for p in artefacts}

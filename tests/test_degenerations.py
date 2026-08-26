@@ -160,3 +160,31 @@ def test_min_cells_warning_in_diagnose_fields():
     assert report.has_degenerations
     min_cell_warnings = [w for w in report.warnings if "too few cells" in w.lower()]
     assert len(min_cell_warnings) >= 1
+
+
+def test_scan_persists_degeneration_warnings(tmp_path, monkeypatch):
+    """Regression: warnings were merged into the fingerprint dict AFTER
+    fingerprint.json had been written, so they never reached disk even
+    though this module's contract says they flow into fingerprint.json."""
+    import json
+
+    import weight_atlas.fields.degenerations as degmod
+    from tests.fixtures import make_fake_model
+    from weight_atlas.core.types import load_default_spec
+    from weight_atlas.fields.degenerations import DegenerationReport
+
+    model_path = tmp_path / "model.safetensors"
+    make_fake_model(model_path)
+    out = tmp_path / "out"
+
+    fake_report = DegenerationReport(warnings=["synthetic degeneration warning"])
+    monkeypatch.setattr(
+        degmod, "diagnose_fields", lambda fields, file=None: fake_report
+    )
+
+    from weight_atlas.scan import scan
+
+    scan(model_path, out, load_default_spec())
+
+    fp = json.loads((out / "fingerprint.json").read_text())
+    assert "synthetic degeneration warning" in fp.get("warnings", [])
