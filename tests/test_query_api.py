@@ -474,3 +474,26 @@ class TestRecordCacheAndPercentiles:
         assert len(rows) >= 2
         pcts = [r["percentile"] for r in rows]
         assert all(a >= b for a, b in zip(pcts, pcts[1:]))
+
+
+class TestInvalidFilterParams:
+    def test_bad_layer_expression_is_400_envelope(self, client, queue):
+        """Garbage layer filters must return the spec error envelope, not 500."""
+        mid = _model_id(queue)
+        for endpoint, params in (
+            ("query", {"layer": "abc"}),
+            ("anomalies", {"layer_range": "0:ten"}),
+            ("histogram", {"layer_range": ">=five"}),
+        ):
+            resp = client.get(f"/api/model/{mid}/{endpoint}", params=params)
+            assert resp.status_code == 400, endpoint
+            err = resp.json()["error"]
+            assert err["type"] == "invalid_param"
+            assert "hint" in err
+
+    def test_good_layer_expressions_still_work(self, client, queue):
+        mid = _model_id(queue)
+        resp = client.get(f"/api/model/{mid}/query", params={"layer": ">=0"})
+        assert resp.status_code == 200
+        resp = client.get(f"/api/model/{mid}/query", params={"layer": "0:1"})
+        assert resp.status_code == 200

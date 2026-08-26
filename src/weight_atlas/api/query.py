@@ -396,31 +396,44 @@ def list_scans(jobs: Iterable[Job]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Filter / slice parsing
 # ---------------------------------------------------------------------------
+def _parse_layer_int(expr: str, token: str) -> int:
+    """Parse one integer out of a layer expression; 400 on garbage."""
+    try:
+        return int(token.strip())
+    except ValueError:
+        raise QueryError(
+            400,
+            "invalid_param",
+            f"invalid layer expression: {expr!r}",
+            "42 | >=50 | <=10 | >5 | <8 | 0:31 | 0,2,4",
+        ) from None
+
+
 def _parse_layer_filter(expr: str | None) -> Callable[[int], bool] | None:
     if expr is None or expr.strip() in ("", "all"):
         return None
     expr = expr.strip()
     if expr.startswith(">="):
-        v = int(expr[2:].strip())
+        v = _parse_layer_int(expr, expr[2:])
         return lambda layer: layer >= v
     if expr.startswith("<="):
-        v = int(expr[2:].strip())
+        v = _parse_layer_int(expr, expr[2:])
         return lambda layer: layer <= v
     if expr.startswith(">"):
-        v = int(expr[1:].strip())
+        v = _parse_layer_int(expr, expr[1:])
         return lambda layer: layer > v
     if expr.startswith("<"):
-        v = int(expr[1:].strip())
+        v = _parse_layer_int(expr, expr[1:])
         return lambda layer: layer < v
     if ":" in expr:
         lo_s, hi_s = expr.split(":", 1)
-        lo = int(lo_s.strip()) if lo_s.strip() else 0
-        hi = int(hi_s.strip())
+        lo = _parse_layer_int(expr, lo_s) if lo_s.strip() else 0
+        hi = _parse_layer_int(expr, hi_s)
         return lambda layer: lo <= layer <= hi
     if "," in expr:
-        vals = {int(x.strip()) for x in expr.split(",") if x.strip()}
+        vals = {_parse_layer_int(expr, x) for x in expr.split(",") if x.strip()}
         return lambda layer: layer in vals
-    v = int(expr)
+    v = _parse_layer_int(expr, expr)
     return lambda layer: layer == v
 
 
