@@ -973,32 +973,35 @@ def run_paired(
             ha.clear()
             hb.clear()
 
+    def _measure(ex: Any) -> None:
+        """Single copy of the iterate/report loop; results stay in pair order."""
+        nonlocal impacts
+        for i, ti in enumerate(ex.map(_one, pairs)):
+            impacts.append(ti)
+            if i % report_every == 0 or i == n_total - 1:
+                _report(0.08 + 0.72 * ((i + 1) / n_total), f"Measuring impact ({i + 1}/{n_total})...")
+
     if jobs_n > 1 and n_total > 1:
         from concurrent.futures import ThreadPoolExecutor
+        from contextlib import nullcontext
 
+        # Scope the fallback to *entering* threadpool_limits: any other
+        # RuntimeError is a real failure and must propagate (the old code
+        # re-ran the entire workload with limits disabled, masking the root
+        # cause and doubling compute).
         try:
             from threadpoolctl import threadpool_limits  # type: ignore[import-untyped]
+            limits_cm: Any = threadpool_limits(limits=1)
         except ImportError:  # pragma: no cover - optional dep
-            threadpool_limits = None
-        if threadpool_limits is not None:
-            try:
-                with threadpool_limits(limits=1), ThreadPoolExecutor(max_workers=jobs_n) as ex:
-                    for i, ti in enumerate(ex.map(_one, pairs)):
-                        impacts.append(ti)
-                        if i % report_every == 0 or i == n_total - 1:
-                            _report(0.08 + 0.72 * ((i + 1) / n_total), f"Measuring impact ({i + 1}/{n_total})...")
-            except RuntimeError:
-                with ThreadPoolExecutor(max_workers=jobs_n) as ex:
-                    for i, ti in enumerate(ex.map(_one, pairs)):
-                        impacts.append(ti)
-                        if i % report_every == 0 or i == n_total - 1:
-                            _report(0.08 + 0.72 * ((i + 1) / n_total), f"Measuring impact ({i + 1}/{n_total})...")
-        else:
+            limits_cm = None
+        except RuntimeError:
+            # threadpoolctl present but no supported BLAS loaded → nothing to
+            # cap; parallel numpy is safe.
+            limits_cm = None
+
+        with (limits_cm if limits_cm is not None else nullcontext()):
             with ThreadPoolExecutor(max_workers=jobs_n) as ex:
-                for i, ti in enumerate(ex.map(_one, pairs)):
-                    impacts.append(ti)
-                    if i % report_every == 0 or i == n_total - 1:
-                        _report(0.08 + 0.72 * ((i + 1) / n_total), f"Measuring impact ({i + 1}/{n_total})...")
+                _measure(ex)
     else:
         for i, pair in enumerate(pairs):
             impacts.append(_one(pair))
