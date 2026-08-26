@@ -61,6 +61,9 @@ def _cell_strides(n_rows: int, n_cols: int, max_cells: int) -> tuple[int, int]:
     stays at or below ``max_cells``. Deterministic for a given input shape.
     """
     total = n_rows * n_cols
+    # A non-positive budget can never be satisfied by the loop below (counts
+    # floor at 1) — it would spin the worker forever. Clamp to at least one.
+    max_cells = max(1, int(max_cells))
     if total <= max_cells:
         return 1, 1
     ratio = n_cols / max(n_rows, 1)

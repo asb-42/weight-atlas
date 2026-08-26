@@ -692,3 +692,11 @@ class TestFractalRenderer:
                     renderer.render(field, spec, out)
                     objs.append((out / "terrain_fractal.obj").read_bytes())
         assert objs[0] == objs[1]
+
+
+def test_cell_strides_nonpositive_budget_terminates():
+    """max_cells <= 0 must clamp, not spin the worker in an unsatisfiable loop."""
+    from weight_atlas.render.fractal.mosaic import _cell_strides
+
+    assert _cell_strides(8, 8, 0) == (1, 1)
+    assert _cell_strides(8, 8, -5) == (1, 1)
