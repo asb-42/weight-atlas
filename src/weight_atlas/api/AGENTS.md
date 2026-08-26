@@ -62,15 +62,28 @@ scan/render/compare, and provides file-browsing and result endpoints. The UI
   the scan dir names are the labels shown on the report instead of bare
   "A"/"B".
 - **Errors surface on the job**: worker catches exceptions → `job.status =
-  FAILED` + `job.error`; the API never raises unhandled.
+  FAILED` + `job.error` (exception type + truncated traceback, also logged
+  with `exc_info`); the API never raises unhandled. Per-render channel
+  failures are logged and surfaced via the completion message
+  (`Complete (N render failure(s): ...)`) — the artefacts list stays a pure
+  list of file names.
+- **Output dirs are unique per job**: scan jobs write to
+  `output_root/<model_name>_<uuid8>` (same convention as `compare_*`
+  outputs) so same-named models in different roots never overwrite each
+  other. `POST /api/import` runs the heavy render via
+  `run_in_threadpool` — never on the event loop.
 - **LLM query API is a separate router**: `query_routes.py` owns the read-only
   `/api`, `/api/schema`, `/api/models`, `/api/model/{model_id}/*` endpoints
   (spec `docs/2026-08-16_weight-atlas-api-spec-v0.2.md`); `routes.py` owns the
   web UI. `model_id` == DONE scan job's `job_id`; a model is a DONE job whose
   `out_dir/fingerprint.json` exists. All analytics live in `query.py` (pure
   functions over the fingerprint) — never inline statistics in the router.
-  Errors use the spec's `{error: {code, type, message, hint}}` envelope via
-  `QueryError` (handled in `main.py`). Response bodies must stay
+  Derived tensor records are cached (`_load_records`) under the fingerprint's
+  `(path, mtime_ns, size)` key; percentile ranks use ascending-sorted arrays
+  with side='right' (weak) semantics. Invalid filter input (e.g.
+  `layer=abc`) raises `QueryError(400)` via the error envelope, never a bare
+  500. Errors use the spec's `{error: {code, type, message, hint}}` envelope
+  via `QueryError` (handled in `main.py`). Response bodies must stay
   deterministic: fixed ordering, no timestamps, floats rounded to 4 decimals.
 - **Model detail is tabbed sub-pages**: `GET /models/{id}` is a light overview;
   sheets/terrain/stats/spec load as htmx fragments via `?tab=`. The statistics

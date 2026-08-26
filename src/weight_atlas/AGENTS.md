@@ -35,6 +35,14 @@ compare two scanned models. The web UI (api + ui) is the primary interface.
   older specs and must stay in sync.
 - **Architecture docs**: durable design rules live in `docs/ARCHITECTURE.md`;
   update it when pipeline contracts change.
+- **Activity capture**: `capture_activity` saves and restores process-global
+  torch state (threads, deterministic flag, RNG, model.training) in a
+  `finally`; hook reductions upcast to float32 (bf16 has no numpy dtype);
+  padded positions are excluded via the attention mask; the protocol
+  registry fails loudly at import if its spec file is missing.
+- **Shared rSVD seed**: `spec.seeds.svd` drives BOTH the scan-side
+  SpectralNorm/EffectiveRank/StableRank and the paired Δ-spectrum — change it
+  once, both pipelines reseed together.
 
 ## Work Guidance
 

@@ -39,6 +39,14 @@ pairing, rasterisation and determinism machinery:
   order-independent float64 → byte-identical for any `jobs`. Δ-spectrum reuses
   `stats/spectrum.py` (same lock, same seeded rSVD) so spectral values are
   deterministic too. PNG metadata fixed; sheet raster capped to a pixel budget.
+- **Memory is bounded per pair**: `_one` clears both handles in a `finally`,
+  so peak RAM stays at `jobs_n x 2` tensors (+ one shared GGUF expert parent
+  per concurrently processed family) — never the union of both models.
+- **Failures propagate**: the threadpoolctl fallback applies only when
+  entering the limits context itself fails; any other RuntimeError from
+  measurement propagates (no full-workload re-run masking root causes).
+  `_render_qtype_map` returns `None` (never a phantom path) when the qtype
+  raster is absent, so the manifest step cannot crash on missing files.
 - **Preset metric sets**: `dspec` is opt-in for quant (`operator_impact`); the
   edit preset always computes the Δ-spectrum because classification needs it.
 - **Classification (edit)**: decision tree on edited tensors (rel-L2 >

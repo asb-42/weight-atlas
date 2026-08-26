@@ -25,7 +25,16 @@ GGUF loaders plus GGUF dequantisation (including MXFP4 block formats).
   (`tests/test_gguf.py`, `tests/test_kimi_k3.py`); do not change
   dequantisation without updating those fixtures. Q4_0 uses the canonical
   layout (first 16 values in the low nibbles, last 16 in the high nibbles of
-  the 16 qs bytes) — pinned by `test_q4_0_canonical_layout`.
+  the 16 qs bytes) — pinned by `test_q4_0_canonical_layout`. Q8_K uses the
+  canonical 292-byte block `[f32 d][256 x int8 qs][16 x int16 bsums]` (the
+  gguf library does not implement it) — pinned by `TestDequantQ8K`.
+- **Block decoders**: vectorized over whole payloads, accept bytes OR uint8
+  ndarray payloads (GGUFReader hands over `(rows, block_bytes)` arrays), and
+  raise `ValueError` on payloads that are not an exact multiple of the block
+  size — never floor-divide away trailing bytes.
+- **Safetensors header validation**: header length capped at 512 MB and every
+  tensor's `data_offsets` must satisfy `0 <= start <= end <= data_len`
+  (`_validate_offsets`) before any payload read.
 - **Q4_0 synthesis for fixtures**: `GGUFWriter.add_tensor(raw_dtype=...)`
   only tags the type (writes raw float32 bytes, no quantization). Real
   quantized fixtures use `gguf.quants.quantize(data, qtype)` and pass the

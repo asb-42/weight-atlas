@@ -7,7 +7,10 @@ fields, compute per-channel deltas, rank hotspots, and emit a compare report.
 
 ## Ownership
 
-- `align.py` (strict/aligned alignment, compatibility checks, resampling),
+- `pipeline.py` (`run_compare` — the single comparison orchestration used by
+  BOTH `cli.py compare` and `JobQueue._run_compare`; also exports
+  `discover_channels_from_manifest`),
+  `align.py` (strict/aligned alignment, compatibility checks, resampling),
   `delta.py` (ComputeCompareSummary, ChannelDelta, hotspot ranking),
   `panel.py` (MoE expert-panel comparison), `render/delta_sheet.py`
   (diverging-colormap delta sheet renderer, registered as `"delta"`).
@@ -46,6 +49,14 @@ fields, compute per-channel deltas, rank hotspots, and emit a compare report.
   "hot" colormap (a fully white `delta_profile_<channel>.png`).
 - **NaN discipline**: deltas are NaN where either field is NaN; hotspot
   ranking and metrics filter NaN explicitly (never treat as zero value).
+  Summary metrics (rel_l2, cosine_sim) use the SAME position-aligned element
+  set — the intersection of both fields' finite masks; masking independently
+  shifts row-major order and the cosine compares unrelated elements.
+- **Single orchestration**: `run_compare()` owns channel discovery, the
+  `spec.channels` filter (vision/expert channels are not comparable here),
+  delta/summary artefact writing, and delta-sheet rendering. CLI and API pass
+  their extras (row labels, noise floor, progress) as parameters — do not fork
+  per-entrypoint copies.
 - **CompareSummary.alignment**: always expose mode, layer counts, common grid,
   interp method, and per-row layer maps when aligned — the report renders
   these so readers never mistake aligned rows for absolute layers.
