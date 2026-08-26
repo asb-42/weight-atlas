@@ -429,3 +429,48 @@ class TestErrors:
         assert resp.status_code == 404
         body = resp.json()
         assert set(body["error"].keys()) >= {"code", "type", "message", "hint"}
+
+
+class TestRecordCacheAndPercentiles:
+    def test_records_cached_per_fingerprint(self, queue, scan_dir):
+        """Records are rebuilt only when fingerprint.json changes."""
+        from weight_atlas.api import query as q
+
+        job = queue.get(_model_id(queue))
+        fp = q._load_fingerprint(job)
+        first = q._load_records(job, fp)
+        second = q._load_records(job, fp)
+        assert first is second
+
+        # Changing the file (size changes → new cache key) forces a rebuild.
+        tensors = _base_tensors()
+        tensors["output.weight"] = _tensor("output.weight", 25.0)
+        with open(scan_dir / "fingerprint.json", "w") as f:
+            json.dump(_fingerprint(tensors), f)
+        fp_new = q._load_fingerprint(job)
+        rebuilt = q._load_records(job, fp_new)
+        assert rebuilt is not first
+
+    def test_percentile_uses_sorted_ranks(self, client, queue):
+        """Regression: percentiles came from np.searchsorted on name-ordered
+        (i.e. unsorted) arrays and were effectively arbitrary. The max-metric
+        tensor must report p100."""
+        mid = _model_id(queue)
+        resp = client.get(f"/api/model/{mid}/tensor/output.weight")
+        assert resp.status_code == 200
+        ctx = resp.json()["context"]
+        assert ctx["percentile_in_model"]["spectral_norm"] == 100.0
+
+    def test_anomaly_percentiles_descend_with_zscore(self, client, queue):
+        """Anomaly rows are zscore-descending; percentiles must be
+        non-increasing along that order."""
+        mid = _model_id(queue)
+        resp = client.get(
+            f"/api/model/{mid}/anomalies",
+            params={"metric": "spectral_norm", "threshold": "2.5"},
+        )
+        assert resp.status_code == 200
+        rows = resp.json()["rows"]
+        assert len(rows) >= 2
+        pcts = [r["percentile"] for r in rows]
+        assert all(a >= b for a, b in zip(pcts, pcts[1:]))

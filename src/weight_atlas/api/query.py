@@ -153,11 +153,23 @@ def _ratio_str(value: float, base: float) -> str | None:
     return f"{value / base:.1f}×"
 
 
-def _percentile_of(value: float, values: np.ndarray) -> float | None:
-    """Percentile rank of ``value`` within ``values`` (0..100)."""
-    if values.size == 0 or not np.isfinite(value):
+def _percentile_of(value: float, values_sorted: np.ndarray) -> float | None:
+    """Percentile rank of ``value`` within ascending ``values_sorted`` (0..100).
+
+    Uses "weak" percentile-of-score semantics (fraction of values <= value),
+    so the maximum maps to p100. The array MUST be ascending —
+    np.searchsorted binary-searches and returns arbitrary positions on
+    unsorted input.
+    """
+    if values_sorted.size == 0 or not np.isfinite(value):
         return None
-    return _r(float(np.searchsorted(values, value) / values.size * 100.0))
+    return _r(
+        float(
+            np.searchsorted(values_sorted, value, side="right")
+            / values_sorted.size
+            * 100.0
+        )
+    )
 
 
 def _quantile_str(values: np.ndarray, q: float) -> float | None:
@@ -210,8 +222,34 @@ def cast_dict(x: Any) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Tensor records
+# Tensor records + caching
 # ---------------------------------------------------------------------------
+# Derived records are expensive to rebuild (map_name runs dozens of regexes
+# per tensor name; a 74k-tensor fingerprint costs millions of regex
+# evaluations). They are immutable once built (no endpoint mutates them), so
+# they are cached under the same invalidation key as the parsed fingerprint.
+_records_cache: OrderedDict[tuple[str, int, int], list[dict[str, Any]]] = OrderedDict()
+_RECORDS_CACHE_MAX = 16
+
+
+def _load_records(job: Job, fp: dict[str, Any]) -> list[dict[str, Any]]:
+    """Tensor records for one scan; cached alongside the fingerprint cache."""
+    try:
+        key = _cache_key(Path(job.out_dir) / "fingerprint.json")
+    except OSError:
+        return _build_records(fp)
+    cached = _records_cache.get(key)
+    if cached is not None:
+        _records_cache.move_to_end(key)
+        return cached
+    records = _build_records(fp)
+    _records_cache[key] = records
+    _records_cache.move_to_end(key)
+    while len(_records_cache) > _RECORDS_CACHE_MAX:
+        _records_cache.popitem(last=False)
+    return records
+
+
 def _build_records(fp: dict[str, Any]) -> list[dict[str, Any]]:
     """Flatten ``fingerprint.tensors`` into per-tensor API records.
 
@@ -306,7 +344,7 @@ def scan_metadata(job: Job, fp: dict[str, Any]) -> dict[str, Any]:
     dominant_q = None
     if quant:
         dominant_q = max(quant.items(), key=lambda kv: kv[1])[0]
-    records = _build_records(fp)
+    records = _load_records(job, fp)
     metrics = [m for m in METRICS if any(r.get(m) is not None for r in records)]
     return {
         "model_id": job.job_id,
@@ -476,7 +514,7 @@ def summary_body(
     """Model-wide aggregates (section 5.3)."""
     if group_by not in ("type", "layer", "none"):
         raise QueryError(400, "invalid_param", f"unknown group_by: {group_by}", "type / layer / none")
-    records = _build_records(fp)
+    records = _load_records(job, fp)
     use_metrics = [m for m in (metrics or []) if m in METRICS]
     if not use_metrics:
         use_metrics = list(METRICS)
@@ -564,7 +602,7 @@ def _summary_note(key: str, agg: dict[str, Any], global_means: dict[str, Any]) -
 
 def layer_body(job: Job, fp: dict[str, Any], n: int) -> dict[str, Any]:
     """All tensors in one layer with intra-layer comparison (section 5.4)."""
-    records = _build_records(fp)
+    records = _load_records(job, fp)
     layer_recs = [r for r in records if r["layer"] == n]
     if not layer_recs:
         raise QueryError(
@@ -587,6 +625,9 @@ def layer_body(job: Job, fp: dict[str, Any], n: int) -> dict[str, Any]:
         layer_stats[f"{metric}_max"] = _r(float(np.max(arr)))
 
     rows: list[dict[str, Any]] = []
+    # Precompute the full-model metric arrays once; _layer_flag used to
+    # rebuild them per row (O(rows x model) per request).
+    flag_arrays = {m: np.sort(_metric_array(records, m)) for m in ("kurtosis", "spectral_norm")}
     for rec in layer_recs:
         row: dict[str, Any] = {
             "tensor_name": rec["tensor_name"],
@@ -601,7 +642,7 @@ def layer_body(job: Job, fp: dict[str, Any], n: int) -> dict[str, Any]:
             gm = (global_means.get(metric) or {}).get("mean")
             row[f"vs_layer_mean_{metric}"] = _ratio_str(val, lm) if val is not None and lm else None
             row[f"vs_global_mean_{metric}"] = _ratio_str(val, gm) if val is not None and gm else None
-        row["flag"] = _layer_flag(rec, records)
+        row["flag"] = _layer_flag(rec, flag_arrays)
         rows.append(row)
 
     return {
@@ -616,14 +657,19 @@ def layer_body(job: Job, fp: dict[str, Any], n: int) -> dict[str, Any]:
     }
 
 
-def _layer_flag(rec: dict[str, Any], records: list[dict[str, Any]]) -> str | None:
-    """Flag unusual tensors within a layer (kurtosis / spectral outliers)."""
+def _layer_flag(
+    rec: dict[str, Any], metric_arrays: dict[str, np.ndarray]
+) -> str | None:
+    """Flag unusual tensors within a layer (kurtosis / spectral outliers).
+
+    ``metric_arrays`` holds the ascending-sorted full-model arrays per metric,
+    precomputed by the caller.
+    """
     for metric in ("kurtosis", "spectral_norm"):
         val = rec.get(metric)
         if val is None or not np.isfinite(val):
             continue
-        arr = _metric_array(records, metric)
-        pct = _percentile_of(val, arr)
+        pct = _percentile_of(val, metric_arrays[metric])
         if metric == "kurtosis" and pct is not None and pct >= 99.5:
             return f"kurtosis outlier (p{pct:.2f})"
         if metric == "spectral_norm" and pct is not None and pct >= 95:
@@ -651,7 +697,7 @@ def anomalies_body(
     if direction not in ("high", "low", "both"):
         raise QueryError(400, "invalid_param", f"unknown direction: {direction}", "high / low / both")
 
-    records = _build_records(fp)
+    records = _load_records(job, fp)
     if type_filter:
         tf = _parse_type_filter(type_filter)
         records = [r for r in records if tf is None or tf(r)]
@@ -700,11 +746,12 @@ def anomalies_body(
         return high or low
 
     rows: list[dict[str, Any]] = []
+    vals_sorted = np.sort(vals)
     for rec in records:
         val = rec.get(metric)
         if val is None or not np.isfinite(val) or not _is_anomaly(val):
             continue
-        pct = _percentile_of(val, vals)
+        pct = _percentile_of(val, vals_sorted)
         row: dict[str, Any] = {
             "tensor_name": rec["tensor_name"],
             "layer": rec["layer"],
@@ -760,7 +807,7 @@ def query_body(
     """Filtered, sorted, paginated tensor list (section 5.6)."""
     limit = max(0, min(limit, 500))
     offset = max(0, offset)
-    records = _build_records(fp)
+    records = _load_records(job, fp)
 
     if type_filter:
         tf = _parse_type_filter(type_filter)
@@ -852,7 +899,7 @@ def compare_body(
     fields: list[str] | None,
 ) -> dict[str, Any]:
     """Two-slice in-model comparison (section 5.7)."""
-    records = _build_records(fp)
+    records = _load_records(job, fp)
     use_metrics = [m for m in (metrics or []) if m in METRICS] or list(METRICS)
     a_recs = _slice_records(records, a)
     b_recs = _slice_records(records, b)
@@ -915,7 +962,7 @@ def histogram_body(
     if metric not in METRICS:
         raise QueryError(400, "invalid_param", f"unknown metric: {metric}", f"one of {', '.join(METRICS)}")
     bins = max(1, min(int(bins), 200))
-    records = _build_records(fp)
+    records = _load_records(job, fp)
     if type_filter:
         tf = _parse_type_filter(type_filter)
         records = [r for r in records if tf is None or tf(r)]
@@ -981,7 +1028,7 @@ def _shape_description(bin_rows: list[dict[str, Any]], dist: dict[str, Any], val
 
 def tensor_body(job: Job, fp: dict[str, Any], name: str) -> dict[str, Any]:
     """Full detail for one tensor (section 5.10)."""
-    records = _build_records(fp)
+    records = _load_records(job, fp)
     by_name = {r["tensor_name"]: r for r in records}
     rec = by_name.get(name)
     if rec is None:
@@ -995,16 +1042,22 @@ def tensor_body(job: Job, fp: dict[str, Any], name: str) -> dict[str, Any]:
 
     type_recs = [r for r in records if r["type"] == rec["type"]]
     global_means = build_baseline(records, metrics)["global"]
+    # Hoist the per-metric arrays (each was previously rebuilt twice per
+    # metric); percentile needs them ascending.
+    type_arrays = {m: _metric_array(type_recs, m) for m in metrics}
+    model_arrays = {m: np.sort(_metric_array(records, m)) for m in metrics}
 
     ctx: dict[str, Any] = {"vs_type_mean": {}, "vs_global_mean": {}, "percentile_in_model": {}}
     for metric in metrics:
         val = rec.get(metric)
-        tmean = np.mean(_metric_array(type_recs, metric)) if _metric_array(type_recs, metric).size else None
+        t_arr = type_arrays[metric]
+        tmean = float(np.mean(t_arr)) if t_arr.size else None
         gmean = (global_means.get(metric) or {}).get("mean")
-        arr = _metric_array(records, metric)
         ctx["vs_type_mean"][metric] = _ratio_str(val, tmean) if val is not None and tmean else None
         ctx["vs_global_mean"][metric] = _ratio_str(val, gmean) if val is not None and gmean else None
-        ctx["percentile_in_model"][metric] = _percentile_of(val, arr) if val is not None else None
+        ctx["percentile_in_model"][metric] = (
+            _percentile_of(val, model_arrays[metric]) if val is not None else None
+        )
 
     return {
         "model_id": job.job_id,
@@ -1064,8 +1117,8 @@ def delta_body(
     if tier1 is not None:
         return tier1
 
-    records_a = _build_records(fp_a)
-    b_by_name = {r["tensor_name"]: r for r in _build_records(fp_b)}
+    records_a = _load_records(job_a, fp_a)
+    b_by_name = {r["tensor_name"]: r for r in _load_records(job_b, fp_b)}
     rows: list[dict[str, Any]] = []
     for ra in records_a:
         rb = b_by_name.get(ra["tensor_name"])
