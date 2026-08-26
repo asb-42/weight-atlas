@@ -95,8 +95,8 @@ class TestDiscoveryAndSchema:
         assert body["api_version"] == "0.2"
         assert body["endpoints"]
         paths = {e["path"] for e in body["endpoints"]}
-        assert "/model/{model_id}/query" in paths
-        assert "/model/{model_id}/delta" in paths
+        assert "/api/model/{model_id}/query" in paths
+        assert "/api/model/{model_id}/delta" in paths
         assert "spectral_norm" in body["metrics"]
 
     def test_schema(self, client: TestClient) -> None:
