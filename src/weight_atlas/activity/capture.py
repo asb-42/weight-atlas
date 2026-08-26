@@ -178,6 +178,18 @@ def _capture(
                 padding="max_length",
             ).to(config.device)
 
+            # Positions where the attention mask is 0 are padding: their
+            # activations are meaningless and would pollute the Layer x
+            # Position field (with padding="max_length" every state is
+            # full-length, so the NaN-for-absent-position machinery below
+            # could otherwise never fire).
+            attn_mask = inputs.get("attention_mask")
+            valid_positions = (
+                attn_mask[0].detach().cpu().numpy().astype(bool)
+                if attn_mask is not None
+                else None
+            )
+
             with torch.no_grad():
                 model(**inputs)
 
@@ -185,14 +197,18 @@ def _capture(
             state_act = StateActivity(state_name=state.name)
             for layer_idx in sorted(activations.keys()):
                 layer_rms = activations[layer_idx][-1]  # Last forward pass
-                # Average over batch dimension if present
+                # Average over batch dim, excluding padded positions
                 if layer_rms.ndim > 1:
+                    if valid_positions is not None:
+                        layer_rms = layer_rms[:, valid_positions]
                     layer_rms = layer_rms.mean(axis=0)
 
                 expert_usage = None
                 if layer_idx in router_activations:
                     expert_usage = router_activations[layer_idx][-1]
                     if expert_usage.ndim > 2:
+                        if valid_positions is not None:
+                            expert_usage = expert_usage[:, valid_positions, :]
                         expert_usage = expert_usage.mean(axis=0)
 
                 state_act.layers.append(LayerActivity(
