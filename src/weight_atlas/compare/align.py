@@ -199,6 +199,14 @@ def _align_normalized(
             f"different layer counts (A={n_rows_a}, B={n_rows_b}), "
             f"resampled to {n_rows_common} common depth grid"
         )
+    elif n_rows_common != n_rows_a:
+        # The min-64-grid floor synthesized rows even though both models
+        # agree — surface it so nobody reads the aligned rows as real layers.
+        warnings.append(
+            f"resampled to a {n_rows_common}-row common depth grid "
+            f"(both models have {n_rows_a} layers); aligned rows are "
+            "normalized depth, not absolute layer indices"
+        )
     if n_cols_a != n_cols_b:
         warnings.append(
             f"different slot counts (A={n_cols_a}, B={n_cols_b}), padded to "
