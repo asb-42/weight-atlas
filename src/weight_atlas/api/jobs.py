@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import threading
 import time
+import traceback
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -14,6 +16,8 @@ from enum import StrEnum
 from pathlib import Path
 from queue import Empty, Queue
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class JobStatus(StrEnum):
@@ -424,7 +428,12 @@ class JobQueue:
                 artefacts = self._run_compare(job, spec, progress_cb, mode=compare_mode, interp=compare_interp)
             elif job_type == "render":
                 progress_cb(0.2, "Rendering sheets...")
-                artefacts = self._render_job(job, spec, renderer_id or "sheet", progress_cb)
+                produced, failed = self._render_job(job, spec, renderer_id or "sheet", progress_cb)
+                artefacts = produced
+                render_note = (
+                    f" ({len(failed)} render failure(s): {', '.join(failed)})"
+                    if failed else ""
+                )
             else:
                 from weight_atlas.scan import scan as run_scan
                 # scan() reports granular phase progress; map its [0,1] into
@@ -443,17 +452,22 @@ class JobQueue:
                         progress=lambda pct, msg: progress_cb(0.85 + 0.15 * pct, msg),
                     )
                     artefacts.extend(render_artefacts)
-                except Exception as render_err:
+                except Exception:
                     # Rendering is best-effort; don't fail the job
-                    print(f"Warning: auto-render failed: {render_err}",
-                          file=__import__('sys').stderr)
+                    logger.warning(
+                        "auto-render after scan %s failed", job.job_id, exc_info=True
+                    )
             job.artefacts = artefacts
-            progress_cb(1.0, "Complete")
+            progress_cb(1.0, f"Complete{render_note if job_type == 'render' else ''}")
             job.status = JobStatus.DONE
             job.updated_at = self._now()
         except Exception as e:
+            logger.exception("job %s (%s) failed", job.job_id, job_type)
             job.status = JobStatus.FAILED
-            job.error = str(e)
+            # Persist the traceback (truncated) so failures reported from the
+            # UI are debuggable without server log access.
+            tb = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+            job.error = f"{type(e).__name__}: {e}\n{tb}"[-4000:]
             job.updated_at = self._now()
         self._save(job)
         self._on_job(job)
@@ -488,8 +502,11 @@ class JobQueue:
         spec: Any,
         renderer_id: str,
         progress_cb: Callable[[float, str], None],
-    ) -> list[str]:
-        """Render all channels of a completed scan (runs on the worker thread)."""
+    ) -> tuple[list[str], list[str]]:
+        """Render all channels of a completed scan (runs on the worker thread).
+
+        Returns ``(produced_artefact_names, failed_channels)``.
+        """
         from weight_atlas.core.registry import get_renderer
         from weight_atlas.fields.rasterizer import load_channel_field
 
@@ -509,6 +526,7 @@ class JobQueue:
                 channels.add(core[:-len("_smooth")])
 
         produced: list[str] = []
+        failed: list[str] = []
         total = max(1, len(channels))
         for i, channel in enumerate(sorted(channels)):
             progress_cb(0.2 + 0.6 * i / total, f"Rendering {channel}...")
@@ -518,8 +536,12 @@ class JobQueue:
             try:
                 paths = renderer_obj.render(field, spec, render_dir)
                 produced.extend(str(p.name) for p in paths)
-            except Exception as e:  # noqa: BLE001 — per-channel render is best-effort
-                produced.append(f"Error rendering {channel}: {e}")
+            except Exception:  # noqa: BLE001 — per-channel render is best-effort
+                logger.warning(
+                    "render of %s/%s with %s failed",
+                    out_dir.name, channel, renderer_id, exc_info=True,
+                )
+                failed.append(channel)
 
         if renderer_id == "sheet":
             from weight_atlas.render.preview import PreviewRenderer
@@ -531,10 +553,16 @@ class JobQueue:
                 try:
                     paths = preview_renderer.render(field, spec, render_dir)
                     produced.extend(str(p.name) for p in paths)
-                except Exception as e:  # noqa: BLE001
-                    produced.append(f"Error rendering preview {channel}: {e}")
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "preview render of %s/%s failed", out_dir.name, channel,
+                        exc_info=True,
+                    )
+                    failed.append(f"preview:{channel}")
 
-        return produced
+        # Failures are logged above; the artefacts list stays a pure list of
+        # file names. The caller surfaces failures via the completion message.
+        return produced, failed
 
     def _discover_channels_from_manifest(self, manifest: dict[str, str]) -> list[str]:
         """Discover channel names from manifest keys."""
@@ -710,10 +738,9 @@ class JobQueue:
                     if field is None:
                         continue
                     renderer.render(field, spec, render_dir)
-            except Exception as render_err:  # noqa: BLE001 — best-effort, but log it
-                print(
-                    f"Warning: import auto-render failed: {render_err}",
-                    file=__import__('sys').stderr,
+            except Exception:  # noqa: BLE001 — best-effort, but log it
+                logger.warning(
+                    "auto-render during import of %s failed", scan_dir, exc_info=True
                 )
 
         # Discover artefacts (including any rendered PNGs)
