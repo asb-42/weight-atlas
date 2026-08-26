@@ -36,10 +36,10 @@ _cache: weakref.WeakKeyDictionary[TensorHandle, np.ndarray] = weakref.WeakKeyDic
 # multiple Python threads: they can deadlock inside OpenBLAS's internal thread
 # pool. The scan pipeline computes statistics in parallel, and models with small
 # expert tensors (min dim <= SMALL) hit the exact-SVD path tens of thousands of
-# times, so concurrent calls deadlock reliably. Every spectrum computation is
-# therefore serialized behind this lock. The SVDs are cheap (~ms each), so the
-# lock is not a bottleneck; the heavier load/dequantization happens *outside*
-# the lock and stays fully parallel.
+# times, so concurrent calls deadlock reliably. Every LAPACK call is therefore
+# serialized behind this lock. Only the LAPACK calls (qr/svd) need the lock —
+# plain GEMMs (the rSVD power iterations) are thread-safe and run outside it,
+# so the expensive O(m*n*k) matmuls stay parallel across workers.
 _spectrum_lock = threading.Lock()
 
 
@@ -48,6 +48,20 @@ def to_matrix(x: np.ndarray) -> np.ndarray:
     if x.ndim == 1:
         return x.reshape(1, -1)
     return x.reshape(x.shape[0], -1)
+
+
+def _randomized_range(x: np.ndarray, seed: int) -> np.ndarray:
+    """Halko power-iteration range finder (pure GEMMs — no LAPACK).
+
+    Deterministic per (input, seed); safe to run without ``_spectrum_lock``.
+    """
+    rng = np.random.default_rng(seed)
+    k = min(K, min(x.shape))
+    omega = rng.standard_normal((x.shape[1], k)).astype(np.float32)
+    y = x @ omega
+    for _ in range(Q):
+        y = x @ (x.T @ y)
+    return y
 
 
 def truncated_spectrum(t: TensorHandle, seed: int = 0) -> np.ndarray:
@@ -65,33 +79,44 @@ def truncated_spectrum(t: TensorHandle, seed: int = 0) -> np.ndarray:
     if cached is not None:
         return cached
     x = t.load()
+    if x.ndim == 1:
+        s = np.array([float(np.linalg.norm(x.astype(np.float64)))])
+        with _spectrum_lock:
+            cached = _cache.get(t)  # re-check under the lock
+            if cached is None:
+                _cache[t] = s
+            return cached if cached is not None else s
+    m = to_matrix(x)
+    if min(m.shape) <= SMALL:
+        with _spectrum_lock:
+            cached = _cache.get(t)  # re-check under the lock
+            if cached is not None:
+                return cached
+            s = np.linalg.svd(m.astype(np.float64), compute_uv=False)
+            _cache[t] = s
+            return s
+    # rSVD path: power iterations are plain GEMMs (thread-safe, run unlocked
+    # inside _randomized_singular_values); only qr/svd serialize.
+    s = _randomized_singular_values(m, seed=seed)
     with _spectrum_lock:
-        cached = _cache.get(t)  # re-check under the lock
+        cached = _cache.get(t)
         if cached is not None:
             return cached
-        if x.ndim == 1:
-            s = np.array([float(np.linalg.norm(x.astype(np.float64)))])
-        else:
-            m = to_matrix(x)
-            if min(m.shape) <= SMALL:
-                s = np.linalg.svd(m.astype(np.float64), compute_uv=False)
-            else:
-                s = _randomized_singular_values(m, seed=seed)
         _cache[t] = s
         return s
 
 
 def _randomized_singular_values(m: np.ndarray, seed: int) -> np.ndarray:
-    """Randomized truncated SVD (Halko) in float32, seeded for determinism."""
-    rng = np.random.default_rng(seed)
-    k = min(K, min(m.shape))
-    omega = rng.standard_normal((m.shape[1], k)).astype(np.float32)
-    y = m @ omega
-    for _ in range(Q):
-        y = m @ (m.T @ y)
-    q, _ = np.linalg.qr(y)
-    b = q.T @ m
-    return np.linalg.svd(b.astype(np.float64), compute_uv=False)
+    """Randomized truncated SVD (Halko) in float32, seeded for determinism.
+
+    Serializes its LAPACK calls on ``_spectrum_lock``; the power-iteration
+    GEMMs run unlocked via :func:`_randomized_range`.
+    """
+    y = _randomized_range(m, seed)
+    with _spectrum_lock:
+        q, _ = np.linalg.qr(y)
+        b = q.T @ m
+        return np.linalg.svd(b.astype(np.float64), compute_uv=False)
 
 
 def spectrum_of_matrix(m: np.ndarray, seed: int = 0) -> np.ndarray:
@@ -103,10 +128,14 @@ def spectrum_of_matrix(m: np.ndarray, seed: int = 0) -> np.ndarray:
     exact SVD for ``min(m, n) <= SMALL``, else the seeded Halko rSVD.
     """
     x = to_matrix(np.asarray(m))
-    with _spectrum_lock:
-        if min(x.shape) <= SMALL:
+    if min(x.shape) <= SMALL:
+        with _spectrum_lock:
             return np.linalg.svd(x.astype(np.float64), compute_uv=False)
-        return _randomized_singular_values(x, seed)
+    y = _randomized_range(x, seed)
+    with _spectrum_lock:
+        q, _ = np.linalg.qr(y)
+        b = q.T @ x
+        return np.linalg.svd(b.astype(np.float64), compute_uv=False)
 
 
 def top_left_singular_vector(m: np.ndarray, seed: int = 0) -> np.ndarray:
@@ -119,26 +148,27 @@ def top_left_singular_vector(m: np.ndarray, seed: int = 0) -> np.ndarray:
     ``u1_coherence`` metric (opt-in).
     """
     x = to_matrix(np.asarray(m))
-    with _spectrum_lock:
-        if min(x.shape) <= SMALL:
+    if min(x.shape) <= SMALL:
+        with _spectrum_lock:
             u, _, _ = np.linalg.svd(x.astype(np.float64), full_matrices=False)
-            u1 = u[:, 0].copy()
-        else:
-            rng = np.random.default_rng(seed)
-            k = min(K, min(x.shape))
-            omega = rng.standard_normal((x.shape[1], k)).astype(np.float32)
-            y = x @ omega
-            for _ in range(Q):
-                y = x @ (x.T @ y)
-            q, _ = np.linalg.qr(y)
-            b = q.T @ x
-            u_small, _, _ = np.linalg.svd(b.astype(np.float64), full_matrices=False)
-            u1 = (q.astype(np.float64)) @ u_small[:, 0]
-            n = float(np.linalg.norm(u1))
-            if n > 0:
-                u1 = u1 / n
-    if u1[np.argmax(np.abs(u1))] < 0:
-        u1 = -u1
+            return _fix_sign(u[:, 0].copy())
+    y = _randomized_range(x, seed)
+    with _spectrum_lock:
+        q, _ = np.linalg.qr(y)
+        b = q.T @ x
+        u_small, _, _ = np.linalg.svd(b.astype(np.float64), full_matrices=False)
+        u1 = (q.astype(np.float64)) @ u_small[:, 0]
+        n = float(np.linalg.norm(u1))
+        if n > 0:
+            u1 = u1 / n
+        return _fix_sign(u1)
+
+
+def _fix_sign(u1: np.ndarray) -> np.ndarray:
+    """Sign-fix so the largest-|component| entry is positive (pca.py convention)."""
+    idx = int(np.argmax(np.abs(u1)))
+    if u1[idx] < 0:
+        return -u1
     return u1
 
 
