@@ -695,8 +695,11 @@ class TestFractalRenderer:
 
 
 def test_cell_strides_nonpositive_budget_terminates():
-    """max_cells <= 0 must clamp, not spin the worker in an unsatisfiable loop."""
+    """max_cells <= 0 must clamp, not spin the worker in an unsatisfiable loop.
+    With a budget of 1 the only satisfiable cell count is a single sample."""
     from weight_atlas.render.fractal.mosaic import _cell_strides
 
-    assert _cell_strides(8, 8, 0) == (1, 1)
-    assert _cell_strides(8, 8, -5) == (1, 1)
+    assert _cell_strides(8, 8, 0) == (8, 8)
+    assert _cell_strides(8, 8, -5) == (8, 8)
+    # Sanity: positive budgets keep working.
+    assert _cell_strides(4, 4, 16) == (1, 1)
