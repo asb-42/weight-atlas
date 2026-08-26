@@ -989,3 +989,31 @@ class TestRescan:
         r = client.post(f"/api/jobs/{job_id}/rescan")
         assert r.status_code == 202
         assert r.headers.get("HX-Redirect", "").startswith("/jobs/")
+
+
+class TestModelPathEscaping:
+    def test_set_model_path_escapes_html(self, client: TestClient, tmp_path: Path) -> None:
+        """The confirmation snippet interpolates user input into text/html —
+        it must be escaped (HTMX swaps the fragment straight into the DOM)."""
+        import json as _json
+
+        from safetensors.numpy import save_file
+
+        scan_dir = tmp_path / "scan_xss"
+        scan_dir.mkdir(exist_ok=True)
+        with open(scan_dir / "fingerprint.json", "w") as f:
+            _json.dump({"spec_version": 2, "model": {"n_tensors": 1, "n_layers": 1}, "tensors": {}}, f)
+        resp = client.post("/api/import", json={"scan_dir": str(scan_dir)})
+        job_id = resp.json()["job_id"]
+
+        model = tmp_path / 'x"><img src=x onerror=alert(1)>.safetensors'
+        save_file(
+            {"model.layers.0.self_attn.q_proj.weight": np.zeros((4, 4), dtype=np.float32)},
+            str(model),
+        )
+        r = client.post(f"/api/jobs/{job_id}/model-path", json={"model_path": str(model)})
+        assert r.status_code == 200
+        assert "text/html" in r.headers["content-type"]
+        body = r.text
+        assert "<img" not in body
+        assert "&lt;img" in body

@@ -607,11 +607,12 @@ def create_router(
         _require_allowed(model_path)
 
         job_queue.update_model_path(job_id, str(model_path))
+        from html import escape
         return Response(
             status_code=200,
             media_type="text/html",
             content=(
-                f'<span class="hint">Model path updated to <code>{model_path}</code>. '
+                f'<span class="hint">Model path updated to <code>{escape(str(model_path))}</code>. '
                 "You can now Re-scan.</span>"
             ),
         )
