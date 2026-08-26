@@ -335,35 +335,6 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     )
     return 0
 
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    if args.command is None:
-        parser.print_help()
-        return 0
-    if args.command == "scan":
-        return _cmd_scan(args)
-    if args.command == "render":
-        return _cmd_render(args)
-    if args.command == "compare":
-        return _cmd_compare(args)
-    if args.command in ("paired", "qimpact"):
-        return _cmd_paired(args)
-    if args.command == "activity":
-        return _cmd_activity(args)
-    if args.command == "diagnose":
-        return _cmd_diagnose(args)
-    if args.command == "serve":
-        return _cmd_serve(args)
-    parser.print_help()
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
-
-
-
 def _cmd_diagnose(args: argparse.Namespace) -> int:
     """Diagnose tensor name mapping coverage for a model."""
     from weight_atlas.core.registry import get_loader
@@ -413,3 +384,31 @@ def _cmd_diagnose(args: argparse.Namespace) -> int:
               file=sys.stderr)
         return 1
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command is None:
+        parser.print_help()
+        return 0
+    if args.command == "scan":
+        return _cmd_scan(args)
+    if args.command == "render":
+        return _cmd_render(args)
+    if args.command == "compare":
+        return _cmd_compare(args)
+    if args.command in ("paired", "qimpact"):
+        return _cmd_paired(args)
+    if args.command == "activity":
+        return _cmd_activity(args)
+    if args.command == "diagnose":
+        return _cmd_diagnose(args)
+    if args.command == "serve":
+        return _cmd_serve(args)
+    parser.print_help()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
