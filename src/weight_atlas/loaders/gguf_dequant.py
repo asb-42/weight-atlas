@@ -241,12 +241,18 @@ def _dequant_q1_0(data: bytes) -> np.ndarray:
     Dequantization: value = scale * (2 * quant - 1)
     """
     block_size = 18
+    if len(data) % block_size:
+        raise ValueError(
+            f"truncated Q1_0 payload: {len(data)} bytes is not a multiple "
+            f"of the {block_size}-byte block size"
+        )
     n_blocks = len(data) // block_size
-    result = np.empty(n_blocks * 128, dtype=np.float32)
 
     # Vectorized bit unpacking
     data_arr = np.frombuffer(data, dtype=np.uint8).reshape(n_blocks, block_size)
-    scales = np.frombuffer(data_arr[:, :2].tobytes(), dtype=np.float16).astype(np.float32)
+    scales = (
+        np.ascontiguousarray(data_arr[:, :2]).view(np.float16).astype(np.float32)
+    )
     qs = data_arr[:, 2:]  # (n_blocks, 16)
 
     # Unpack bits using broadcasting
@@ -254,8 +260,7 @@ def _dequant_q1_0(data: bytes) -> np.ndarray:
     quants = bits.astype(np.float32)
 
     # Apply scales
-    result = (scales[:, np.newaxis] * (2.0 * quants - 1.0)).flatten()
-    return result
+    return (scales * (2.0 * quants - 1.0)).ravel()
 
 
 def _dequant_f32(data: bytes) -> np.ndarray:
@@ -278,14 +283,18 @@ def _dequant_bf16(data: bytes) -> np.ndarray:
 def _dequant_q8_0(data: bytes) -> np.ndarray:
     """Q8_0: block-wise dequantization (32-element blocks, f16 scale)."""
     block_size = 34
+    if len(data) % block_size:
+        raise ValueError(
+            f"truncated Q8_0 payload: {len(data)} bytes is not a multiple "
+            f"of the {block_size}-byte block size"
+        )
     n_blocks = len(data) // block_size
-    result = np.empty(n_blocks * 32, dtype=np.float32)
-    for i in range(n_blocks):
-        offset = i * block_size
-        scale = np.frombuffer(data[offset:offset + 2], dtype=np.float16)[0].astype(np.float32)
-        quants = np.frombuffer(data[offset + 2:offset + 34], dtype=np.int8)
-        result[i * 32:(i + 1) * 32] = quants.astype(np.float32) * scale
-    return result
+    d = np.frombuffer(data, np.uint8).reshape(n_blocks, block_size)
+    scale = (
+        np.ascontiguousarray(d[:, :2]).view(np.float16).astype(np.float32)
+    )  # (n_blocks, 1)
+    quants = np.ascontiguousarray(d[:, 2:]).view(np.int8).astype(np.float32)
+    return (quants * scale).ravel()
 
 
 def _dequant_q4_0(data: bytes) -> np.ndarray:
@@ -296,16 +305,18 @@ def _dequant_q4_0(data: bytes) -> np.ndarray:
     nibbles. Nibble value v maps to v - 8 (signed -8..7).
     """
     block_size = 18
-    n_blocks = len(data) // block_size
-    result = np.empty(n_blocks * 32, dtype=np.float32)
-    for i in range(n_blocks):
-        offset = i * block_size
-        scale = np.frombuffer(data[offset:offset + 2], dtype=np.float16)[0].astype(np.float32)
-        packed = np.frombuffer(data[offset + 2:offset + 18], dtype=np.uint8)
-        lo = (packed & 0x0F).astype(np.float32) - 8.0
-        hi = ((packed >> 4) & 0x0F).astype(np.float32) - 8.0
-        result[i * 32:(i + 1) * 32] = np.concatenate([lo, hi]) * scale
-    return result
+    if len(data) % block_size:
+        raise ValueError(
+            f"truncated Q4_0 payload: {len(data)} bytes is not a multiple "
+            f"of the {block_size}-byte block size"
+        )
+    d = np.frombuffer(data, np.uint8).reshape(-1, block_size)
+    scale = np.ascontiguousarray(d[:, :2]).view(np.float16).astype(np.float32)
+    packed = np.ascontiguousarray(d[:, 2:])
+    lo = (packed & 0x0F).astype(np.float32) - 8.0
+    hi = ((packed >> 4) & 0x0F).astype(np.float32) - 8.0
+    vals = np.concatenate([lo, hi], axis=1)  # low nibbles first: (nb, 32)
+    return (vals * scale).ravel()
 
 
 def _dequant_q8_k(data: bytes) -> np.ndarray:

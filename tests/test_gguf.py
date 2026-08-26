@@ -557,3 +557,14 @@ class TestCrossLoaderCompare:
 
         # Should have quantization mismatch warning
         assert any("quantization mismatch" in w for w in summary.warnings)
+
+
+class TestDequantTruncationGuards:
+    def test_q8_0_truncated_raises(self):
+        with pytest.raises(ValueError, match="truncated Q8_0"):
+            dequantize(b"\x00" * 33, GGML_TYPE_Q8_0)
+
+    def test_q4_0_truncated_raises(self):
+        from weight_atlas.loaders.gguf_dequant import GGML_TYPE_Q4_0 as Q40
+        with pytest.raises(ValueError, match="truncated Q4_0"):
+            dequantize(b"\x00" * 19, Q40)
