@@ -210,7 +210,10 @@ class MatplotlibSheet:
             ch_spec = spec.vision_channels.get(field.channel[len('vision_'):], {})
         if not ch_spec and field.channel.startswith("expert_"):
             # MoE expert panels use the cheap expert_channels statistics.
-            panel_slot, base = field.channel[len("expert_"):].split("_", 1)
+            # The channel is the LAST underscore segment (channel names have
+            # no underscores; slots like mlp_gate do).
+            parts = field.channel[len("expert_"):].rsplit("_", 1)
+            panel_slot, base = parts if len(parts) == 2 else (parts[0], "")
             display_channel = f"expert:{panel_slot}:{base}"
             ch_spec = (spec.expert_channels or spec.channels).get(base, {})
         transform_parts = []

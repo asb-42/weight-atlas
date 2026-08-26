@@ -82,8 +82,12 @@ def load_channel_field(
     if is_vision:
         base_channel = channel[len("vision_"):]
     elif is_expert:
-        # expert_<slot>_<channel>  (slot ∈ {mlp_gate, mlp_up, mlp_down})
-        _panel_slot, base_channel = channel[len("expert_"):].split("_", 1)
+        # expert_<slot>_<channel>  (slot ∈ {mlp_gate, mlp_up, mlp_down};
+        # channel names themselves contain no underscore, so the channel is
+        # the LAST segment — split("_", 1) misparsed "mlp_gate_height" into
+        # ("mlp", "gate_height") and the scale lookup silently missed).
+        parts = channel[len("expert_"):].rsplit("_", 1)
+        _panel_slot, base_channel = parts if len(parts) == 2 else (parts[0], "")
     else:
         base_channel = channel
 

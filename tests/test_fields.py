@@ -227,3 +227,23 @@ def test_load_channel_field_missing_returns_none(spec, tmp_path):
     out = tmp_path / "empty"
     out.mkdir(exist_ok=True)
     assert load_channel_field(out, "height", spec) is None
+
+
+def test_load_channel_field_expert_raw_scales_with_base_channel(tmp_path):
+    """Regression: 'expert_mlp_gate_height' was split as ("mlp",
+    "gate_height"), so the expert_channels scale lookup missed and raw
+    expert panels rendered unscaled whenever the smooth TIFF was absent."""
+    from weight_atlas.core.types import load_default_spec
+
+    spec = load_default_spec()
+    out = tmp_path / "scan"
+    out.mkdir()
+    n_experts = 4
+    raw = np.random.default_rng(3).uniform(0.1, 100.0, (4, n_experts))
+    write_tif(out / "field_expert_mlp_gate_height_raw.tif", raw)
+
+    field = load_channel_field(out, "expert_mlp_gate_height", spec)
+    assert field is not None
+    assert field.data.shape == (4, n_experts)
+    # height uses rank_scale → values normalized to [0, 1], not raw magnitudes.
+    assert np.nanmax(field.data) <= 1.0 + 1e-9
