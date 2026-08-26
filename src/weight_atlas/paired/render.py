@@ -189,12 +189,18 @@ def _render_qtype_map(
     codes: dict[str, int],
     row_labels: list[str] | None = None,
     col_labels: list[str] | None = None,
-) -> Path:
-    """Render a discrete quantization-type map with a legend."""
+) -> Path | None:
+    """Render a discrete quantization-type map with a legend.
+
+    Returns ``None`` when the qtype raster is absent (zero matched pairs or a
+    standalone re-render) — callers must not append a path to a file this
+    function did not create, or the manifest sha256 step crashes after all
+    the expensive work completed.
+    """
     dpi = int(spec.sheet["dpi"])
     raw_path = out_dir / "field_qtype_raw.tif"
     if not raw_path.exists():
-        return out / "qtype_map.png"  # placeholder; not produced
+        return None
     grid = read_tif(raw_path)
     n_rows, n_cols = grid.shape
 
@@ -293,14 +299,14 @@ class ImpactSheet:
         codes: dict[str, int] = {}
         if codes_path.exists():
             codes = {str(k): int(v) for k, v in json.loads(codes_path.read_text()).items()}
-        produced.append(
-            _render_qtype_map(
-                out_dir, spec, out,
-                codes=codes,
-                row_labels=row_labels,
-                col_labels=col_labels,
-            )
+        qtype_png = _render_qtype_map(
+            out_dir, spec, out,
+            codes=codes,
+            row_labels=row_labels,
+            col_labels=col_labels,
         )
+        if qtype_png is not None:
+            produced.append(qtype_png)
 
         return produced
 
