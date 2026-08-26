@@ -7,7 +7,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-
 from safetensors.numpy import save_file
 
 from tests.fixtures import SLOTS, make_fake_model
@@ -71,8 +70,9 @@ class TestCorruptHeader:
     def test_oversized_header_rejected(self, tmp_path):
         """A length prefix claiming a multi-GB header must fail loudly, not
         attempt the read."""
-        from weight_atlas.loaders.safetensors_loader import _read_header_full
         import struct as _struct
+
+        from weight_atlas.loaders.safetensors_loader import _read_header_full
 
         p = tmp_path / "evil.safetensors"
         p.write_bytes(_struct.pack("<Q", 8 * 1024 * 1024 * 1024) + b"{}")
@@ -82,7 +82,6 @@ class TestCorruptHeader:
     def test_offsets_outside_data_section_rejected(self, tmp_path):
         """Negative starts would read header bytes as weights; oversized ends
         truncate silently. Both must be rejected up front."""
-        import json as _json
 
         from weight_atlas.loaders.safetensors_loader import (
             SafetensorsLoader,

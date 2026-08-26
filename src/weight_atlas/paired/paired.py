@@ -999,9 +999,11 @@ def run_paired(
             # cap; parallel numpy is safe.
             limits_cm = None
 
-        with (limits_cm if limits_cm is not None else nullcontext()):
-            with ThreadPoolExecutor(max_workers=jobs_n) as ex:
-                _measure(ex)
+        with (
+            limits_cm if limits_cm is not None else nullcontext(),
+            ThreadPoolExecutor(max_workers=jobs_n) as ex,
+        ):
+            _measure(ex)
     else:
         for i, pair in enumerate(pairs):
             impacts.append(_one(pair))

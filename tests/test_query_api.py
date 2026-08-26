@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 from pathlib import Path
 
@@ -473,7 +474,7 @@ class TestRecordCacheAndPercentiles:
         rows = resp.json()["rows"]
         assert len(rows) >= 2
         pcts = [r["percentile"] for r in rows]
-        assert all(a >= b for a, b in zip(pcts, pcts[1:]))
+        assert all(a >= b for a, b in itertools.pairwise(pcts))
 
 
 class TestInvalidFilterParams:

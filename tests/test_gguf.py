@@ -133,7 +133,7 @@ class TestDequantQ8K:
         """Multi-block payload: each block decodes with its own scale."""
         blocks = []
         expected = []
-        for i, scale in enumerate([1.0, 0.5, -2.0]):
+        for _i, scale in enumerate([1.0, 0.5, -2.0]):
             quants = [(j % 15) - 7 for j in range(256)]
             blocks.append(_make_q8_k_block(scale, quants))
             expected.extend(float(q) * scale for q in quants)
@@ -575,8 +575,6 @@ class TestNdarrayPayload:
         """GGUFReader exposes quantized data as (n_rows, block_bytes) uint8
         arrays; the decoders must treat them as flat byte payloads."""
         from weight_atlas.loaders.gguf_dequant import (
-            GGML_TYPE_Q1_0,
-            GGML_TYPE_Q8_K,
             _dequant_q1_0,
             _dequant_q4_0,
             _dequant_q8_0,
