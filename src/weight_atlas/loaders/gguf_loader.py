@@ -85,7 +85,11 @@ class _SharedExpertDequant:
     def _ensure(self) -> np.ndarray:
         with self._lock:
             if self._arr is None:
-                arr = dequantize(self._data.tobytes(), self._ggml_type)
+                # Pass the mmap-backed array directly: every decoder accepts
+                # buffer objects, and .tobytes() would duplicate the full
+                # quantized payload (~GB for stacked expert tensors) on the
+                # heap per materialization.
+                arr = dequantize(self._data, self._ggml_type)
                 if arr.size != int(np.prod(self._shape)):
                     raise ValueError(
                         f"dequantized element count {arr.size} does not match logical "
@@ -198,5 +202,7 @@ class GGUFLoader:
 
     def _load_tensor(self, data: np.ndarray, ggml_type: int, shape: tuple[int, ...]) -> np.ndarray:
         """Materialise a single tensor as float32."""
-        arr = dequantize(data.tobytes(), ggml_type)
+        # No .tobytes(): decoders accept buffer objects; a full heap copy of
+        # the quantized payload per materialization is wasted RAM.
+        arr = dequantize(np.ascontiguousarray(data), ggml_type)
         return arr.reshape(shape).astype(np.float32)
