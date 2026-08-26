@@ -234,8 +234,8 @@ def scan(
     fields_for_diag: dict[str, np.ndarray] = {}
     n_channels = len(spec.channels)
     for ci, (channel, ch_spec) in enumerate(spec.channels.items()):
-        chan_lo = 0.46 + 0.34 * (ci / n_channels)
-        chan_hi = 0.46 + 0.34 * ((ci + 1) / n_channels)
+        chan_lo = 0.44 + 0.20 * (ci / n_channels)
+        chan_hi = 0.44 + 0.20 * ((ci + 1) / n_channels)
         stat_key = ch_spec["stat"]
         _report(chan_lo, f"Rasterizing {channel} field ({stat_key})...")
         field_raw = rasterize(stats, spec, stat_key)
@@ -264,9 +264,15 @@ def scan(
     # statistics: frobenius/kurtosis/sparsity) instead of the SVD-based main
     # channels — the shared spectrum is reserved for the (few) dense tensors.
     panel_channels = spec.expert_channels if spec.expert_channels else spec.channels
-    for channel, ch_spec in panel_channels.items():
+    n_panel_channels = max(1, len(panel_channels))
+    for pi, (channel, ch_spec) in enumerate(panel_channels.items()):
         stat_key = ch_spec["stat"]
-        _report(0.93, f"Generating expert panels ({stat_key})...")
+        # Panels run right after the main channels — report in that order
+        # instead of jumping ahead to 0.93 and back.
+        _report(
+            0.66 + 0.06 * (pi / n_panel_channels),
+            f"Generating expert panels ({stat_key})...",
+        )
         expert_panels = rasterize_expert_panels(stats, spec, stat_key)
         for panel in expert_panels:
             panel_raw_path = out / f"field_expert_{panel.slot}_{channel}_raw.tif"
@@ -293,7 +299,7 @@ def scan(
 
         n_vis = len(spec.vision_channels)
         for vi, (channel, ch_spec) in enumerate(spec.vision_channels.items()):
-            vis_lo = 0.80 + 0.05 * (vi / n_vis)
+            vis_lo = 0.74 + 0.04 * (vi / n_vis)
             stat_key = ch_spec["stat"]
             _report(vis_lo, f"Rasterizing vision {channel} field ({stat_key})...")
             vision_field = rasterize_vision(stats, spec, stat_key)
