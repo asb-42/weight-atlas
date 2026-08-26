@@ -568,3 +568,45 @@ class TestDequantTruncationGuards:
         from weight_atlas.loaders.gguf_dequant import GGML_TYPE_Q4_0 as Q40
         with pytest.raises(ValueError, match="truncated Q4_0"):
             dequantize(b"\x00" * 19, Q40)
+
+
+class TestNdarrayPayload:
+    def test_decoders_accept_2d_uint8_arrays(self):
+        """GGUFReader exposes quantized data as (n_rows, block_bytes) uint8
+        arrays; the decoders must treat them as flat byte payloads."""
+        from weight_atlas.loaders.gguf_dequant import (
+            GGML_TYPE_Q1_0,
+            GGML_TYPE_Q8_K,
+            _dequant_q1_0,
+            _dequant_q4_0,
+            _dequant_q8_0,
+            _dequant_q8_k,
+        )
+
+        rng = np.random.default_rng(11)
+        nb = 5
+
+        q8_bytes = b"".join(
+            np.float16(2.0).tobytes() + rng.integers(-128, 128, 32).astype(np.int8).tobytes()
+            for _ in range(nb)
+        )
+        q8_arr = np.frombuffer(q8_bytes, np.uint8).reshape(nb, 34)
+        np.testing.assert_array_equal(_dequant_q8_0(q8_arr), _dequant_q8_0(q8_bytes))
+
+        q4_bytes = b"".join(
+            np.float16(1.0).tobytes() + rng.integers(0, 256, 16).astype(np.uint8).tobytes()
+            for _ in range(nb)
+        )
+        q4_arr = np.frombuffer(q4_bytes, np.uint8).reshape(nb, 18)
+        np.testing.assert_array_equal(_dequant_q4_0(q4_arr), _dequant_q4_0(q4_bytes))
+
+        q1_arr = np.frombuffer(q4_bytes, np.uint8).reshape(nb, 18)
+        np.testing.assert_array_equal(_dequant_q1_0(q1_arr), _dequant_q1_0(q4_bytes))
+
+        k_blocks = []
+        for i in range(nb):
+            qs = rng.integers(-100, 100, 256).astype(np.int8).tobytes()
+            k_blocks.append(np.float32(i + 1).tobytes() + qs + b"\x00" * 32)
+        qk_bytes = b"".join(k_blocks)
+        qk_arr = np.frombuffer(qk_bytes, np.uint8).reshape(nb, 292)
+        np.testing.assert_array_equal(_dequant_q8_k(qk_arr), _dequant_q8_k(qk_bytes))
