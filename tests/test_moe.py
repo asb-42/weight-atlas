@@ -627,3 +627,26 @@ class TestMoELocalizationFull:
         assert delta.argmax[0] == 2  # row 2
         # The column label should be '5' (expert ID as string)
         assert delta.argmax[1] == "5"
+
+
+def test_compare_expert_panels_reports_real_expert_ids(tmp_path):
+    """Hotspot slot labels come from the panels' expert-ID col_labels, not
+    positional indices (the old code assigned str(i) unconditionally)."""
+    from weight_atlas.compare.panel import compare_expert_panels
+    from weight_atlas.core.types import ExpertPanel, load_default_spec
+
+    spec = load_default_spec()
+    ids = ["3", "7", "12", "41"]
+    pa = ExpertPanel(
+        slot="mlp_down", channel="height",
+        data=np.random.default_rng(1).uniform(0.1, 2.0, (4, 4)),
+        col_labels=list(ids),
+    )
+    pb = ExpertPanel(
+        slot="mlp_down", channel="height",
+        data=np.random.default_rng(2).uniform(0.1, 2.0, (4, 4)),
+        col_labels=list(ids),
+    )
+    results = compare_expert_panels([pa], [pb], spec, mode="strict")
+    assert len(results) == 1 and results[0].status == "compared"
+    assert list(results[0].delta.argmax)[1] in ids

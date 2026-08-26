@@ -71,10 +71,22 @@ def compare_expert_panels(
             ))
             continue
 
-        # Align and compute delta
-        aligned = align(panel_a.data, panel_b.data, spec, mode=mode)
-        # Override col_labels with expert IDs for proper hotspot reporting
-        aligned.col_labels = [str(i) for i in range(panel_a.data.shape[1])]
+        # Align and compute delta; honour the spec's aligned_interp like the
+        # main compare path does.
+        from weight_atlas.compare.delta import _get_aligned_interp
+
+        aligned = align(
+            panel_a.data, panel_b.data, spec,
+            mode=mode,
+            interp=_get_aligned_interp(spec),
+        )
+        # Hotspot slots report real expert IDs when the panels carry them
+        # (rasterize_expert_panels fills col_labels with the expert ids);
+        # fall back to positional indices for legacy panels.
+        aligned.col_labels = (
+            list(panel_a.col_labels)
+            or [str(i) for i in range(panel_a.data.shape[1])]
+        )
         delta = compute_delta(aligned, channel, spec)
 
         results.append(PanelCompareResult(
