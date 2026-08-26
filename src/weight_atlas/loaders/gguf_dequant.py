@@ -74,6 +74,11 @@ SUPPORTED_TYPES = {
     GGML_TYPE_MXFP4,
     GGML_TYPE_NVFP4,
     GGML_TYPE_Q1_0,
+    GGML_TYPE_I8,
+    GGML_TYPE_I16,
+    GGML_TYPE_I32,
+    GGML_TYPE_I64,
+    GGML_TYPE_F64,
 }
 
 # Type names for error messages
@@ -189,6 +194,16 @@ def dequantize(tensor_data: bytes | np.ndarray, ggml_type: int) -> np.ndarray:
         return _dequant_f16(tensor_data)
     if ggml_type == GGML_TYPE_BF16:
         return _dequant_bf16(tensor_data)
+    if ggml_type == GGML_TYPE_I8:
+        return _dequant_i8(tensor_data)
+    if ggml_type == GGML_TYPE_I16:
+        return _dequant_i16(tensor_data)
+    if ggml_type == GGML_TYPE_I32:
+        return _dequant_i32(tensor_data)
+    if ggml_type == GGML_TYPE_I64:
+        return _dequant_i64(tensor_data)
+    if ggml_type == GGML_TYPE_F64:
+        return _dequant_f64(tensor_data)
     if ggml_type == GGML_TYPE_Q8_0:
         return _dequant_q8_0(tensor_data)
     if ggml_type == GGML_TYPE_Q4_0:
@@ -278,6 +293,46 @@ def _dequant_bf16(data: bytes | np.ndarray) -> np.ndarray:
     bf16_arr = np.frombuffer(data, dtype=np.uint16)
     f32_arr = bf16_arr.astype(np.uint32) << 16
     return f32_arr.view(np.float32).copy()
+
+
+def _dequant_i8(data: bytes | np.ndarray) -> np.ndarray:
+    """I8: plain signed 8-bit integer → float32."""
+    raw = np.frombuffer(data, np.int8)
+    if len(raw) == 0:
+        raise ValueError("I8 payload is empty")
+    return raw.astype(np.float32)
+
+
+def _dequant_i16(data: bytes | np.ndarray) -> np.ndarray:
+    """I16: plain signed 16-bit integer → float32."""
+    raw = np.frombuffer(data, np.int16)
+    if len(raw) == 0:
+        raise ValueError("I16 payload is empty")
+    return raw.astype(np.float32)
+
+
+def _dequant_i32(data: bytes | np.ndarray) -> np.ndarray:
+    """I32: plain signed 32-bit integer → float32."""
+    raw = np.frombuffer(data, np.int32)
+    if len(raw) == 0:
+        raise ValueError("I32 payload is empty")
+    return raw.astype(np.float32)
+
+
+def _dequant_i64(data: bytes | np.ndarray) -> np.ndarray:
+    """I64: plain signed 64-bit integer → float32."""
+    raw = np.frombuffer(data, np.int64)
+    if len(raw) == 0:
+        raise ValueError("I64 payload is empty")
+    return raw.astype(np.float32)
+
+
+def _dequant_f64(data: bytes | np.ndarray) -> np.ndarray:
+    """F64: plain 64-bit float → float32."""
+    raw = np.frombuffer(data, np.float64)
+    if len(raw) == 0:
+        raise ValueError("F64 payload is empty")
+    return raw.astype(np.float32)
 
 
 def _dequant_q8_0(data: bytes | np.ndarray) -> np.ndarray:

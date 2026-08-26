@@ -32,6 +32,9 @@ GGUF loaders plus GGUF dequantisation (including MXFP4 block formats).
   ndarray payloads (GGUFReader hands over `(rows, block_bytes)` arrays), and
   raise `ValueError` on payloads that are not an exact multiple of the block
   size — never floor-divide away trailing bytes.
+- **Plain fixed-width types** (I8/I16/I32/I64/F64): `np.frombuffer` →
+  `astype(np.float32)`, no block encoding; empty payloads raise ValueError.
+  Pinned by `TestPlainTypes`.
 - **Safetensors header validation**: header length capped at 512 MB and every
   tensor's `data_offsets` must satisfy `0 <= start <= end <= data_len`
   (`_validate_offsets`) before any payload read.

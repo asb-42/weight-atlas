@@ -608,3 +608,64 @@ class TestNdarrayPayload:
         qk_bytes = b"".join(k_blocks)
         qk_arr = np.frombuffer(qk_bytes, np.uint8).reshape(nb, 292)
         np.testing.assert_array_equal(_dequant_q8_k(qk_arr), _dequant_q8_k(qk_bytes))
+
+
+class TestPlainTypes:
+    """I8/I16/I32/I64/F64 are plain fixed-width formats: no block encoding,
+    just raw values → float32."""
+
+    @pytest.mark.parametrize(
+        ("type_id", "dtype", "values"),
+        [
+            (24, np.int8, [-7, 0, 42, 127]),
+            (25, np.int16, [-32000, 0, 16000, 32767]),
+            (26, np.int32, [-2_000_000_000, 0, 1_000_000_000, 2_147_483_647]),
+            (27, np.int64, [-9_000_000_000, 0, 9_000_000_000]),
+            (28, np.float64, [-1.5, 0.0, 3.14159, 1e38]),
+        ],
+    )
+    def test_round_trip(self, type_id, dtype, values):
+        from weight_atlas.loaders.gguf_dequant import dequantize
+
+        raw = np.array(values, dtype=dtype)
+        result = dequantize(raw.tobytes(), type_id)
+        assert result.dtype == np.float32
+        np.testing.assert_array_equal(result, np.array(values, dtype=np.float32))
+
+    @pytest.mark.parametrize(
+        ("type_id", "dtype", "elem_bytes"),
+        [
+            (24, np.int8, 1),
+            (25, np.int16, 2),
+            (26, np.int32, 4),
+            (27, np.int64, 8),
+            (28, np.float64, 8),
+        ],
+    )
+    def test_empty_payload_raises(self, type_id, dtype, elem_bytes):
+        from weight_atlas.loaders.gguf_dequant import dequantize
+
+        with pytest.raises(ValueError, match="empty"):
+            dequantize(b"", type_id)
+
+    @pytest.mark.parametrize(
+        ("type_id", "dtype", "elem_bytes"),
+        [
+            (25, np.int16, 2),
+            (26, np.int32, 4),
+            (27, np.int64, 8),
+            (28, np.float64, 8),
+        ],
+    )
+    def test_truncated_payload_raises(self, type_id, dtype, elem_bytes):
+        from weight_atlas.loaders.gguf_dequant import dequantize
+
+        with pytest.raises(ValueError, match="buffer size must be a multiple of element size"):
+            dequantize(b"\x00" * (elem_bytes - 1), type_id)
+
+    def test_dequantize_routes_i32(self):
+        from weight_atlas.loaders.gguf_dequant import GGML_TYPE_I32, dequantize
+
+        raw = np.array([10, 20, 30], dtype=np.int32)
+        result = dequantize(raw.tobytes(), GGML_TYPE_I32)
+        np.testing.assert_array_equal(result, [10.0, 20.0, 30.0])
