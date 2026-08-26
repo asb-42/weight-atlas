@@ -174,7 +174,11 @@ def create_router(
             )
         _require_allowed(model_path)
 
-        out_dir = output_root / model_path.name
+        # Unique output dir: two different models with the same file name (in
+        # different roots) would otherwise share one out_dir and overwrite
+        # each other's scans — same convention as compare_* outputs.
+        import uuid
+        out_dir = output_root / f"{model_path.name}_{uuid.uuid4().hex[:8]}"
         out_dir.mkdir(parents=True, exist_ok=True)
 
         job = job_queue.submit(model_path, out_dir, spec_path)
