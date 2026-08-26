@@ -101,7 +101,7 @@ def _capture(
     """Capture body: runs with deterministic settings applied."""
     import json
 
-    import torch  # type: ignore[import-not-found]
+    import torch
 
     # Set deterministic settings
     torch.set_num_threads(1)

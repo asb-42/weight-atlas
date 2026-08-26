@@ -163,7 +163,7 @@ _GGUF_ONLY = {
 }
 
 
-def dequantize(tensor_data: bytes, ggml_type: int) -> np.ndarray:
+def dequantize(tensor_data: bytes | np.ndarray, ggml_type: int) -> np.ndarray:
     """Dequantize a tensor to float32.
 
     Uses the official gguf library for quant types that need it (``_GGUF_ONLY``)
@@ -202,7 +202,7 @@ def dequantize(tensor_data: bytes, ggml_type: int) -> np.ndarray:
     raise ValueError(f"Unsupported GGUF quantization type: {name}")
 
 
-def _dequant_with_gguf(tensor_data: bytes, ggml_type: int) -> np.ndarray:
+def _dequant_with_gguf(tensor_data: bytes | np.ndarray, ggml_type: int) -> np.ndarray:
     """Dequantize via the official gguf library.
 
     Block size is taken from ``gguf.GGML_QUANT_SIZES`` (authoritative) rather
@@ -234,7 +234,7 @@ def _dequant_with_gguf(tensor_data: bytes, ggml_type: int) -> np.ndarray:
         ) from exc
 
 
-def _dequant_q1_0(data: bytes) -> np.ndarray:
+def _dequant_q1_0(data: bytes | np.ndarray) -> np.ndarray:
     """Q1_0: 1-bit quantization (128 weights per block, 18 bytes).
 
     Block layout: [scale: f16] [qs: 16 bytes = 128 x 1-bit]
@@ -263,24 +263,24 @@ def _dequant_q1_0(data: bytes) -> np.ndarray:
     return (scales * (2.0 * quants - 1.0)).ravel()
 
 
-def _dequant_f32(data: bytes) -> np.ndarray:
+def _dequant_f32(data: bytes | np.ndarray) -> np.ndarray:
     """F32: direct reinterpretation."""
     return np.frombuffer(data, dtype=np.float32).copy()
 
 
-def _dequant_f16(data: bytes) -> np.ndarray:
+def _dequant_f16(data: bytes | np.ndarray) -> np.ndarray:
     """F16: convert half-precision to float32."""
     return np.frombuffer(data, dtype=np.float16).astype(np.float32).copy()
 
 
-def _dequant_bf16(data: bytes) -> np.ndarray:
+def _dequant_bf16(data: bytes | np.ndarray) -> np.ndarray:
     """BF16: bit-shift to float32 (uint16 → uint32 view)."""
     bf16_arr = np.frombuffer(data, dtype=np.uint16)
     f32_arr = bf16_arr.astype(np.uint32) << 16
     return f32_arr.view(np.float32).copy()
 
 
-def _dequant_q8_0(data: bytes) -> np.ndarray:
+def _dequant_q8_0(data: bytes | np.ndarray) -> np.ndarray:
     """Q8_0: block-wise dequantization (32-element blocks, f16 scale)."""
     block_size = 34
     raw = np.frombuffer(data, np.uint8)  # accepts bytes and ndarrays alike
@@ -297,7 +297,7 @@ def _dequant_q8_0(data: bytes) -> np.ndarray:
     return (quants * scale).ravel()
 
 
-def _dequant_q4_0(data: bytes) -> np.ndarray:
+def _dequant_q4_0(data: bytes | np.ndarray) -> np.ndarray:
     """Q4_0: block-wise dequantization (32-element blocks, f16 scale, 4-bit quants).
 
     Canonical layout (llama.cpp / gguf): within a block, the first 16 values
@@ -320,7 +320,7 @@ def _dequant_q4_0(data: bytes) -> np.ndarray:
     return (vals * scale).ravel()
 
 
-def _dequant_q8_k(data: bytes) -> np.ndarray:
+def _dequant_q8_k(data: bytes | np.ndarray) -> np.ndarray:
     """Q8_K: block-wise dequantization (256 weights per block, 292 bytes).
 
     Canonical layout (llama.cpp ggml-common.h block_q8_K):

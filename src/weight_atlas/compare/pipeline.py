@@ -164,7 +164,8 @@ def run_compare(
         return []
 
     _report(0.95, "Writing compare summary...")
-    compare_summary = {
+    channel_details: dict[str, Any] = {}
+    compare_summary: dict[str, Any] = {
         "mode": mode,
         "spec_version": spec.spec_version,
         "model_a": summary.model_a,
@@ -175,13 +176,13 @@ def run_compare(
         },
         "warnings": summary.warnings,
         "alignment": summary.alignment,
-        "channels": {},
+        "channels": channel_details,
     }
     for ch_name, ch_delta in summary_channels.items():
         ranking = hotspot_ranking(
             ch_delta, col_labels=summary.aligned_col_labels, top_k=5
         )
-        compare_summary["channels"][ch_name] = {
+        channel_details[ch_name] = {
             "rel_l2": ch_delta.rel_l2,
             "cosine_sim": ch_delta.cosine_sim,
             "hotspot_layer": ch_delta.hotspot_layer,
