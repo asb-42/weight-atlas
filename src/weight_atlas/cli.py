@@ -143,25 +143,6 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     return 0
 
 
-def _discover_channels_from_manifest(manifest: dict[str, str]) -> list[str]:
-    """Discover channel names from manifest keys (field_<channel>_.tif).
-
-    Uses manifest.json as source of truth for which channels exist.
-    """
-    channels: set[str] = set()
-    for key in manifest:
-        if not key.startswith("field_") or not key.endswith(".tif"):
-            continue
-        # Strip prefix and suffix to get channel_smooth or channel_raw
-        core = key[len("field_"):-len(".tif")]
-        # Remove _raw or _smooth suffix
-        if core.endswith("_raw"):
-            channels.add(core[:-len("_raw")])
-        elif core.endswith("_smooth"):
-            channels.add(core[:-len("_smooth")])
-    return sorted(channels)
-
-
 def _cmd_render(args: argparse.Namespace) -> int:
     out_dir = args.out_dir
     manifest_path = out_dir / "manifest.json"
@@ -177,11 +158,12 @@ def _cmd_render(args: argparse.Namespace) -> int:
     renderer_cls = get_renderer(args.renderer)
     renderer = renderer_cls()
 
+    from weight_atlas.compare.pipeline import discover_channels_from_manifest
     from weight_atlas.fields.rasterizer import load_channel_field
 
     # Discover channels from manifest (source of truth)
     manifest = json.loads(manifest_path.read_text())
-    channels = _discover_channels_from_manifest(manifest)
+    channels = discover_channels_from_manifest(manifest)
 
     produced: list[Path] = []
     for channel in channels:
@@ -203,122 +185,28 @@ def _cmd_render(args: argparse.Namespace) -> int:
 
 def _cmd_compare(args: argparse.Namespace) -> int:
     """Run comparison between two scanned model directories."""
-    from weight_atlas.compare import compute_compare_summary, hotspot_ranking
-    from weight_atlas.fields.tif_io import read_tif
+    from weight_atlas.compare.pipeline import run_compare
 
     spec = _load_spec(args.spec)
 
-
-
-    out: Path = args.out
-    out.mkdir(parents=True, exist_ok=True)
-
-    # Load fingerprints if available
     fp_a_path = args.dir_a / "fingerprint.json"
     fp_b_path = args.dir_b / "fingerprint.json"
     fp_a = json.loads(fp_a_path.read_text()) if fp_a_path.exists() else None
     fp_b = json.loads(fp_b_path.read_text()) if fp_b_path.exists() else None
 
-    # Discover channels from manifest (use dir_a as reference)
-    manifest_path = args.dir_a / "manifest.json"
-    if not manifest_path.exists():
+    if not (args.dir_a / "manifest.json").exists():
         print(f"manifest.json not found in {args.dir_a}; run scan first", file=sys.stderr)
         return 1
 
-    manifest = json.loads(manifest_path.read_text())
-    channels = _discover_channels_from_manifest(manifest)
-
-    # For each channel, load raw fields, compute delta
-    summary_channels = {}
-    all_artefacts: list[Path] = []
-
-    for channel in channels:
-        field_a_path = args.dir_a / f"field_{channel}_raw.tif"
-        field_b_path = args.dir_b / f"field_{channel}_raw.tif"
-
-        if not field_a_path.exists() or not field_b_path.exists():
-            continue
-
-        field_a = read_tif(field_a_path)
-        field_b = read_tif(field_b_path)
-
-        # Get row labels from fingerprint (layer order)
-        row_labels_a = _get_row_labels_from_fingerprint(fp_a) if fp_a else None
-        row_labels_b = _get_row_labels_from_fingerprint(fp_b) if fp_b else None
-
-        summary = compute_compare_summary(
-            field_a, field_b, spec,
-            mode=args.mode,
-            interp=getattr(args, "interp", None),
-            fingerprint_a=fp_a,
-            fingerprint_b=fp_b,
-            row_labels_a=row_labels_a,
-            row_labels_b=row_labels_b,
-        )
-        summary_channels[channel] = summary.channels[channel]
-
-        # Write delta field as TIFF
-        delta_path = out / f"delta_{channel}_raw.tif"
-        from weight_atlas.fields.tif_io import write_tif
-        write_tif(delta_path, summary.channels[channel].delta)
-        all_artefacts.append(delta_path)
-
-        # Additive M9 artefacts: per-channel |delta| rasters that the
-        # noise-floor veil consumes (raw = delta on scaled channel values).
-        field_delta_raw = out / f"field_delta_{channel}_raw.tif"
-        write_tif(field_delta_raw, summary.channels[channel].delta)
-        all_artefacts.append(field_delta_raw)
-        from weight_atlas.fields.smoothing import smooth, upsample
-        field_delta_smooth = out / f"field_delta_{channel}_smooth.tif"
-        write_tif(
-            field_delta_smooth,
-            smooth(upsample(summary.channels[channel].delta, int(spec.grid.get("upsample", 1))), float(spec.grid.get("smooth_sigma", 1.0))),
-        )
-        all_artefacts.append(field_delta_smooth)
-
-        # Render delta sheet
-        try:
-            renderer = get_renderer("delta")()
-            rendered = renderer.render(
-                summary.channels[channel].delta,
-                spec,
-                out / "render",
-                channel=channel,
-                row_labels=summary.aligned_row_labels,
-                col_labels=summary.aligned_col_labels,
-                mode=args.mode,
-                model_a=args.dir_a.name,
-                model_b=args.dir_b.name,
-                noise_floor_dir=args.noise_floor,
-            )
-            all_artefacts.extend(rendered)
-        except KeyError:
-            pass  # delta renderer not registered
-
-    # Compare expert panels (MoE)
-    from weight_atlas.compare.panel import compare_expert_panels
-    from weight_atlas.core.types import ExpertPanel
-
-    panels_a = []
-    panels_b = []
-
-    # Load panels from both directories
-    for channel in channels:
-        for slot in ["mlp_gate", "mlp_up", "mlp_down"]:
-            panel_a_path = args.dir_a / f"field_expert_{slot}_{channel}_raw.tif"
-            panel_b_path = args.dir_b / f"field_expert_{slot}_{channel}_raw.tif"
-
-            if panel_a_path.exists() and panel_b_path.exists():
-                from weight_atlas.fields.tif_io import read_tif
-                data_a = read_tif(panel_a_path)
-                data_b = read_tif(panel_b_path)
-                panels_a.append(ExpertPanel(slot=slot, channel=channel, data=data_a))
-                panels_b.append(ExpertPanel(slot=slot, channel=channel, data=data_b))
-
-    if panels_a and panels_b:
-        compare_expert_panels(panels_a, panels_b, spec, mode=args.mode)
-
-    if not summary_channels:
+    artefacts = run_compare(
+        args.dir_a, args.dir_b, args.out, spec,
+        mode=args.mode,
+        interp=args.interp,
+        row_labels_a=_get_row_labels_from_fingerprint(fp_a),
+        row_labels_b=_get_row_labels_from_fingerprint(fp_b),
+        noise_floor_dir=args.noise_floor,
+    )
+    if not artefacts:
         print(
             "no channels to compare (no matching field_*_raw.tif artefacts "
             f"in {args.dir_a} and {args.dir_b})",
@@ -326,38 +214,7 @@ def _cmd_compare(args: argparse.Namespace) -> int:
         )
         return 0
 
-    # Write compare_summary.json
-    compare_summary = {
-        "mode": args.mode,
-        "spec_version": spec.spec_version,
-        "model_a": summary.model_a,
-        "model_b": summary.model_b,
-        "loaders": {"a": summary.model_a.get("loader", "unknown"), "b": summary.model_b.get("loader", "unknown")},
-        "warnings": summary.warnings,
-        "alignment": summary.alignment,
-        "channels": {},
-    }
-    for ch_name, ch_delta in summary_channels.items():
-        ranking = hotspot_ranking(ch_delta, col_labels=summary.aligned_col_labels, top_k=5)
-        compare_summary["channels"][ch_name] = {
-            "rel_l2": ch_delta.rel_l2,
-            "cosine_sim": ch_delta.cosine_sim,
-            "hotspot_layer": ch_delta.hotspot_layer,
-            "hotspot_slot": ch_delta.hotspot_slot,
-            "hotspot_value": ch_delta.hotspot_value,
-            "argmax": list(ch_delta.argmax),
-            "hotspot_ranking": [
-                {"layer": r[0], "slot": r[1], "abs_delta": r[2]} for r in ranking
-            ],
-        }
-
-    summary_path = out / "compare_summary.json"
-    with open(summary_path, "w") as f:
-        json.dump(compare_summary, f, indent=2, sort_keys=True)
-        f.write("\n")
-    all_artefacts.append(summary_path)
-
-    for p in all_artefacts:
+    for p in artefacts:
         print(p)
     return 0
 

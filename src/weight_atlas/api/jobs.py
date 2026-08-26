@@ -467,136 +467,20 @@ class JobQueue:
         interp: str = "linear",
     ) -> list[str]:
         """Run comparison between two scanned model directories."""
-        import json
-
-        from weight_atlas.compare import compute_compare_summary, hotspot_ranking
-        from weight_atlas.fields.tif_io import read_tif, write_tif
+        from weight_atlas.compare.pipeline import run_compare
 
         # Parse job.model_path as "dir_a|dir_b"
         parts = job.model_path.split("|")
         dir_a = Path(parts[0])
         dir_b = Path(parts[1])
 
-        out = Path(job.out_dir)
-
-        fp_a_path = dir_a / "fingerprint.json"
-        fp_b_path = dir_b / "fingerprint.json"
-        fp_a = json.loads(fp_a_path.read_text()) if fp_a_path.exists() else None
-        fp_b = json.loads(fp_b_path.read_text()) if fp_b_path.exists() else None
-
-        manifest_path = dir_a / "manifest.json"
-        if not manifest_path.exists():
-            raise FileNotFoundError(f"manifest.json not found in {dir_a}")
-
-        manifest = json.loads(manifest_path.read_text())
-        channels = self._discover_channels_from_manifest(manifest)
-        # Only compare channels the alignment/compare infrastructure supports —
-        # the main spec.channels. Vision (``vision_*``) and MoE expert-panel
-        # (``expert_*``) fields use their own taxonomies and are not comparable
-        # here; including them would KeyError on ``summary.channels[channel]``.
-        channels = [c for c in channels if c in spec.channels]
-
-        summary_channels = {}
-        all_artefacts: list[Path] = []
-        total_channels = max(1, len(channels))
-
-        for i, channel in enumerate(channels):
-            progress_cb(0.1 + 0.8 * (i / total_channels), f"Comparing {channel} field...")
-            field_a_path = dir_a / f"field_{channel}_raw.tif"
-            field_b_path = dir_b / f"field_{channel}_raw.tif"
-
-            if not field_a_path.exists() or not field_b_path.exists():
-                continue
-
-            field_a = read_tif(field_a_path)
-            field_b = read_tif(field_b_path)
-
-            summary = compute_compare_summary(
-                field_a, field_b, spec,
-                mode=mode,
-                interp=interp,
-                fingerprint_a=fp_a,
-                fingerprint_b=fp_b,
-            )
-            summary_channels[channel] = summary.channels[channel]
-
-            delta_path = out / f"delta_{channel}_raw.tif"
-            write_tif(delta_path, summary.channels[channel].delta)
-            all_artefacts.append(delta_path)
-
-            # Additive M9 artefacts: per-channel |delta| rasters that the
-            # noise-floor veil consumes.
-            field_delta_raw = out / f"field_delta_{channel}_raw.tif"
-            write_tif(field_delta_raw, summary.channels[channel].delta)
-            all_artefacts.append(field_delta_raw)
-            from weight_atlas.fields.smoothing import smooth, upsample
-            field_delta_smooth = out / f"field_delta_{channel}_smooth.tif"
-            write_tif(
-                field_delta_smooth,
-                smooth(upsample(summary.channels[channel].delta, int(spec.grid.get("upsample", 1))), float(spec.grid.get("smooth_sigma", 1.0))),
-            )
-            all_artefacts.append(field_delta_smooth)
-
-            # Render delta sheet PNGs so the compare report has visuals.
-            try:
-                import weight_atlas.compare.render  # noqa: F401 — registers "delta"
-                from weight_atlas.core.registry import get_renderer
-
-                renderer = get_renderer("delta")()
-                rendered = renderer.render(
-                    summary.channels[channel].delta,
-                    spec,
-                    out / "render",
-                    channel=channel,
-                    row_labels=summary.aligned_row_labels,
-                    col_labels=summary.aligned_col_labels,
-                    mode=mode,
-                    model_a=dir_a.name,
-                    model_b=dir_b.name,
-                )
-                all_artefacts.extend(rendered)
-            except KeyError:
-                pass  # delta renderer not registered
-
-        if not summary_channels:
-            # Nothing to compare (e.g. activity-only or partial scans) — avoid
-            # the NameError from referencing loop-scoped `summary`.
-            return []
-
-        compare_summary = {
-            "mode": mode,
-            "spec_version": spec.spec_version,
-            "model_a": summary.model_a,
-            "model_b": summary.model_b,
-            "loaders": {
-                "a": summary.model_a.get("loader"),
-                "b": summary.model_b.get("loader"),
-            },
-            "warnings": summary.warnings,
-            "alignment": summary.alignment,
-            "channels": {},
-        }
-        for ch_name, ch_delta in summary_channels.items():
-            ranking = hotspot_ranking(ch_delta, col_labels=summary.aligned_col_labels, top_k=5)
-            compare_summary["channels"][ch_name] = {
-                "rel_l2": ch_delta.rel_l2,
-                "cosine_sim": ch_delta.cosine_sim,
-                "hotspot_layer": ch_delta.hotspot_layer,
-                "hotspot_slot": ch_delta.hotspot_slot,
-                "hotspot_value": ch_delta.hotspot_value,
-                "argmax": list(ch_delta.argmax),
-                "hotspot_ranking": [
-                    {"layer": r[0], "slot": r[1], "abs_delta": r[2]} for r in ranking
-                ],
-            }
-
-        summary_path = out / "compare_summary.json"
-        with open(summary_path, "w") as f:
-            json.dump(compare_summary, f, indent=2, sort_keys=True)
-            f.write("\n")
-        all_artefacts.append(summary_path)
-
-        return [str(p) for p in all_artefacts]
+        artefacts = run_compare(
+            dir_a, dir_b, Path(job.out_dir), spec,
+            mode=mode,
+            interp=interp,
+            progress=progress_cb,
+        )
+        return [str(p) for p in artefacts]
 
     def _render_job(
         self,
