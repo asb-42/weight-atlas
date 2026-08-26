@@ -8,6 +8,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from safetensors.numpy import save_file
+
 from tests.fixtures import SLOTS, make_fake_model
 from weight_atlas.loaders.safetensors_loader import SafetensorsLoader
 
@@ -63,3 +65,54 @@ def test_loader_directory_glob_sorted():
         handles = loader.open(tmp)
         names = [h.name for h in handles]
         assert names == ["y", "x"]  # sorted by filename (a before z), not tensor name
+
+
+class TestCorruptHeader:
+    def test_oversized_header_rejected(self, tmp_path):
+        """A length prefix claiming a multi-GB header must fail loudly, not
+        attempt the read."""
+        from weight_atlas.loaders.safetensors_loader import _read_header_full
+        import struct as _struct
+
+        p = tmp_path / "evil.safetensors"
+        p.write_bytes(_struct.pack("<Q", 8 * 1024 * 1024 * 1024) + b"{}")
+        with pytest.raises(ValueError, match="corrupt or malicious"):
+            _read_header_full(p)
+
+    def test_offsets_outside_data_section_rejected(self, tmp_path):
+        """Negative starts would read header bytes as weights; oversized ends
+        truncate silently. Both must be rejected up front."""
+        import json as _json
+
+        from weight_atlas.loaders.safetensors_loader import (
+            SafetensorsLoader,
+            _read_header_full,
+            _validate_offsets,
+        )
+
+        tensors = {"model.layers.0.self_attn.q_proj.weight": np.zeros((4, 4), np.float32)}
+        p = tmp_path / "m.safetensors"
+        save_file(tensors, str(p))
+
+        good_header, off = _read_header_full(p)
+        _validate_offsets(p, good_header, off)  # must not raise
+
+        # Negative start.
+        bad1 = dict(good_header)
+        bad1["model.layers.0.self_attn.q_proj.weight"] = {
+            **good_header["model.layers.0.self_attn.q_proj.weight"],
+            "data_offsets": [-16, 48],
+        }
+        with pytest.raises(ValueError, match="invalid data_offsets"):
+            _validate_offsets(p, bad1, off)
+
+        # End beyond data section.
+        bad2 = dict(good_header)
+        bad2["model.layers.0.self_attn.q_proj.weight"] = {
+            **good_header["model.layers.0.self_attn.q_proj.weight"],
+            "data_offsets": [0, 10 ** 9],
+        }
+        with pytest.raises(ValueError, match="invalid data_offsets"):
+            _validate_offsets(p, bad2, off)
+
+        assert SafetensorsLoader().open(p)  # untouched file still loads

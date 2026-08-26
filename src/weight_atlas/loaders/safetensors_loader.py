@@ -29,6 +29,9 @@ from weight_atlas.loaders.mxfp4 import (
 
 _HEADER_SIZE_FMT = "<Q"
 _HEADER_SIZE_SIZE = 8
+# A crafted or corrupt file can claim a multi-GB header and OOM the worker on
+# f.read(); real headers max out in the tens of MB even for huge sharded MoE.
+_MAX_HEADER_BYTES = 512 * 1024 * 1024
 
 # safetensors dtype string -> little-endian numpy dtype.
 _DTYPE_MAP: dict[str, np.dtype] = {
@@ -64,11 +67,45 @@ def _read_header_full(path: Path) -> tuple[dict[str, dict[str, Any]], int]:
     ``data_section_offset`` is the absolute file offset where tensor payloads
     begin (immediately after the 8-byte length + JSON header).
     """
+    file_len = path.stat().st_size
     with open(path, "rb") as f:
         size = struct.unpack(_HEADER_SIZE_FMT, f.read(_HEADER_SIZE_SIZE))[0]
+        if size > _MAX_HEADER_BYTES:
+            raise ValueError(
+                f"{path}: safetensors header claims {size} bytes "
+                f"(limit {_MAX_HEADER_BYTES}) — corrupt or malicious file"
+            )
+        if _HEADER_SIZE_SIZE + size > file_len:
+            raise ValueError(
+                f"{path}: safetensors header ({size} bytes) exceeds file size "
+                f"({file_len} bytes)"
+            )
         data = json.loads(f.read(size))
     header = {k: v for k, v in data.items() if isinstance(v, dict)}
     return header, _HEADER_SIZE_SIZE + size
+
+
+def _validate_offsets(path: Path, header: dict[str, dict[str, Any]], data_offset: int) -> None:
+    """Reject headers whose tensor offsets fall outside the data section.
+
+    A negative start would seek backwards into the JSON header and decode
+    header bytes as weights; an oversized end yields a truncated read that
+    fails later with a cryptic reshape error.
+    """
+    data_len = path.stat().st_size - data_offset
+    for name, info in header.items():
+        if name == "__metadata__":
+            continue
+        try:
+            start, end = info["data_offsets"]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"{path}: malformed header entry for {name!r}") from exc
+        start, end = int(start), int(end)
+        if not (0 <= start <= end <= data_len):
+            raise ValueError(
+                f"{path}: tensor {name!r} has invalid data_offsets "
+                f"[{start}, {end}] against a {data_len}-byte data section"
+            )
 
 
 def _read_tensor_raw(path: Path, header: dict, name: str, data_offset: int) -> bytes:
@@ -140,6 +177,7 @@ class SafetensorsLoader:
         handles: list[TensorHandle] = []
         for f in files:
             header, data_offset = _read_header_full(f)
+            _validate_offsets(f, header, data_offset)
             entries: list[tuple[str, tuple[int, ...], str, int, int]] = []
             for name, info in header.items():
                 if name == "__metadata__":
