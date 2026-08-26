@@ -624,6 +624,8 @@ def create_router(
     @router.post("/api/import")
     async def import_scan(request: Request) -> JSONResponse:
         """Import an existing scan directory into the job database."""
+        from starlette.concurrency import run_in_threadpool
+
         payload = await _read_body(request)
         scan_dir_str = payload.get("scan_dir", "")
         model_path = payload.get("model_path", "")
@@ -636,7 +638,10 @@ def create_router(
         if not (scan_dir / "fingerprint.json").exists():
             raise HTTPException(status_code=400, detail="Not a valid scan directory (missing fingerprint.json)")
 
-        job = job_queue.import_scan(scan_dir, model_path)
+        # The import renders sheets synchronously (matplotlib, potentially
+        # minutes) — keep that CPU-bound work off the event loop so UI
+        # polling and other requests stay responsive.
+        job = await run_in_threadpool(job_queue.import_scan, scan_dir, model_path)
         # Import is immediate (job is already done) → go straight to the detail page.
         return JSONResponse(
             job.to_dict(),
