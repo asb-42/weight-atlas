@@ -133,6 +133,7 @@ def scan(
     loader = get_loader(loader_id)()
     _report(0.02, "Reading tensor metadata...")
     handles = list(loader.open(model_path))
+    loader_metadata = getattr(loader, "metadata", {})
 
     # Compute per-tensor statistics (the expensive SVD steps), optionally in
     # parallel across tensors. Every handle's memoized payload is released
@@ -227,7 +228,7 @@ def scan(
     assert all(s is not None for s in stats)
 
     _report(0.42, "Building fingerprint...")
-    fingerprint = _build_fingerprint(stats, spec, loader_id, handles)
+    fingerprint = _build_fingerprint(stats, spec, loader_id, handles, loader_metadata)
 
     # Compute scaling metadata for fingerprint (v2.1)
     scaling_meta = _compute_scaling_metadata(stats, spec)
@@ -468,6 +469,7 @@ def _build_fingerprint(
     spec: AtlasSpec,
     loader_id: str,
     handles: list[TensorHandle] | None = None,
+    loader_metadata: dict[str, str] | None = None,
 ) -> dict:
     """Build the fingerprint dict from computed tensor statistics."""
     # Get tool version from package metadata
@@ -480,6 +482,7 @@ def _build_fingerprint(
         "spec_version": spec.spec_version,
         "tool_version": tool_version,
         "loader": loader_id,
+        "loader_metadata": loader_metadata or {},
         "model": {"n_tensors": 0, "n_layers": 0},
         "tensors": {},
     }

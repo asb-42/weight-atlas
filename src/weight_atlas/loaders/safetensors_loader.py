@@ -173,15 +173,15 @@ class SafetensorsLoader:
     def open(self, path: Path) -> list[TensorHandle]:
         files = _discover_files(path)
         seen: dict[str, Path] = {}
+        self.metadata: dict[str, str] = {}
 
         handles: list[TensorHandle] = []
         for f in files:
             header, data_offset = _read_header_full(f)
+            self.metadata.update(header.pop("__metadata__", {}))
             _validate_offsets(f, header, data_offset)
             entries: list[tuple[str, tuple[int, ...], str, int, int]] = []
             for name, info in header.items():
-                if name == "__metadata__":
-                    continue
                 if name in seen:
                     raise ValueError(f"duplicate tensor name {name!r} in {f} and {seen[name]}")
                 seen[name] = f
