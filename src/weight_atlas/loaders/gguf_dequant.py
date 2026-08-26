@@ -309,17 +309,24 @@ def _dequant_q4_0(data: bytes) -> np.ndarray:
 
 
 def _dequant_q8_k(data: bytes) -> np.ndarray:
-    """Q8_K: block-wise dequantization (256 weights per block, 258 bytes).
+    """Q8_K: block-wise dequantization (256 weights per block, 292 bytes).
 
-    Block layout: [scale: f16] [quants: 256 x int8]
-    Note: gguf library doesn't implement Q8_K, so we do it manually.
+    Canonical layout (llama.cpp ggml-common.h block_q8_K):
+    [d: f32 scale, 4B][qs: 256 x int8][bsums: 16 x int16, 32B].
+    Dequantized value = qs[i] * d; bsums are auxiliary dot-product data and
+    are ignored here. The gguf library does not implement Q8_K either
+    (no entry in ``gguf.quants._type_traits``), hence this manual decoder.
     """
-    block_size = 258  # 2 bytes scale + 256 bytes quants
+    block_size = 4 + QK_K + 2 * (QK_K // 16)  # 4 + 256 + 32 = 292
+    if len(data) % block_size:
+        raise ValueError(
+            f"truncated Q8_K payload: {len(data)} bytes is not a multiple "
+            f"of the {block_size}-byte block size"
+        )
     n_blocks = len(data) // block_size
-    result = np.empty(n_blocks * 256, dtype=np.float32)
-    for i in range(n_blocks):
-        offset = i * block_size
-        scale = np.frombuffer(data[offset:offset + 2], dtype=np.float16)[0].astype(np.float32)
-        quants = np.frombuffer(data[offset + 2:offset + 258], dtype=np.int8)
-        result[i * 256:(i + 1) * 256] = quants.astype(np.float32) * scale
-    return result
+    d = np.frombuffer(data, np.uint8).reshape(n_blocks, block_size)
+    scale = (
+        np.ascontiguousarray(d[:, :4]).view(np.float32).reshape(n_blocks).astype(np.float32)
+    )
+    qs = np.ascontiguousarray(d[:, 4:4 + QK_K]).view(np.int8).astype(np.float32)
+    return (qs * scale[:, None]).ravel()

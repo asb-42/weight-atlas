@@ -15,6 +15,7 @@ from weight_atlas.loaders.gguf_dequant import (
     GGML_TYPE_F32,
     GGML_TYPE_Q4_0,
     GGML_TYPE_Q8_0,
+    GGML_TYPE_Q8_K,
     check_supported,
     dequantize,
     get_type_name,
@@ -91,6 +92,59 @@ class TestDequantQ40:
         # (-8,-8,-7,-7,...) instead.
         expected = [float(v) - 8.0 for v in range(16)] * 2
         np.testing.assert_array_almost_equal(result, expected)
+
+
+def _make_q8_k_block(scale: float, quants: list[int]) -> bytes:
+    """Build one canonical 292-byte Q8_K block (llama.cpp block_q8_K layout).
+
+    [d: f32 scale][qs: 256 x int8][bsums: 16 x int16] — bsums are the per-16
+    quant sums carried for dot products; they do not affect dequantization
+    but are included so the fixture mirrors real payloads byte-for-byte.
+    """
+    assert len(quants) == 256
+    qs = np.array(quants, dtype=np.int8).tobytes()
+    bsums = np.array(
+        [int(sum(quants[i * 16:(i + 1) * 16])) for i in range(16)], dtype="<i2"
+    ).tobytes()
+    return struct.pack("<f", scale) + qs + bsums
+
+
+class TestDequantQ8K:
+    def test_q8_k_known_values(self):
+        """Q8_K: f32 scale multiplies 256 int8 quants; bsums ignored."""
+        quants = [1, 2, 3, 4] + [0] * 252
+        data = _make_q8_k_block(2.0, quants)
+        assert len(data) == 292
+        result = dequantize(data, GGML_TYPE_Q8_K)
+        assert result.shape == (256,)
+        expected = [2.0, 4.0, 6.0, 8.0] + [0.0] * 252
+        np.testing.assert_array_almost_equal(result, expected)
+
+    def test_q8_k_layout_is_292_byte_f32_scale(self):
+        """The old 258-byte/f16-scale decoder decoded canonical blocks to ~0."""
+        # scale=2.0, quants -3..3: correct decode is (-6,-4,-2,0); the old
+        # decoder read the f32 scale bytes as an f16 pair and misaligned the
+        # quants, producing zeros/garbage.
+        data = _make_q8_k_block(2.0, [-3, -2, -1, 0] + [0] * 252)
+        result = dequantize(data, GGML_TYPE_Q8_K)
+        np.testing.assert_array_almost_equal(result[:4], [-6.0, -4.0, -2.0, 0.0])
+
+    def test_q8_k_multi_block_roundtrip(self):
+        """Multi-block payload: each block decodes with its own scale."""
+        blocks = []
+        expected = []
+        for i, scale in enumerate([1.0, 0.5, -2.0]):
+            quants = [(j % 15) - 7 for j in range(256)]
+            blocks.append(_make_q8_k_block(scale, quants))
+            expected.extend(float(q) * scale for q in quants)
+        result = dequantize(b"".join(blocks), GGML_TYPE_Q8_K)
+        np.testing.assert_array_almost_equal(np.array(expected), result)
+
+    def test_q8_k_truncated_payload_raises(self):
+        """A payload not a multiple of 292 bytes must fail loudly, not truncate."""
+        good = _make_q8_k_block(1.0, [0] * 256)
+        with pytest.raises(ValueError, match="truncated Q8_K"):
+            dequantize(good[:-4], GGML_TYPE_Q8_K)
 
 
 # ---------------------------------------------------------------------------
