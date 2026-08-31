@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
-from weight_atlas.core.name_map import map_name
+from weight_atlas.core.name_map import is_expert_tensor, is_shared_expert, map_name
 from weight_atlas.core.registry import get_loader
 from weight_atlas.core.types import AtlasSpec, TensorHandle, TensorStats, detect_loader
 from weight_atlas.fields.rasterizer import (
@@ -18,12 +18,14 @@ from weight_atlas.fields.rasterizer import (
     detect_vision,
     rasterize,
     rasterize_expert_panels,
+    rasterize_flat,
     rasterize_vision,
 )
 from weight_atlas.fields.scaling import apply_scale, log1p
 from weight_atlas.fields.tif_io import write_tif
 from weight_atlas.loaders import (
     gguf_loader,  # noqa: F401 — triggers registration
+    pytorch_loader,  # noqa: F401 — triggers registration
     safetensors_loader,  # noqa: F401 — triggers registration
 )
 from weight_atlas.stats.norms import (
@@ -268,6 +270,44 @@ def scan(
         smooth_path = out / f"field_{channel}_smooth.tif"
         write_tif(smooth_path, smoothed)
         artefacts.append(smooth_path)
+
+    # Flat visualization for non-layered models (e.g. BDH): a single-row
+    # grid with one column per mapped slot.  Only generated when the main
+    # raster produced no per-layer fields (i.e. all tensors mapped to
+    # layer=None).
+    has_flat = any(
+        map_name(ts.name)[0] is None
+        for ts in stats
+        if not is_expert_tensor(ts.name) and not is_shared_expert(ts.name)
+    )
+    has_per_layer = any(
+        map_name(ts.name)[0] is not None
+        for ts in stats
+        if not is_expert_tensor(ts.name) and not is_shared_expert(ts.name)
+    )
+    if has_flat and not has_per_layer:
+        from weight_atlas.fields.smoothing import smooth, upsample
+
+        for _ci, (channel, ch_spec) in enumerate(spec.channels.items()):
+            stat_key = ch_spec["stat"]
+            _report(0.65, f"Rasterizing flat field ({channel})...")
+            flat_field = rasterize_flat(stats, spec, stat_key)
+            if flat_field is None:
+                continue
+            flat_raw_path = out / f"field_flat_{channel}_raw.tif"
+            write_tif(flat_raw_path, flat_field.data)
+            artefacts.append(flat_raw_path)
+
+            pre = ch_spec.get("pre")
+            data = flat_field.data
+            if pre == "log1p":
+                data = log1p(data)
+            scaled = apply_scale(data, ch_spec["scale"])
+            up = upsample(scaled, int(spec.grid["upsample"]))
+            smoothed = smooth(up, float(spec.grid["smooth_sigma"]))
+            flat_smooth_path = out / f"field_flat_{channel}_smooth.tif"
+            write_tif(flat_smooth_path, smoothed)
+            artefacts.append(flat_smooth_path)
 
     # MoE expert panels. Expert tensors are the vast majority of a MoE model's
     # tensors, so the panels use the spec's ``expert_channels`` (cheap O(n)

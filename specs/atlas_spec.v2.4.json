@@ -9,6 +9,7 @@
              "moe_routed_norm","moe_routed_up","moe_routed_down",
              "norm_attn","norm_mlp","pre_ffw_norm_2","post_ffw_norm","post_ffw_norm_1","post_ffw_norm_2",
              "layer_output_scale","expert","shared_expert","router","lm_head","rope_freqs",
+             "bdh_encoder","bdh_encoder_v","bdh_decoder",
              "ssm_a","ssm_ba","ssm_alpha","ssm_beta","ssm_conv1d","ssm_dt","ssm_norm","ssm_out",
              "mtp_eh_proj","mtp_enorm","mtp_hnorm","mtp_shared_head_norm",
              "hc_attn","hc_ffn","attn_compressor","indexer","indexer_compressor","exp_probs_bias",
@@ -79,7 +80,7 @@
     "rough":  {"stat": "sparsity",    "scale": {"type": "rank_scale", "per_column": true}}
   },
   "name_map": {
-    "layer": {"hf": "layers?\\.(\\d+)", "gguf": "blk\\.(\\d+)"},
+    "layer": {"hf": "layers?\\.(\\d+)", "gguf": "blk\\.(\\d+)", "bdh": "NEVER_MATCH"},
     "conventions": {
       "hf": {
         "order": ["moe", "base", "hybrid", "kimi"],
@@ -226,9 +227,22 @@
           ]
         },
         "null_handler": {"moe": "expert"}
+      },
+      "bdh": {
+        "order": ["base"],
+        "rules": {
+          "base": [
+            ["encoder_v", "bdh_encoder_v"],
+            ["encoder", "bdh_encoder"],
+            ["decoder", "bdh_decoder"],
+            ["attn\\.freqs", "rope_freqs"],
+            ["embed\\.weight", "embed"],
+            ["lm_head", "lm_head"]
+          ]
+        }
       }
     },
-    "non_layer_order": [["hf", "base"], ["hf", "hybrid"], ["hf", "kimi"], ["gguf", "base"], ["gguf", "hybrid"]],
+    "non_layer_order": [["hf", "base"], ["hf", "hybrid"], ["hf", "kimi"], ["gguf", "base"], ["gguf", "hybrid"], ["bdh", "base"]],
     "vision": [
         ["^v\\.blk\\.(\\d+)\\.attn_q\\.", "v_attn_q"],
         ["^v\\.blk\\.(\\d+)\\.attn_k\\.", "v_attn_k"],

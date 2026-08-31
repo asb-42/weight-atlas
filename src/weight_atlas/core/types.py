@@ -199,6 +199,8 @@ def detect_loader(path: Path) -> str:
 
     Returns:
         "gguf" for GGUF files / directories containing ``*.gguf``,
+        "pytorch" for PyTorch ``.pt`` files (ZIP archives) / directories
+        containing ``*.pt``,
         "safetensors" for safetensors files / directories containing
         ``*.safetensors``.
 
@@ -206,20 +208,25 @@ def detect_loader(path: Path) -> str:
         FileNotFoundError: for directories with no recognizable shards, or an
             unreadable path — instead of silently defaulting to safetensors.
     """
+    _zip_magic = b"PK\x03\x04"
     try:
         if path.is_dir():
             if any(path.glob("*.gguf")):
                 return "gguf"
+            if any(path.glob("*.pt")):
+                return "pytorch"
             if any(path.glob("*.safetensors")):
                 return "safetensors"
             raise FileNotFoundError(
-                f"cannot detect loader for directory {path}: no .gguf or "
+                f"cannot detect loader for directory {path}: no .gguf, .pt, or "
                 ".safetensors files. Pass --loader explicitly."
             )
         with open(path, "rb") as f:
             magic = f.read(4)
         if magic == _GGUF_MAGIC:
             return "gguf"
+        if magic == _zip_magic:
+            return "pytorch"
         return "safetensors"
     except OSError as exc:
         raise FileNotFoundError(f"cannot detect loader for {path}: {exc}") from exc

@@ -177,6 +177,53 @@ def rasterize(
     )
 
 
+def rasterize_flat(
+    stats: Iterable[TensorStats],
+    spec: AtlasSpec,
+    stat_key: str,
+) -> Field2D | None:
+    """Rasterize non-layered tensors into a (1 × n_slots) flat field.
+
+    For architectures like BDH where all tensors are shared across the model
+    (no per-layer structure), this produces a single-row grid with one column
+    per mapped slot.  Returns ``None`` if no non-layer tensors match any slot.
+    """
+    slot_idx = {s: i for i, s in enumerate(spec.slots)}
+    cells: dict[int, float] = {}
+    col_labels_set: set[str] = set()
+
+    for ts in stats:
+        layer, slot = map_name(ts.name)
+        if layer is not None:
+            continue  # only non-layer tensors
+        col = slot_idx.get(slot)
+        if col is None:
+            continue
+        value = getattr(ts, stat_key, None)
+        if value is None:
+            continue
+        cells[col] = float(value)
+        col_labels_set.add(slot)
+
+    if not cells:
+        return None
+
+    # Build a compact grid with only the columns that have data
+    cols_sorted = sorted(cells.keys())
+    col_labels = [spec.slots[c] for c in cols_sorted]
+    grid = np.full((1, len(cols_sorted)), np.nan, dtype=np.float64)
+    for i, col in enumerate(cols_sorted):
+        grid[0, i] = cells[col]
+
+    return Field2D(
+        channel=stat_key,
+        data=grid,
+        row_labels=["model"],
+        col_labels=col_labels,
+        spec_version=spec.spec_version,
+    )
+
+
 def rasterize_vision(
     stats: Iterable[TensorStats],
     spec: AtlasSpec,

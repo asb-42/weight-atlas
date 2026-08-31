@@ -2,13 +2,14 @@
 
 ## Purpose
 
-Load model weights from disk into per-slot statistics inputs: safetensors and
-GGUF loaders plus GGUF dequantisation (including MXFP4 block formats).
+Load model weights from disk into per-slot statistics inputs: safetensors,
+GGUF, and PyTorch loaders plus GGUF dequantisation (including MXFP4 block
+formats).
 
 ## Ownership
 
 - `base.py` (loader base contract), `safetensors_loader.py`,
-  `gguf_loader.py`, `gguf_dequant.py`, `mxfp4.py`.
+  `gguf_loader.py`, `pytorch_loader.py`, `gguf_dequant.py`, `mxfp4.py`.
 - Registered with `core.registry.register_loader`; loader ids appear in
   `fingerprint.json` (`loader` field) and drive compare compatibility checks.
 
