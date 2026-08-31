@@ -1,6 +1,7 @@
 # weight-atlas — BDH (Dragon Hatchling) Continual-Learning Support
 
 > Status: Implemented (preliminary) | Merged: 2026-08-31 (`c97340a`, `294a0c7`) | Breaking: No (additive)
+> Reviewed 2026-08-31 (A0/Quinn): F-1 (§9.2 rewrite), F-3, F-4, F-5 applied; F-2 quantified in §7.3. Review record: `reports/2026-08-31_bdh-implementation-review-A0.md`.
 
 ---
 
@@ -54,7 +55,8 @@ Two consequences drive the design:
    axis is not depth but the *neuron lattice*: `N = mlp_internal_dim_multiplier
    × n_embd / n_head` neurons per head, where phase growth appends units along
    that axis. The natural tiling is one lattice unit = `n_embd // n_head`
-   neurons per head (64 for the 100M config: `D=512, nh=8`), because growth
+   neurons per head (64 for the ~70M config — labeled "100M" in the BDH
+   README, actual parameter count 69,473,792: `D=512, nh=8`), because growth
    adds exactly one multiplier unit = 64 neurons/head at a time and phase
    boundaries always land on that grid (train.py:130 of the reference code:
    per-head suffix `keep[n_old:] = 1.0`).
@@ -69,7 +71,7 @@ Two consequences drive the design:
 ## 3. Data model: three granularities
 
 For a BDH-layout checkpoint, the PyTorch loader expands each core tensor into
-three granularities. The 100M config (`nh=8, D=512, mult=88`) produces 2142
+three granularities. The ~70M config (`nh=8, D=512, mult=88`) produces 2142
 handles from 6 tensors:
 
 | Granularity | Name pattern | Shape | expert_id | Feeds |
@@ -120,7 +122,7 @@ for corner units (`u0/h0`, `u23/h3`, `u87/h7`) on both tensors.
 Per-unit and per-head handles share an instance-level cache of each storage
 entry as float32: the ZIP payload is read once per storage (`data/0..5`), the
 full array is memoized, slices are views/copies of it. Peak RAM is the full
-model in float32 (~450 MB for the 100M checkpoint), not one materialization
+model in float32 (~450 MB for the ~70M checkpoint), not one materialization
 per handle. Output is deterministic: same file → same slices → same stats, no
 parallel-order-dependent aggregation. The monolithic handles deliberately do
 *not* use the cache (single full-tensor read, `clear()` releases immediately).
@@ -229,13 +231,25 @@ are the fine one.
 
 Scan of `bdh_europarl_poc-ra2-a09-p3_last.pt` (route-aware α=0.9, phases EN→DE
 →ES, mult 24→56→88; units 0–23 = p1-frozen, 24–55 = p2-frozen, 56–87 =
-p3-trained):
+p3-trained). Table values are **encoder-slot** panels, arithmetic means over
+per-unit cell values (heads × units) in each window:
 
 | Unit window | stable_rank (mean) | spectral_norm (mean) |
 |---|---|---|
 | p1 units 0–23 (frozen) | 2,36 | 1,04 |
 | p2 units 24–55 (frozen) | 2,13 | 1,93 |
 | p3 units 56–87 (trained) | **1,18** | **7,43** |
+
+**Panel reproducibility.** Cell values are bit-exact reproducible: per unit,
+`log1p((‖A‖_F/σ₁)²)` over the exact float32 SVD of the `(D, 64)` / `(64, D)`
+block (verified cell-by-cell against independent SVD and the fingerprint).
+All BDH matrix blocks have `min(m, n) ≤ 512` (`SMALL` in
+`stats/spectrum.py`), so the exact-SVD path always applies — the randomized
+truncated spectrum (k=16, q=2, seeded by `spec.seeds.svd`) is never used for
+BDH and panel numbers carry no seed sensitivity. Note the aggregation
+semantics when recomputing: a window **mean over per-unit stats** is a
+different quantity than the stable_rank of the aggregated window block
+(e.g. p1 window: 2,36 per-unit mean vs 2,17 block-level) — do not mix them.
 
 Findings weight-side, complementary to behavioural P-Route/P-Det:
 
@@ -246,13 +260,22 @@ Findings weight-side, complementary to behavioural P-Route/P-Det:
 2. **Growth is uniform across heads** (p3 window per-head means 1,08–1,43):
    no head-concentrated specialization at this scale.
 3. **Weight-decay leak on "frozen" neurons.** The grad-masked prefix shrinks
-   by ~0,58× per phase — uniform, structural change preserved, but amplitude
-   decays. Cause: `p.grad.mul_(mask)` leaves a zero tensor where the trainer
-   needed `p.grad = None`, so AdamW's decoupled weight decay (wd=0.1) applies
-   to all core weights. ("Frozen" embed/lm_head use real `requires_grad=False`
-   and are bit-identical across phases.) Reported to the BDH side; if fixed
-   there, older scans of the same checkpoint remain comparable because the
-   panels reflect whatever the trainer did.
+   by a uniform factor per phase — structural change preserved (cos ≥
+   0,9999), amplitude decays. Cause: `p.grad.mul_(mask)` leaves a zero tensor
+   where the trainer needed `p.grad = None`, so AdamW's decoupled weight
+   decay (wd=0.1) applies to all core weights. ("Frozen" embed/lm_head use
+   real `requires_grad=False` and are bit-identical across phases.)
+   Independent review (A0/Quinn) quantified and closed the mechanism: the
+   ratio is uniform per element (poc p3/p2 on p1-units: 0,5865, min=max;
+   ladder cross-check 0,582–0,586) and follows the schedule exactly —
+   exp(−0,1·Σlr) = 0,5798 over the full 10k-iteration schedule (Σlr = 5,451),
+   divided by the init-from-`_best` tail (≈0,9885) gives 0,5866, matching the
+   measured 0,5865. The leak compounds: after 11 phases the en-phase units
+   retain ≈ 2,7·10⁻³ of their original amplitude. Fix decision belongs to
+   the BDH side (options: wd=0 + manual decoupled decay on trainable rows
+   only, post-step compensation, or per-row parameter groups); until fixed,
+   the per-phase factor is deterministic and can be divided out analytically
+   before cross-phase amplitude comparisons.
 
 ---
 
@@ -281,11 +304,15 @@ Findings weight-side, complementary to behavioural P-Route/P-Det:
    (`gate_from`) parse fine (they are BDH-layout checkpoints) but their
    phase structure is *not* frozen-prefix/suffix; lattice panels still show
    per-unit structure, just without the phase interpretation.
-2. **BF16 training, fp32 storage.** The reference trainer runs bf16 autocast
-   and saves fp32; cross-phase bitwise comparisons of "frozen" weights hit
-   bf16 rounding (p1→p2 prefixes differ at ~4e-3 rel). Weight-side delta
-   analysis should use scale-invariant stats (stable_rank, effective_rank)
-   or expect this noise floor.
+2. **Cross-phase precision floor: the decay dominates, bf16 is the residual.**
+   Cross-phase comparisons of "frozen" prefixes differ by rel-L2 ≈ 0,42
+   (p1→p2) — that difference is almost entirely the deterministic
+   weight-decay shrink of §7.3 (uniform, structure-preserving, cos ≥ 0,9999).
+   The bf16 autocast + fp32 storage roundtrip adds only ~2–4·10⁻³ of
+   non-trend noise on top. Amplitude comparisons across phases must detrend
+   by the decay factor (deterministic and analytically known, see §7.3) or
+   use scale-invariant statistics (stable_rank, effective_rank), which are
+   unaffected by both.
 3. **Optimizer state discarded.** Deliberate: exp_avg/exp_avg_sq are moment
    estimates, not weights. A future "optimizer diagnosis" scan could expose
    them, but that is a different product.
@@ -339,7 +366,7 @@ cd /media/data/coding/weight-atlas && .venv/bin/python -m pytest tests/  # 707 p
   checkpoint (`np.array_equal` on corner units, both tensor layouts).
 - Full-suite determinism and mapping-coverage tests unchanged and green.
 
-Manual end-to-end (CPU-only, ~3 min for the 100M checkpoint):
+Manual end-to-end (CPU-only, ~3 min for the ~70M checkpoint):
 
 ```bash
 .venv/bin/python -m weight_atlas.cli scan \
