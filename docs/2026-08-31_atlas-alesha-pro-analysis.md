@@ -1,6 +1,11 @@
 # alesha-pro/atlas — Analysis and Comparison with weight-atlas
 
 > Status: Analysis | Date: 2026-08-31 | Reviewed at commit: github.com/alesha-pro/atlas (MIT)
+> Reviewed 2026-08-31 (A0/Quinn): F-1 corrected — the "GDN already covered" claim was false
+> and exposed a real weight-atlas mapping gap (36 % of real Qwen3.8-27B names → `other`);
+> **P0 implemented** (GDN `linear_attn.*` rules + 4 slots + real-name fixture, 1199 names,
+> in_slots 63.6 % → 99.7 %). F-2 size correction applied; review record:
+> `reports/2026-08-31_atlas-analysis-review-A0.md`.
 > Scope: what the tool does, feature inventory, concept-by-concept comparison with
 > weight-atlas, and a concrete assessment of what is worth adopting.
 
@@ -45,12 +50,12 @@ directly relevant to that upcoming work.
 
 ## 2. What the tool is
 
-Architecture (≈5,500 LOC total, MIT):
+Architecture (≈5,400 LOC total, MIT):
 
 | Component | Language | Role |
 |---|---|---|
 | `scripts/weight_atlas.py` (203 LOC) | Python + torch | Streams safetensors shards, one GPU pass per tensor → JSONL record per tensor |
-| `src/` (≈4,600 LOC TypeScript) | Vite, zero runtime deps | Static single-page canvas: regions (intro, architecture, wall, links/scatter, depth, herbarium/treemap, records, dossier*, live*) — *optional, gated on extra JSON files |
+| `src/` (≈4,330 LOC TypeScript) | Vite, zero runtime deps | Static single-page canvas: regions (intro, architecture, wall, links/scatter, depth, herbarium/treemap, records, dossier*, live*) — *optional, gated on extra JSON files |
 | `scripts/atlas_live.py` (770 LOC) | Python + torch | "Living model": forward-pass hooks over a calibration mix (en/code/agent) — residual flow, activation SQNR, attention stats, linear-attention state, per-layer fragility |
 | `scripts/reduce_live.py` (237 LOC) | Python | Folds live artifacts (+ external "carve" parquet files for FFN-neuron fingerprints) into `live.json` |
 
@@ -199,6 +204,32 @@ render pipeline, the query API, and job orchestration.
 
 ## 7. Adoption proposal (prioritized)
 
+### P0 — mapping gap fix for the Qwen3.8 family (review finding F-1; IMPLEMENTED 2026-08-31)
+
+The review empirically falsified the original claim that our hybrid rules
+cover their GDN naming: the real Qwen3.8-27B checkpoint names the
+linear-attention branch `linear_attn.*` while our hybrid rules only knew the
+`ssm.*` Mamba-branch spelling — **432 of 1199 real names (36 %) mapped to
+`other`**, including every tensor of the branch this analysis targets.
+Implemented the same day:
+
+- 4 new slots: `ssm_in_qkv`, `ssm_in_z`, `ssm_in_b`, `ssm_in_a` (the GDN
+  input projections: qkv, output-gate z, write-gate β branch b, decay branch
+  a); 5 existing slots reused: `conv1d → ssm_conv1d`, `dt_bias → ssm_dt`,
+  `A_log → ssm_a`, `norm → ssm_norm`, `out_proj → ssm_out`.
+- 9 anchored `linear_attn.*` rules in the spec's hf/hybrid group, fallback
+  table synced (`core/name_map.py`).
+- Fixture: `tests/fixtures/names_qwen38_27b_hf.json` — all **1199 real
+  names** from the shipped alesha-pro scan (MIT) as a permanent
+  mapping-coverage fixture; audit tests pin the GDN mappings, the
+  anchoring, and an in_slots ratio ≥ 99 % (was 63.6 %).
+- Known gap surfaced while building the fixture (not fixed here):
+  `mtp.layers.N.*` shares the main-stack layer index space — e.g.
+  `mtp.layers.0.self_attn.q_proj` maps to `(0, attn_q)` and collides with
+  the main stack's layer-0 cell in the raster. Proper handling needs an MTP
+  slot design (the GGUF convention solves this via `blk.N.nextn.*`); pinned
+  by `test_qwen38_mtp_layer_collision_known`, 15/1199 tensors affected.
+
 ### P1 — scan-side metrics (pure NumPy, deterministic, cheap)
 
 1. **`sv_decay`** — σ_k/σ₁ from the shared per-tensor spectrum we already
@@ -214,13 +245,17 @@ render pipeline, the query API, and job orchestration.
    the flagship. All three are O(numel) NumPy:
    - INT8/INT4: per-row/per-group amax scaling + `np.round` + clip — direct
      ports of their scheme.
-   - FP8 e4m3: NumPy has no fp8 dtype; simulate by bit-twiddling (exponent
-     clamp to e4m3 range + 3-bit mantissa rounding) — ~25 lines, testable
-     against known e4m3 tables.
-   - Cost: 3 passes over weights. For the 51B Qwen3.8 target that is ~200 GB
-     of streaming I/O per format — make the block opt-in per scan
-     (`--quant-probe`) or gate on tensor size, and record the probe set in
-     the fingerprint.
+   - FP8 e4m3: NumPy has no fp8 dtype; use **`ml_dtypes.float8_e4m3fn`**
+     (same trick as their torch hardware dtype — a cast with a tested
+     rounding table, replacing a hand-rolled bit-twiddling encoder;
+     deterministic either way).
+   - Cost: 3 passes over weights. The Qwen3.8-Flash-Next checkpoint is
+     ≈176B params (125B main + 51B n-gram embeddings, 6B active) — ≈700 GB
+     of fp32 materialization per pass, so this **must** be opt-in
+     (`--quant-probe`) and, for giant tensors, additionally use **seeded
+     per-tensor subsampling** (deterministic: `np.random.default_rng(seed)`
+     from the spec) instead of full fp32 materialization. Record the probe
+     set and subsample size in the fingerprint.
    - Once present: the query API gets the scatter axes, the raster can color
      by `sqnr_int4_g128` via a spec channel, and **compare** gains a free
      delta dimension (fragility migration between models).
@@ -244,17 +279,23 @@ render pipeline, the query API, and job orchestration.
    mixed-precision recipes; same module, same determinism discipline
    (fixed calibration text, seeded sampling).
 9. **GDN/linear-attention state probe** (write gate β, half-life, state RMS)
-   — schedule for the Qwen3.8-Flash-Next work specifically; our hybrid rules
-   already map `ssm_*`/linear-attention slots, so weight-side naming is done.
+   — schedule for the Qwen3.8-Flash-Next work specifically. Weight-side
+   naming is done as of P0 (the `linear_attn.*` rules + `ssm_in_*` slots);
+   their live collector is the blueprint for the activation side.
 
 ### Not adopted, deliberately
 
 - Their scanner architecture (monolithic script, GPU-only, streaming JSONL
   with inline flush) — our loader registry + handles + parallel stats is
   strictly more capable and deterministic.
-- Their classification table — subsumed by our name_map; their GDN patterns
-  (`in_proj_a/b/z`, `dt_bias|A_log`) are already covered by our
-  `_HF_HYBRID_RULES` / `ssm_*` slots.
+- Their classification table — its dense/MoE/vision parts are subsumed by our
+  name_map; however its **GDN part was not** (see F-1 in the review record):
+  the Qwen3.8 family names the linear-attention branch `linear_attn.*`
+  (not `ssm.*`), and 432 of the 1199 shipped real names mapped to `other`
+  before the P0 fix below. Their GDN patterns (`in_proj_a/b/z`, `dt_bias`,
+  `A_log`) are now covered (P0), but this was a real mapping gap in
+  weight-atlas itself for the exact family we target — worth remembering
+  whenever "ours is broader" comes up.
 - Their data format — our fingerprint JSON is the established contract with
   query API + compare; JSONL adds nothing we need.
 - Their unseeded subsampling — violates the determinism contract; any port

@@ -11,6 +11,7 @@
              "layer_output_scale","expert","shared_expert","router","lm_head","rope_freqs",
              "bdh_encoder","bdh_encoder_v","bdh_decoder",
              "ssm_a","ssm_ba","ssm_alpha","ssm_beta","ssm_conv1d","ssm_dt","ssm_norm","ssm_out",
+             "ssm_in_qkv","ssm_in_z","ssm_in_b","ssm_in_a",
              "mtp_eh_proj","mtp_enorm","mtp_hnorm","mtp_shared_head_norm",
              "hc_attn","hc_ffn","attn_compressor","indexer","indexer_compressor","exp_probs_bias",
              "output_hc_base","output_hc_fn","output_hc_scale",
@@ -122,7 +123,16 @@
             ["ssm\\.dt", "ssm_dt"],
             ["ssm\\.norm", "ssm_norm"],
             ["ssm\\.out_proj", "ssm_out"],
-            ["ssm\\.ba", "ssm_ba"]
+            ["ssm\\.ba", "ssm_ba"],
+            ["linear_attn\\.in_proj_qkv(\\.|$)", "ssm_in_qkv"],
+            ["linear_attn\\.in_proj_z(\\.|$)", "ssm_in_z"],
+            ["linear_attn\\.in_proj_b(\\.|$)", "ssm_in_b"],
+            ["linear_attn\\.in_proj_a(\\.|$)", "ssm_in_a"],
+            ["linear_attn\\.conv1d", "ssm_conv1d"],
+            ["linear_attn\\.dt_bias", "ssm_dt"],
+            ["linear_attn\\.A_log", "ssm_a"],
+            ["linear_attn\\.norm", "ssm_norm"],
+            ["linear_attn\\.out_proj", "ssm_out"]
           ],
           "kimi": [
             ["self_attn\\.q_a_proj", "attn_q_a"],

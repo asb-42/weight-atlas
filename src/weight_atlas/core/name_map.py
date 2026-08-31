@@ -69,6 +69,17 @@ _HF_HYBRID_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"ssm\.norm"), "ssm_norm"),
     (re.compile(r"ssm\.out_proj"), "ssm_out"),
     (re.compile(r"ssm\.ba"), "ssm_ba"),  # Mamba B-matrix (Qwen3-Next)
+    # Qwen3.8-family Gated DeltaNet naming (linear_attn.* — Qwen3.8-27B /
+    # Flash-Next lineage; distinct from the ssm.* Mamba branch above)
+    (re.compile(r"linear_attn\.in_proj_qkv(\.|$)"), "ssm_in_qkv"),
+    (re.compile(r"linear_attn\.in_proj_z(\.|$)"), "ssm_in_z"),
+    (re.compile(r"linear_attn\.in_proj_b(\.|$)"), "ssm_in_b"),
+    (re.compile(r"linear_attn\.in_proj_a(\.|$)"), "ssm_in_a"),
+    (re.compile(r"linear_attn\.conv1d"), "ssm_conv1d"),
+    (re.compile(r"linear_attn\.dt_bias"), "ssm_dt"),
+    (re.compile(r"linear_attn\.A_log"), "ssm_a"),
+    (re.compile(r"linear_attn\.norm"), "ssm_norm"),
+    (re.compile(r"linear_attn\.out_proj"), "ssm_out"),
 ]
 
 # Kimi K3 (language_model.model.layers.N.*) rules — applied after base HF rules.

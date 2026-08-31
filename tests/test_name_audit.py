@@ -21,6 +21,21 @@ _QWEN3_NEXT = json.loads(_QQWEN3_PATH.read_text())
 _GEMMA4_PATH = Path(__file__).parent / "fixtures" / "names_gemma4_heretic_gguf.json"
 _GEMMA4 = json.loads(_GEMMA4_PATH.read_text())
 
+# Load Qwen3.8-27B fixture (hybrid full/GDN linear attention; real names from
+# the alesha-pro/atlas shipped scan — the Qwen3.8-Flash-Next naming family)
+_QWEN38_PATH = Path(__file__).parent / "fixtures" / "names_qwen38_27b_hf.json"
+_QWEN38 = json.loads(_QWEN38_PATH.read_text())
+
+# Qwen3.8 MTP-head globals with no dedicated slot yet (known mapping gap,
+# documented in docs/2026-08-31_atlas-alesha-pro-analysis.md §P0):
+# mapping them needs an MTP slot design (GGUF solves this via blk.N.nextn.*).
+_QWEN38_MTP_GLOBAL_OTHER = {
+    "mtp.norm.weight",
+    "mtp.pre_fc_norm_embedding.weight",
+    "mtp.pre_fc_norm_hidden.weight",
+    "mtp.fc.weight",
+}
+
 
 @pytest.mark.parametrize("name,expected", _BONSAI["expected_mapping"].items())
 def test_bonsai_hf_mapping(name, expected):
@@ -156,3 +171,69 @@ def test_in_slots_calculation():
     in_slots = sum(1 for name in all_names if map_name(name)[1] != "other")
     ratio = in_slots / total if total > 0 else 0.0
     assert ratio >= 0.8, f"in_slots ratio {ratio:.1%} < 80%"
+
+
+# ── Qwen3.8-27B family (GDN linear attention, HF naming) ──────────────────
+
+
+@pytest.mark.parametrize(
+    "suffix,slot",
+    [
+        ("in_proj_qkv.weight", "ssm_in_qkv"),
+        ("in_proj_z.weight", "ssm_in_z"),
+        ("in_proj_b.weight", "ssm_in_b"),
+        ("in_proj_a.weight", "ssm_in_a"),
+        ("conv1d.weight", "ssm_conv1d"),
+        ("dt_bias", "ssm_dt"),
+        ("A_log", "ssm_a"),
+        ("norm.weight", "ssm_norm"),
+        ("out_proj.weight", "ssm_out"),
+    ],
+)
+def test_qwen38_gdn_linear_attn_mapping(suffix, slot):
+    """GDN linear_attn.* names (Qwen3.8 family) map to their ssm_* slots."""
+    layer, got = map_name(f"model.language_model.layers.7.linear_attn.{suffix}")
+    assert (layer, got) == (7, slot), f"linear_attn.{suffix} -> {(layer, got)}, expected (7, {slot})"
+
+
+def test_qwen38_gdn_anchoring():
+    """The linear_attn rules must not steal names they are not about."""
+    # in_proj_a must not match a hypothetical in_proj_ab / in_proj_a_x
+    layer, slot = map_name("model.layers.0.linear_attn.in_proj_a_extra.weight")
+    assert slot == "other", f"anchored rule stolen in_proj_a_extra -> {slot}"
+    # ssm.* Mamba-branch naming must still map through its own rules
+    layer, slot = map_name("model.layers.0.ssm.conv1d.weight")
+    assert (layer, slot) == (0, "ssm_conv1d")
+
+
+def test_mapping_coverage_qwen38():
+    """All Qwen3.8-27B tensors map to a non-'other' slot, except the four
+    known MTP-head globals (see _QWEN38_MTP_GLOBAL_OTHER)."""
+    unmapped = [
+        name
+        for name in _QWEN38["hf_tensor_names"]
+        if map_name(name)[1] == "other" and name not in _QWEN38_MTP_GLOBAL_OTHER
+    ]
+    assert not unmapped, f"Unmapped Qwen3.8 tensors: {unmapped}"
+
+
+def test_mapping_coverage_qwen38_ratio():
+    """in_slots ratio for Qwen3.8-27B (real shipped names) — was 63.6% before
+    the GDN rules, must stay >= 99% after."""
+    names = _QWEN38["hf_tensor_names"]
+    in_slots = sum(1 for name in names if map_name(name)[1] != "other")
+    ratio = in_slots / len(names)
+    assert ratio >= 0.99, f"in_slots ratio {ratio:.1%} < 99%"
+
+
+def test_qwen38_mtp_layer_collision_known():
+    """Documented known issue: mtp.layers.N.* shares the main-stack layer
+    index space, so e.g. mtp.layers.0.self_attn.q_proj collides with
+    model.language_model.layers.0.self_attn.q_proj at (0, attn_q). Fixing
+    this needs an MTP slot design (see analysis doc); here we pin the
+    current behaviour so the gap stays visible."""
+    main_layer, main_slot = map_name("model.language_model.layers.0.self_attn.q_proj.weight")
+    mtp_layer, mtp_slot = map_name("mtp.layers.0.self_attn.q_proj.weight")
+    assert (mtp_layer, mtp_slot) == (main_layer, main_slot), (
+        "collision behaviour changed — revisit _QWEN38_MTP_GLOBAL_OTHER / analysis doc"
+    )
