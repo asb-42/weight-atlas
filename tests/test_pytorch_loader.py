@@ -6,6 +6,8 @@ same opcode layout torch writes) so tests run without torch installed.
 
 from __future__ import annotations
 
+import io
+import pickle
 import struct
 import zipfile
 from pathlib import Path
@@ -249,3 +251,13 @@ def test_flat_field_skips_unit_handles(bdh_pt: Path) -> None:
     # The unit handle must not collapse into the bdh_encoder column
     idx = field.col_labels.index("bdh_encoder")
     assert field.data[0, idx] == 9.0
+
+
+def test_unpickler_rejects_non_whitelisted_globals(tmp_path: Path) -> None:
+    """A GLOBAL+REDUCE on os.system must raise, not execute (RCE guard)."""
+    from weight_atlas.loaders.pytorch_loader import _MinimalPtUnpickler
+
+    payload = b"\x80\x02cos\nsystem\n(X\x04\x00\x00\x00true" b"t" b"R" b"."
+    up = _MinimalPtUnpickler(io.BytesIO(payload), "archive/")
+    with pytest.raises(pickle.UnpicklingError, match="whitelist"):
+        up.load()

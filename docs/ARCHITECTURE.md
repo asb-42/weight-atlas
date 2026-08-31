@@ -698,6 +698,35 @@ a text-only model) becomes a visible fingerprint difference.
   `mapping_coverage.vision_tensors`. Text-only models have no `model.vision`
   block and no vision artefacts.
 
+## PyTorch Loader & BDH Route-Lattice
+
+Rationale and validation history: `2026-08-31_bdh-cl-implementation.md`. The
+durable contracts:
+
+- Loader id `pytorch` (registry `list_loaders()`); detection: ZIP magic
+  (`PK\x03\x04`) → pytorch, `.pt` in directory mode. The unpickler is a hard
+  whitelist — unknown pickle globals raise `UnpicklingError`, never import
+  (checkpoints are input, not code).
+- BDH layout (cfg `n_head`/`n_embd`/`mlp_internal_dim_multiplier` + shape
+  match) expands each core tensor into three granularities: monolithic,
+  per-head `blk.{h}.{name}` (rides the GGUF layer pattern → main raster as
+  heads × slots), per-lattice-unit `{name}.u{u}.h{h}` with `expert_id=u`
+  (unit = `n_embd // n_head` neurons/head — the route-lattice tiling). Slice
+  geometry: encoder/encoder_v unit = column slice of the head block (neuron
+  axis last); decoder is head-major (`h·N + n`), unit = contiguous range.
+- Slots `bdh_encoder`/`bdh_encoder_v`/`bdh_decoder` (v2.4, additive); bdh
+  name rules are anchored (`^`/`$`) so no non-BDH architecture remaps.
+- Lattice panels are written under the expert-panel naming
+  (`field_expert_bdh_{slot}_{channel}_{raw,smooth}.tif`, rows = heads,
+  cols = units) so sheet/compare panel machinery applies unchanged. They use
+  the main spec channels, not `expert_channels`.
+- Main-raster rows for BDH are **heads, not transformer layers** — cross-
+  architecture comparison of the main raster is meaningless; comparisons are
+  meaningful within BDH phase chains (panels handle differing unit counts via
+  `aligned_interp`, like MoE expert counts).
+- All BDH scans are CPU-only; slice outputs are deterministic (shared float32
+  storage cache, one ZIP read per storage).
+
 ## Embedding Projection (M7)
 
 ### Data flow

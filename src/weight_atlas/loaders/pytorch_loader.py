@@ -99,27 +99,26 @@ class _MinimalPtUnpickler(pickle.Unpickler):
         return saved_id
 
     def find_class(self, module: str, name: str) -> object:
-        # torch storage types → stub classes carrying the dtype
+        # Whitelist only the classes/functions PyTorch checkpoint pickles use.
+        # NEVER fall through to pickle's default import machinery: a GLOBAL +
+        # REDUCE on e.g. os.system would execute arbitrary code when scanning
+        # an untrusted file. Unknown globals fail loudly instead.
         if module == "torch" and "Storage" in name:
             return _storage_stub_class(name)
 
-        # Rebuild function → capture tensor metadata
-        if module == "torch._utils" and name == "_rebuild_tensor_v2":
-            return self._rebuild_tensor_v2
+        if module == "torch._utils":
+            if name == "_rebuild_tensor_v2":
+                return self._rebuild_tensor_v2
+            if "parameter" in name.lower():
+                return lambda *a, **kw: a[0] if a else None
 
-        # Parameter rebuilders → passthrough (return first arg)
-        if module == "torch._utils" and "parameter" in name.lower():
-            return lambda *a, **kw: a[0] if a else None
-
-        # collections.OrderedDict → stdlib
         if module == "collections" and name == "OrderedDict":
             return OrderedDict
 
-        # Any other torch module → no-op
-        if module.startswith("torch"):
-            return lambda *a, **kw: None
-
-        return super().find_class(module, name)
+        raise pickle.UnpicklingError(
+            f"pytorch loader: global {module}.{name} is not on the checkpoint "
+            "whitelist (refusing to import arbitrary modules from untrusted files)"
+        )
 
     def _rebuild_tensor_v2(
         self,
