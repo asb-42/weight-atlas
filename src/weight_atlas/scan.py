@@ -17,6 +17,7 @@ from weight_atlas.fields.rasterizer import (
     detect_moe,
     detect_vision,
     rasterize,
+    rasterize_bdh_lattice,
     rasterize_expert_panels,
     rasterize_flat,
     rasterize_vision,
@@ -340,6 +341,36 @@ def scan(
             panel_smooth_path = out / f"field_expert_{panel.slot}_{channel}_smooth.tif"
             write_tif(panel_smooth_path, smoothed_panel)
             artefacts.append(panel_smooth_path)
+
+    # BDH route-lattice panels: per-(head, unit) grids for the core tensors,
+    # written with the expert-panel naming so the sheet renderer and compare
+    # panel machinery pick them up unchanged. Uses the main spec channels
+    # (spectral/stable SVD stats are cheap at [D, unit] block size).
+    lattice_panels: list = []
+    for _channel, ch_spec in spec.channels.items():
+        lattice_panels.extend(rasterize_bdh_lattice(stats, spec, ch_spec["stat"]))
+    if lattice_panels:
+        _report(0.72, "Generating BDH route-lattice panels...")
+        from weight_atlas.fields.smoothing import smooth, upsample
+
+        for panel in lattice_panels:
+            for channel, ch_spec in spec.channels.items():
+                if panel.channel != ch_spec["stat"]:
+                    continue
+                panel_raw_path = out / f"field_expert_{panel.slot}_{channel}_raw.tif"
+                write_tif(panel_raw_path, panel.data)
+                artefacts.append(panel_raw_path)
+
+                pre = ch_spec.get("pre")
+                panel_data = panel.data
+                if pre == "log1p":
+                    panel_data = log1p(panel_data)
+                scaled_panel = apply_scale(panel_data, ch_spec["scale"])
+                up_panel = upsample(scaled_panel, int(spec.grid["upsample"]))
+                smoothed_panel = smooth(up_panel, float(spec.grid["smooth_sigma"]))
+                panel_smooth_path = out / f"field_expert_{panel.slot}_{channel}_smooth.tif"
+                write_tif(panel_smooth_path, smoothed_panel)
+                artefacts.append(panel_smooth_path)
 
     # Vision tower fields (VLM models): a separate sheet with its own slot
     # taxonomy and statistics, so multimodal models show a distinct fingerprint

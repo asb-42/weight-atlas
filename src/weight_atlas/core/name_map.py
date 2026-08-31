@@ -128,6 +128,11 @@ _GGUF_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"blk\.\d+\.post_ffw_norm"), "post_ffw_norm"),
     (re.compile(r"blk\.\d+\.pre_ffw_norm_2"), "pre_ffw_norm_2"),
     (re.compile(r"blk\.\d+\.layer_output_scale"), "layer_output_scale"),
+    # BDH per-head tensors (PyTorch loader expansion): blk.{h}.encoder[_v|decoder].
+    # Anchored with $ so real GGUF tensors never collide.
+    (re.compile(r"blk\.\d+\.encoder_v$"), "bdh_encoder_v"),
+    (re.compile(r"blk\.\d+\.encoder$"), "bdh_encoder"),
+    (re.compile(r"blk\.\d+\.decoder$"), "bdh_decoder"),
     (re.compile(r"rope_freqs"), "rope_freqs"),
     (re.compile(r"token_embd"), "embed"),
     (re.compile(r"output\.weight"), "lm_head"),
@@ -164,6 +169,19 @@ _GGUF_MOE_RULES: list[tuple[re.Pattern[str], str | None]] = [
     (re.compile(r"blk\.\d+\.ffn_gate_shexp"), "mlp_gate"),  # Shared expert gate
     (re.compile(r"blk\.\d+\.ffn_up_shexp"), "mlp_up"),  # Shared expert up
     (re.compile(r"blk\.\d+\.ffn_down_shexp"), "mlp_down"),  # Shared expert down
+]
+
+# BDH (Dragon Hatchling) rules — monolithic + per-unit expanded tensor names
+# from the PyTorch loader. Anchored (``^``/``$``/``.``) so they never steal
+# generic names containing "encoder"/"decoder". Per-head names
+# (``blk.{h}.encoder``) ride the GGUF layer pattern + gguf/base rules.
+_BDH_RULES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"^encoder_v($|\.)"), "bdh_encoder_v"),
+    (re.compile(r"^encoder($|\.)"), "bdh_encoder"),
+    (re.compile(r"^decoder($|\.)"), "bdh_decoder"),
+    (re.compile(r"^attn\.freqs$"), "rope_freqs"),
+    (re.compile(r"^embed\.weight$"), "embed"),
+    (re.compile(r"^lm_head$"), "lm_head"),
 ]
 
 # VLM (vision-language) rules. Covers the major vision-tower naming families:
@@ -281,6 +299,10 @@ def _fallback_block() -> dict:
                 },
                 "null_handler": {"moe": "expert"},
             },
+            "bdh": {
+                "order": ["base"],
+                "rules": {"base": [[p.pattern, s] for p, s in _BDH_RULES]},
+            },
         },
         "non_layer_order": [
             ["hf", "base"],
@@ -288,6 +310,7 @@ def _fallback_block() -> dict:
             ["hf", "kimi"],
             ["gguf", "base"],
             ["gguf", "hybrid"],
+            ["bdh", "base"],
         ],
         "vision": [[p.pattern, s] for p, s in _VISION_RULES],
     }

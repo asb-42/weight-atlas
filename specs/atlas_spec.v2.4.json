@@ -80,7 +80,7 @@
     "rough":  {"stat": "sparsity",    "scale": {"type": "rank_scale", "per_column": true}}
   },
   "name_map": {
-    "layer": {"hf": "layers?\\.(\\d+)", "gguf": "blk\\.(\\d+)", "bdh": "NEVER_MATCH"},
+    "layer": {"hf": "layers?\\.(\\d+)", "gguf": "blk\\.(\\d+)"},
     "conventions": {
       "hf": {
         "order": ["moe", "base", "hybrid", "kimi"],
@@ -223,7 +223,10 @@
             ["blk\\.\\d+\\.nextn\\.eh_proj", "mtp_eh_proj"],
             ["blk\\.\\d+\\.nextn\\.enorm", "mtp_enorm"],
             ["blk\\.\\d+\\.nextn\\.hnorm", "mtp_hnorm"],
-            ["blk\\.\\d+\\.nextn\\.shared_head_norm", "mtp_shared_head_norm"]
+            ["blk\\.\\d+\\.nextn\\.shared_head_norm", "mtp_shared_head_norm"],
+            ["blk\\.\\d+\\.encoder_v$", "bdh_encoder_v"],
+            ["blk\\.\\d+\\.encoder$", "bdh_encoder"],
+            ["blk\\.\\d+\\.decoder$", "bdh_decoder"]
           ]
         },
         "null_handler": {"moe": "expert"}
@@ -232,12 +235,12 @@
         "order": ["base"],
         "rules": {
           "base": [
-            ["encoder_v", "bdh_encoder_v"],
-            ["encoder", "bdh_encoder"],
-            ["decoder", "bdh_decoder"],
-            ["attn\\.freqs", "rope_freqs"],
-            ["embed\\.weight", "embed"],
-            ["lm_head", "lm_head"]
+            ["^encoder_v($|\\.)", "bdh_encoder_v"],
+            ["^encoder($|\\.)", "bdh_encoder"],
+            ["^decoder($|\\.)", "bdh_decoder"],
+            ["^attn\\.freqs$", "rope_freqs"],
+            ["^embed\\.weight$", "embed"],
+            ["^lm_head$", "lm_head"]
           ]
         }
       }

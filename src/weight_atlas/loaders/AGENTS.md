@@ -44,6 +44,19 @@ formats).
   quantized fixtures use `gguf.quants.quantize(data, qtype)` and pass the
   packed bytes with `raw_shape=list(q.shape)` + `raw_dtype` (see
   `tests/test_paired.py`, `tests/test_gguf.py`).
+- **PyTorch loader** (`pytorch_loader.py`): pure-python unpickler for `.pt`
+  ZIP checkpoints (no torch dependency); reads only model weights (optimizer
+  state discarded). BDH-layout checkpoints (cfg `n_head`/`n_embd`/
+  `mlp_internal_dim_multiplier` + 3D `encoder`/`encoder_v` + head-major
+  `decoder`) are expanded into three granularities: monolithic names,
+  per-head `blk.{h}.{name}` (ride the GGUF layer pattern + gguf/base bdh
+  rules), and per-lattice-unit `{name}.u{u}.h{h}` with `expert_id=u`
+  (unit = `n_embd // n_head` neurons/head, the route lattice). encoder/
+  encoder_v unit slices are column slices of the head block (neuron axis
+  last); decoder unit slices are contiguous ranges (head-major). Per-unit
+  and per-head handles share an instance-level float32 storage cache —
+  peak RAM is the full model in float32; deterministic (single-ZIP-read
+  per storage). Loader ids in `cli.py` choices come from `list_loaders()`.
 
 ## Work Guidance
 
@@ -53,5 +66,5 @@ formats).
 ## Verification
 
 - `tests/test_loader.py`, `tests/test_gguf.py`, `tests/test_kimi_k3.py`,
-  `tests/test_mapping_coverage.py`. Run via
-  `cd /media/data/coding/weight-atlas && .venv/bin/python -m pytest tests/test_loader.py tests/test_gguf.py`.
+  `tests/test_mapping_coverage.py`, `tests/test_pytorch_loader.py`. Run via
+  `cd /media/data/coding/weight-atlas && .venv/bin/python -m pytest tests/test_loader.py tests/test_gguf.py tests/test_pytorch_loader.py`.

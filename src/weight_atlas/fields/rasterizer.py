@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -193,6 +194,8 @@ def rasterize_flat(
     col_labels_set: set[str] = set()
 
     for ts in stats:
+        if ts.expert_id is not None:
+            continue  # per-unit lattice handles feed rasterize_bdh_lattice, not the flat field
         layer, slot = map_name(ts.name)
         if layer is not None:
             continue  # only non-layer tensors
@@ -423,3 +426,67 @@ def detect_moe(stats: Iterable[TensorStats]) -> dict[str, Any]:
         "shared_expert": has_shared_expert,
         "num_layers": len(layers),
     }
+
+
+def rasterize_bdh_lattice(
+    stats: Iterable[TensorStats],
+    spec: AtlasSpec,
+    stat_key: str,
+) -> list[ExpertPanel]:
+    """Rasterize BDH route-lattice unit statistics into (heads × units) panels.
+
+    The PyTorch loader expands BDH core tensors into per-unit handles named
+    ``{tensor}.u{u}.h{h}`` with ``expert_id=u`` (one unit = n_embd // n_head
+    neurons per head — the route lattice granularity).  For each BDH slot
+    (``bdh_encoder``, ``bdh_encoder_v``, ``bdh_decoder``) this produces one
+    ExpertPanel with rows = heads, columns = lattice units, so phase growth
+    (frozen prefix vs trained suffix) is visible as column structure.
+
+    Column order follows sorted unit id; missing cells carry NaN.
+    """
+    unit_re = re.compile(r"^(encoder|encoder_v|decoder)\.u(\d+)\.h(\d+)$")
+    slot_of = {"encoder": "bdh_encoder", "encoder_v": "bdh_encoder_v", "decoder": "bdh_decoder"}
+    cells: dict[str, dict[tuple[int, int], float]] = {}
+    heads: set[int] = set()
+    units: set[int] = set()
+
+    for ts in stats:
+        m = unit_re.match(ts.name)
+        if m is None:
+            continue
+        tensor, u, h = m.group(1), int(m.group(2)), int(m.group(3))
+        value = getattr(ts, stat_key, None)
+        if value is None:
+            continue
+        slot = slot_of[tensor]
+        cells.setdefault(slot, {})[(h, u)] = float(value)
+        heads.add(h)
+        units.add(u)
+
+    if not cells:
+        return []
+
+    heads_sorted = sorted(heads)
+    units_sorted = sorted(units)
+    h_idx = {h: i for i, h in enumerate(heads_sorted)}
+    u_idx = {u: i for i, u in enumerate(units_sorted)}
+
+    panels: list[ExpertPanel] = []
+    for slot in ("bdh_encoder", "bdh_encoder_v", "bdh_decoder"):
+        slot_cells = cells.get(slot, {})
+        if not slot_cells:
+            continue
+        grid = np.full((len(heads_sorted), len(units_sorted)), np.nan, dtype=np.float64)
+        for (h, u), value in slot_cells.items():
+            grid[h_idx[h], u_idx[u]] = value
+        panels.append(
+            ExpertPanel(
+                slot=slot,
+                channel=stat_key,
+                data=grid,
+                row_labels=[str(h) for h in heads_sorted],
+                col_labels=[str(u) for u in units_sorted],
+                spec_version=spec.spec_version,
+            )
+        )
+    return panels

@@ -13,7 +13,7 @@ import json
 import sys
 from pathlib import Path
 
-from weight_atlas.core.registry import get_renderer
+from weight_atlas.core.registry import get_renderer, list_loaders
 from weight_atlas.core.types import AtlasSpec, load_default_spec
 from weight_atlas.render import (
     blender,  # noqa: F401 — registers renderer
@@ -41,7 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("path", type=Path, help="Path to model file or directory (.safetensors or .gguf)")
     scan.add_argument("--out", type=Path, required=True, help="Output directory")
     scan.add_argument("--spec", type=Path, default=None, help="Path to atlas spec JSON")
-    scan.add_argument("--loader", choices=["safetensors", "gguf"], default=None,
+    scan.add_argument("--loader", choices=sorted(list_loaders()), default=None,
                       help="Loader to use (default: auto-detect)")
     scan.add_argument("--jobs", type=int, default=None,
                       help="Parallel statistics workers (default: min(8, cpu_count)); "
@@ -98,7 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
     diagnose = sub.add_parser("diagnose", help="Diagnose tensor name mapping coverage")
     diagnose.add_argument("path", type=Path, help="Path to model file or directory")
     diagnose.add_argument("--spec", type=Path, default=None, help="Path to atlas spec JSON")
-    diagnose.add_argument("--loader", choices=["safetensors", "gguf"], default=None,
+    diagnose.add_argument("--loader", choices=sorted(list_loaders()), default=None,
                           help="Loader to use (default: auto-detect)")
     diagnose.add_argument("--threshold", type=float, default=0.8,
                           help="Warning threshold for in_slots ratio (default: 0.8)")

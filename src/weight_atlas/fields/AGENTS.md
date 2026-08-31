@@ -24,6 +24,12 @@ fields: scaling, smoothing, upsample, degenerations, and TIFF persistence.
   edges — that is expected and handled by callers).
 - **Scale functions** are pure (value → value) and spec-driven
   (`channel.scale.type`); add new scales via `scaling.py` + spec, not inline.
+- **BDH route-lattice panels** (`rasterize_bdh_lattice`): per-(head, unit)
+  ExpertPanels for the PyTorch loader's per-unit handles
+  (`{name}.u{u}.h{h}`, `expert_id=u`); rows = heads, cols = lattice units.
+  Written under the expert-panel naming (`field_expert_bdh_*`) so the sheet
+  renderer and compare panel machinery pick them up unchanged; scan uses the
+  main spec channels for them.
 
 ## Work Guidance
 
@@ -33,5 +39,6 @@ fields: scaling, smoothing, upsample, degenerations, and TIFF persistence.
 ## Verification
 
 - `tests/test_fields.py`, `tests/test_degenerations.py`,
-  `tests/test_sheet_degenerate.py`. Run via
-  `cd /media/data/coding/weight-atlas && .venv/bin/python -m pytest tests/test_fields.py tests/test_degenerations.py`.
+  `tests/test_sheet_degenerate.py`, `tests/test_pytorch_loader.py`
+  (BDH lattice + flat-field skip). Run via
+  `cd /media/data/coding/weight-atlas && .venv/bin/python -m pytest tests/test_fields.py tests/test_pytorch_loader.py`.
