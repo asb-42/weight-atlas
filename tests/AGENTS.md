@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Test suite (400+ tests, 599 current) covering loaders, fields, render,
+Test suite (700+ tests) covering loaders (incl. PyTorch/BDH), fields, render,
 compare, api, LLM query API, determinism, paired (qimpact + edit signatures),
 and degradation paths. The suite is the quality gate for every change.
 
