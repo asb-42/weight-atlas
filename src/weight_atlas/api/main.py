@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -32,22 +33,30 @@ def create_app(
     """Create the FastAPI application.
 
     Args:
-        db_path: Path to SQLite job database. Defaults to ./data/jobs.db
+        db_path: Path to SQLite job database. Defaults to ./data/jobs.db,
+        overridable via ``WEIGHT_ATLAS_DB_PATH``.
         spec_path: Path to atlas spec JSON. Defaults to the canonical
             ``get_default_spec_path()`` (atlas_spec.v2.4.json).
-        output_root: Root directory for scan outputs. Defaults to ./output
+        output_root: Root directory for scan outputs. Defaults to ./output,
+        overridable via ``WEIGHT_ATLAS_OUTPUT_ROOT``.
         model_roots: Optional allowlist of directories from which scan/import/
             compare paths are accepted. When None (default) any existing path is
             accepted — only safe for localhost/LAN-trusted deployments.
+
+    Environment overrides exist so that out-of-tree `serve` launches (the
+    `test_serve.py` smoke test runs the real CLI binary) can redirect the
+    database and outputs to a sandbox: the smoke test must never touch the
+    developer's real job database — its startup recovery resets rows in it
+    ("re-queued after restart") and its sweeper can clobber live jobs.
     """
     base = Path(__file__).resolve().parent.parent.parent.parent
-    _db_path = db_path or base / "data" / "jobs.db"
+    _db_path = db_path or Path(os.environ.get("WEIGHT_ATLAS_DB_PATH") or (base / "data" / "jobs.db"))
     if spec_path is None:
         # Assert the shipped default spec is canonical before serving, so the
         # web UI and CLI can never silently produce incompatible fingerprints.
         load_default_spec()
     _spec_path = spec_path or get_default_spec_path()
-    _output_root = output_root or base / "output"
+    _output_root = output_root or Path(os.environ.get("WEIGHT_ATLAS_OUTPUT_ROOT") or (base / "output"))
     _model_roots = [r.resolve() for r in model_roots] if model_roots else None
 
     _db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -67,9 +76,8 @@ def create_app(
     # Output artefacts (PNG, TIFF, JSON) must be mounted BEFORE /static, or the
     # broader /static mount shadows /static/outputs and every image/JSON served
     # from a scan output directory 404s (e.g. the compare report's delta sheets).
-    output_static_dir = base / "output"
-    if output_static_dir.exists():
-        app.mount("/static/outputs", StaticFiles(directory=str(output_static_dir)), name="outputs")
+    if _output_root.exists():
+        app.mount("/static/outputs", StaticFiles(directory=str(_output_root)), name="outputs")
 
     # Static files (CSS)
     static_dir = Path(__file__).resolve().parent.parent / "ui" / "static"
