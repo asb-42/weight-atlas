@@ -283,7 +283,159 @@ def create_router(
                 return {}
         return {}
 
-    model_tabs = ("overview", "sheets", "terrain", "stats", "spec")
+    # ── Scatter + records tabs (alesha-pro P2) ────────────────────────────
+
+    def _model_records(job: Any) -> list[dict[str, Any]]:
+        from weight_atlas.api.query import model_records
+
+        return model_records(job)
+
+    def _records_tab_context(job: Any) -> dict[str, Any]:
+        from weight_atlas.api.query import RECORD_BOARDS, extreme_records
+
+        records = _model_records(job)
+        # Sorted-name index → stats-table page (both lists are name-sorted),
+        # so each record links straight to the tensor's table position.
+        name_index = {r["tensor_name"]: i for i, r in enumerate(records)}
+
+        def _page(name: str) -> int:
+            return name_index.get(name, 0) // stats_per_page + 1
+
+        def _fmt(v: Any) -> str:
+            if v is None:
+                return "—"
+            f = float(v)
+            if f == int(f) and abs(f) < 1e6:
+                return str(int(f))
+            return f"{f:.4g}"
+
+        boards = []
+        for metric, direction, label in RECORD_BOARDS:
+            tops = extreme_records(records, metric, direction)
+            if not tops:
+                continue  # metric absent in this fingerprint (e.g. old scan / probe off)
+            boards.append({
+                "metric": metric,
+                "direction": direction,
+                "label": label,
+                "tops": [
+                    {
+                        "name": t["tensor_name"],
+                        "slot": t["slot"],
+                        "value": _fmt(t.get(metric)),
+                        "page": _page(t["tensor_name"]),
+                    }
+                    for t in tops
+                ],
+            })
+        return {"record_boards": boards}
+
+    def _scatter_tab_context(job: Any, request: Request, x: str | None, y: str | None) -> dict[str, Any]:
+        from weight_atlas.api.query import METRICS, scatter_points
+
+        records = _model_records(job)
+
+        # Only metrics with at least one finite value are selectable axes
+        # (deterministic order = METRICS order).
+        available = []
+        for metric in METRICS:
+            if any(r.get(metric) is not None for r in records):
+                available.append(metric)
+        if x not in available:
+            x = "kurtosis" if "kurtosis" in available else available[0]
+        if y not in available:
+            y = "sqnr_int4_g128" if "sqnr_int4_g128" in available else available[-1]
+
+        data = scatter_points(records, x, y)
+        return {
+            "scatter": data,
+            "scatter_metrics": available,
+            "scatter_x": x,
+            "scatter_y": y,
+            "svg": _scatter_svg(data),
+        }
+
+    def _scatter_svg(data: dict[str, Any]) -> str:
+        """Deterministic server-side SVG scatter plot (no JS, no client deps).
+
+        p1–p99 clamped axes from scatter_points; plot box 900×560; points are
+        2.4px circles in slot-group colors; hover title = tensor name (native
+        SVG <title> tooltip).
+        """
+        from math import log10
+
+        w, h = 900, 560
+        ml, mt, mr, mb = 64, 14, 14, 46
+        pw, ph = w - ml - mr, h - mt - mb
+        x_axis, y_axis = data["x_axis"], data["y_axis"]
+
+        slot_colors = {
+            "attn": "#4e79a7", "mlp": "#f28e2b", "norm": "#9c755f",
+            "embed": "#59a14f", "lm_head": "#76b7b2", "router": "#e15759",
+            "expert": "#b07aa1", "ssm": "#edc948", "bdh": "#b07aa1",
+            "vision": "#79706e", "other": "#bab0ac",
+        }
+
+        def slot_color(slot: str) -> str:
+            for prefix in slot_colors:
+                if slot.startswith(prefix):
+                    return slot_colors[prefix]
+            return slot_colors["other"]
+
+        x_lo, x_hi = float(x_axis["lo"]), float(x_axis["hi"])
+        y_lo, y_hi = float(y_axis["lo"]), float(y_axis["hi"])
+
+        def tx(v: float) -> float:
+            t = log10(v) if x_axis["log"] else v
+            return ml + (t - x_lo) / (x_hi - x_lo) * pw
+
+        def ty(v: float) -> float:
+            t = log10(v) if y_axis["log"] else v
+            return mt + (1.0 - (t - y_lo) / (y_hi - y_lo)) * ph
+
+        parts = [
+            f'<svg viewBox="0 0 {w} {h}" role="img" class="scatter-svg" '
+            f'xmlns="http://www.w3.org/2000/svg">',
+            f'<rect x="{ml}" y="{mt}" width="{pw}" height="{ph}" fill="#141414" stroke="#444"/>',
+        ]
+        # gridlines at 5 positions with axis labels
+        for i in range(5):
+            f = i / 4
+            gx = ml + f * pw
+            gy = mt + f * ph
+            parts.append(f'<line x1="{gx:.1f}" y1="{mt}" x2="{gx:.1f}" y2="{mt + ph}" stroke="#2a2a2a"/>')
+            parts.append(f'<line x1="{ml}" y1="{gy:.1f}" x2="{ml + pw}" y2="{gy:.1f}" stroke="#2a2a2a"/>')
+            xv = x_axis["lo"] + f * (x_axis["hi"] - x_axis["lo"])
+            yv = y_axis["hi"] - f * (y_axis["hi"] - y_axis["lo"])
+            if x_axis["log"]:
+                xv = 10 ** xv
+            if y_axis["log"]:
+                yv = 10 ** yv
+            xlbl = f"{xv:.2g}" if abs(xv) < 1e5 else f"{xv:.1e}"
+            ylbl = f"{yv:.2g}" if abs(yv) < 1e5 else f"{yv:.1e}"
+            parts.append(f'<text x="{gx:.1f}" y="{mt + ph + 16}" text-anchor="middle" font-size="10" fill="#888">{xlbl}</text>')
+            parts.append(f'<text x="{ml - 6}" y="{gy + 3:.1f}" text-anchor="end" font-size="10" fill="#888">{ylbl}</text>')
+        parts.append(
+            f'<text x="{ml + pw / 2:.0f}" y="{h - 8}" text-anchor="middle" font-size="11" fill="#aaa">'
+            f'{x_axis["metric"]}{" (log)" if x_axis["log"] else ""}</text>'
+        )
+        parts.append(
+            f'<text x="14" y="{mt + ph / 2:.0f}" text-anchor="middle" font-size="11" fill="#aaa" '
+            f'transform="rotate(-90 14 {mt + ph / 2:.0f})">'
+            f'{y_axis["metric"]}{" (log)" if y_axis["log"] else ""}</text>'
+        )
+        for p in data["points"]:
+            cx, cy = tx(p["x"]), ty(p["y"])
+            name = p["tensor_name"]
+            parts.append(
+                f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="2.4" fill="{slot_color(p["slot"])}" '
+                f'fill-opacity="0.72"><title>{name} · {p["slot"]} · layer {p["layer"]} · '
+                f'{p["numel"]:,} params</title></circle>'
+            )
+        parts.append("</svg>")
+        return "".join(parts)
+
+    model_tabs = ("overview", "sheets", "terrain", "stats", "scatter", "records", "spec")
     stats_per_page = 200
 
     def _render_model_tab(
@@ -292,6 +444,8 @@ def create_router(
         tab: str,
         ctx: dict[str, Any],
         page: int = 1,
+        x: str | None = None,
+        y: str | None = None,
     ) -> str:
         """Render a model sub-page body (the tab content below the tab bar)."""
         ctx = dict(ctx)
@@ -313,6 +467,10 @@ def create_router(
                 "stats_total": total,
                 "stats_per_page": per,
             })
+        elif tab == "scatter":
+            ctx.update(_scatter_tab_context(job, request, x, y))
+        elif tab == "records":
+            ctx.update(_records_tab_context(job))
         template = templates.env.get_template(f"_model_{tab}.html")
         return template.render(**ctx)
 
@@ -322,11 +480,16 @@ def create_router(
         job_id: str,
         tab: str = "overview",
         page: int = 1,
+        x: str | None = None,
+        y: str | None = None,
     ) -> HTMLResponse:
-        """Model detail view: tabbed sub-pages (overview/sheets/terrain/stats/spec).
+        """Model detail view: tabbed sub-pages (overview/sheets/terrain/stats/
+        scatter/records/spec).
 
         The stats table is server-paginated and rendered only on its own
         sub-page, so the overview page stays small even for 74k-tensor models.
+        The scatter tab takes ``x``/``y`` metric params (validated server-side,
+        falls back to sensible defaults when absent).
         """
         job = job_queue.get(job_id)
         if job is None:
@@ -334,7 +497,7 @@ def create_router(
         if tab not in model_tabs:
             tab = "overview"
         ctx = _model_context(job)
-        ctx["tab_content"] = _render_model_tab(request, job, tab, ctx, page=page)
+        ctx["tab_content"] = _render_model_tab(request, job, tab, ctx, page=page, x=x, y=y)
         ctx["active_tab"] = tab
         return templates.TemplateResponse(
             request,

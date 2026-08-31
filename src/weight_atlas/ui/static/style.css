@@ -603,3 +603,58 @@ dd {
     color: #888;
     font-size: 0.85rem;
 }
+
+/* Scatter + records tabs (alesha-pro P2) */
+.scatter-controls {
+    display: flex;
+    gap: 1.25rem;
+    align-items: center;
+    margin: 0.75rem 0;
+}
+.scatter-controls select {
+    margin-left: 0.4rem;
+}
+.scatter-svg {
+    width: 100%;
+    max-width: 900px;
+    height: auto;
+    border-radius: 4px;
+}
+.records-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 0.75rem;
+}
+.record-card {
+    background: var(--bg-alt);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.75rem 1rem;
+}
+.record-label {
+    color: #aaa;
+    font-size: 0.8rem;
+    margin-bottom: 0.25rem;
+}
+.record-value {
+    font-size: 1.4rem;
+    font-weight: bold;
+    font-family: var(--mono, monospace);
+}
+.record-name {
+    display: block;
+    font-family: var(--mono, monospace);
+    font-size: 0.78rem;
+    overflow-wrap: anywhere;
+    margin: 0.25rem 0;
+}
+.record-runner {
+    font-size: 0.78rem;
+    color: #888;
+    overflow-wrap: anywhere;
+}
+.record-runner span {
+    font-family: var(--mono, monospace);
+    color: #aaa;
+    margin-right: 0.35rem;
+}

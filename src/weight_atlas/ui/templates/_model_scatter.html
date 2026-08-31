@@ -1,0 +1,26 @@
+<section class="detail-section">
+    <h3>Metric scatter</h3>
+    <p class="hint">
+        One dot per tensor with finite values on both axes. Axes are p1–p99 clamped;
+        log10 when the metric spans ≥ 2 orders of magnitude.
+        Showing {{ scatter.rendered }} of {{ scatter.total }} tensors (deterministic stride cap {{ scatter.cap }}).
+    </p>
+    <form class="scatter-controls" hx-get="/models/{{ job.job_id }}" hx-target="#model-tab-content" hx-swap="innerHTML" hx-push-url="true">
+        <input type="hidden" name="tab" value="scatter">
+        <label>X
+            <select name="x" hx-trigger="change" hx-include="closest form">
+                {% for m in scatter_metrics %}
+                <option value="{{ m }}" {% if m == scatter_x %}selected{% endif %}>{{ m }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>Y
+            <select name="y" hx-trigger="change" hx-include="closest form">
+                {% for m in scatter_metrics %}
+                <option value="{{ m }}" {% if m == scatter_y %}selected{% endif %}>{{ m }}</option>
+                {% endfor %}
+            </select>
+        </label>
+    </form>
+    {{ svg | safe }}
+</section>

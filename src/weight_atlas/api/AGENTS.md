@@ -86,11 +86,17 @@ scan/render/compare, and provides file-browsing and result endpoints. The UI
   via `QueryError` (handled in `main.py`). Response bodies must stay
   deterministic: fixed ordering, no timestamps, floats rounded to 4 decimals.
 - **Model detail is tabbed sub-pages**: `GET /models/{id}` is a light overview;
-  sheets/terrain/stats/spec load as htmx fragments via `?tab=`. The statistics
-  table is server-paginated (200 rows/page, clamped) — never render the full
+  sheets/terrain/stats/scatter/records/spec load as htmx fragments via `?tab=`.
+  The statistics table is server-paginated (200 rows/page, clamped) — never render the full
   tensor table inline (74k-tensor fingerprints made the old page ~25 MB).
   Fragment templates are `ui/templates/_model_{tab}.html`; add new tabs to
-  `model_tabs` in `routes.py` + a template.
+  `model_tabs` in `routes.py` + a template. The scatter tab renders a
+  deterministic server-side SVG (`x`/`y` metric params, p1–p99 clamped axes,
+  log10 when a metric spans ≥2 orders of magnitude, stride-culled to
+  `SCATTER_CAP`); the records tab renders extremes boards
+  (`query.RECORD_BOARDS` → `extreme_records`), linking into the stats table
+  page the tensor sits on. Both are pure `query.py` data + presentation in
+  `routes.py` — no client JS.
 
 ## Work Guidance
 

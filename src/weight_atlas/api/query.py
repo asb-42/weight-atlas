@@ -371,6 +371,136 @@ def _load_records(job: Job, fp: dict[str, Any]) -> list[dict[str, Any]]:
     return records
 
 
+def model_records(job: Job) -> list[dict[str, Any]]:
+    """Cached per-tensor records for a DONE scan job (UI tab helper)."""
+    return _load_records(job, _load_fingerprint(job))
+
+
+# ---------------------------------------------------------------------------
+# UI tab helpers: extremes leaderboard + metric scatter (alesha-pro adoption,
+# docs/2026-08-31_atlas-alesha-pro-analysis.md §7 P2). Pure + deterministic.
+# ---------------------------------------------------------------------------
+
+SCATTER_CAP = 4000
+
+RECORD_BOARDS: tuple[tuple[str, str, str], ...] = (
+    # (metric, direction, human label) — cards render only when the metric
+    # has at least one finite value in the fingerprint.
+    ("sqnr_int4_g128", "min", "Most fragile under INT4-g128"),
+    ("sqnr_int4_g128", "max", "Most robust under INT4-g128"),
+    ("sqnr_int8_ch", "min", "Most fragile under INT8"),
+    ("kurtosis", "max", "Heaviest tails"),
+    ("row_amax_ratio", "max", "Worst outlier channels"),
+    ("col_amax_ratio", "max", "Worst outlier columns"),
+    ("dyn_range", "max", "Widest dynamic range"),
+    ("stable_rank", "min", "Most rank-1 concentrated"),
+    ("effective_rank", "max", "Highest effective rank"),
+    ("spectral_norm", "max", "Largest spectral norm"),
+    ("sparsity", "max", "Most sparse"),
+    ("sv_decay", "min", "Fastest spectral decay"),
+)
+
+
+def extreme_records(
+    records: list[dict[str, Any]], metric: str, direction: str = "max", limit: int = 3
+) -> list[dict[str, Any]]:
+    """Top-``limit`` tensors by ``metric`` (NaN/None filtered).
+
+    Deterministic: ties break by tensor_name; ``direction`` is ``max``/``min``.
+    """
+    finite: list[tuple[dict[str, Any], float]] = []
+    for r in records:
+        v = r.get(metric)
+        if v is None:
+            continue
+        f = float(v)
+        if np.isfinite(f):
+            finite.append((r, f))
+    if not finite:
+        return []
+    if direction == "max":
+        finite.sort(key=lambda t: (-t[1], t[0]["tensor_name"]))
+    else:
+        finite.sort(key=lambda t: (t[1], t[0]["tensor_name"]))
+    return [r for r, _ in finite[:limit]]
+
+
+def scatter_points(
+    records: list[dict[str, Any]], x_metric: str, y_metric: str, cap: int = SCATTER_CAP
+) -> dict[str, Any]:
+    """Deterministic (x, y) point set for the metric scatter tab.
+
+    Axes are p1–p99 clamped over finite pairs; a metric gets a log10 axis when
+    every value is positive and the span is ≥ 2 orders of magnitude. Points
+    are sorted by tensor_name and uniformly culled to ``cap`` (deterministic
+    stride — never random), so renders are byte-identical for the same input.
+    """
+    pairs: list[dict[str, Any]] = []
+    for r in records:
+        xv, yv = r.get(x_metric), r.get(y_metric)
+        if xv is None or yv is None:
+            continue
+        xf, yf = float(xv), float(yv)
+        if not (np.isfinite(xf) and np.isfinite(yf)):
+            continue
+        pairs.append(
+            {
+                "tensor_name": r["tensor_name"],
+                "slot": r["slot"],
+                "layer": r["layer"],
+                "numel": r["numel"],
+                "x": xf,
+                "y": yf,
+            }
+        )
+
+    def axis_config(values: list[float]) -> dict[str, Any]:
+        arr = np.asarray(values, dtype=np.float64)
+        positive = bool((arr > 0).all())
+        log = positive and float(arr.max() / arr.min()) >= 100.0
+        t = np.log10(arr) if log else arr
+        lo = float(np.quantile(t, 0.01))
+        hi = float(np.quantile(t, 0.99))
+        if hi - lo < 1e-12:
+            hi = lo + 1.0
+        return {"log": log, "lo": lo, "hi": hi}
+
+    if not pairs:
+        return {
+            "points": [],
+            "total": 0,
+            "rendered": 0,
+            "cap": cap,
+            "x_axis": {"metric": x_metric, "log": False, "lo": 0.0, "hi": 1.0},
+            "y_axis": {"metric": y_metric, "log": False, "lo": 0.0, "hi": 1.0},
+        }
+
+    x_cfg = axis_config([p["x"] for p in pairs])
+    y_cfg = axis_config([p["y"] for p in pairs])
+
+    def clamp(v: float, cfg: dict[str, Any]) -> float:
+        t = np.log10(v) if cfg["log"] else v
+        return float(min(max(t, cfg["lo"]), cfg["hi"]))
+
+    for p in pairs:
+        p["x"] = clamp(p["x"], x_cfg)
+        p["y"] = clamp(p["y"], y_cfg)
+
+    pairs.sort(key=lambda p: p["tensor_name"])
+    total = len(pairs)
+    if total > cap:
+        stride = -(-total // cap)
+        pairs = pairs[::stride]
+    return {
+        "points": pairs,
+        "total": total,
+        "rendered": len(pairs),
+        "cap": cap,
+        "x_axis": {"metric": x_metric, **x_cfg},
+        "y_axis": {"metric": y_metric, **y_cfg},
+    }
+
+
 def _build_records(fp: dict[str, Any]) -> list[dict[str, Any]]:
     """Flatten ``fingerprint.tensors`` into per-tensor API records.
 

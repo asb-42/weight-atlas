@@ -1,0 +1,26 @@
+<section class="detail-section">
+    <h3>Records</h3>
+    <p class="hint">
+        Extreme tensors of this model, derived from the fingerprint metrics
+        (deterministic; ties break by tensor name). Click a tensor name to open
+        its position in the statistics table.
+    </p>    {% if record_boards %}
+    <div class="records-grid">
+        {% for board in record_boards %}
+        <div class="record-card">
+            <div class="record-label">{{ board.label }}</div>
+            {% set top = board.tops[0] %}
+            <div class="record-value">{{ top.value }}</div>
+            <a class="record-name" href="/models/{{ job.job_id }}?tab=stats&page={{ top.page }}">{{ top.name }}</a>
+            <div class="record-runners">
+                {% for r in board.tops[1:] %}
+                <div class="record-runner"><span>{{ r.value }}</span> <a href="/models/{{ job.job_id }}?tab=stats&page={{ r.page }}">{{ r.name }}</a></div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="hint">No finite metric values in this fingerprint.</p>
+    {% endif %}
+</section>
