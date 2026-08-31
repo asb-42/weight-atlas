@@ -46,6 +46,10 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--jobs", type=int, default=None,
                       help="Parallel statistics workers (default: min(8, cpu_count)); "
                            "results are identical for any value")
+    scan.add_argument("--quant-probe", action="store_true",
+                      help="Also measure RTN quantizability per tensor (SQNR for INT8 "
+                           "per-channel, INT4 group-128, FP8 e4m3); opt-in, adds ~6 "
+                           "passes over all weights")
 
     render = sub.add_parser("render", help="Render PNGs from scan artefacts")
     render.add_argument("out_dir", type=Path, help="Directory containing scan artefacts")
@@ -116,7 +120,8 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     spec = _load_spec(args.spec)
 
     try:
-        artefacts = run_scan(args.path, args.out, spec, loader_id=args.loader, jobs=args.jobs)
+        artefacts = run_scan(args.path, args.out, spec, loader_id=args.loader, jobs=args.jobs,
+                             quant_probe=args.quant_probe)
     except FileNotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

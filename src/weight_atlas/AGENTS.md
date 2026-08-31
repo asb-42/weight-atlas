@@ -50,6 +50,12 @@ compare two scanned models. The web UI (api + ui) is the primary interface.
   `spec.seeds.distribution` — never unseeded. Non-applicable values (channel
   ratios / sv_decay on 1-D tensors) are NaN, never zero; the query API
   serializes NaN/inf as JSON null.
+- **RTN-SQNR probe** (`stats/sqnr.py`, opt-in `scan --quant-probe`): measured
+  round-to-nearest quantizability per tensor (INT8 per-channel, INT4 g128,
+  FP8 e4m3 via ml_dtypes — pre-clamped, `fn` overflows to NaN). Reference-free
+  floor damage, NOT the paired qimpact recipe analysis. Adds ~6 chunked
+  passes over every weight — never enable by default. Lossless → finite
+  300.0 ceiling (JSON-safe), zero signal / 1-D / non-128-multiple → NaN.
 
 ## Work Guidance
 

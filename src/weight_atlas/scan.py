@@ -38,6 +38,7 @@ from weight_atlas.stats.norms import (
     SVDecay,
 )
 from weight_atlas.stats.shape_moments import Kurtosis, Sparsity
+from weight_atlas.stats.sqnr import SQNRFp8E4M3, SQNRInt4Group128, SQNRInt8PerChannel
 from weight_atlas.stats.stable_rank import StableRank
 
 # Tensors whose float32 materialization is >= this many bytes are computed
@@ -54,16 +55,31 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _make_handles(tensor: TensorHandle, svd_seed: int = 0, distribution_seed: int = 0) -> TensorStats:
+def _make_handles(
+    tensor: TensorHandle,
+    svd_seed: int = 0,
+    distribution_seed: int = 0,
+    quant_probe: bool = False,
+) -> TensorStats:
     """Compute all registered statistics for one tensor.
 
     ``svd_seed`` comes from the spec's ``seeds.svd`` so scan spectra and
     paired-pipeline Δ-spectra share the same seeded rSVD contract;
     ``distribution_seed`` drives the deterministic percentile subsample above
-    the 16M-element cap (stats.distribution).
+    the 16M-element cap (stats.distribution). ``quant_probe`` enables the
+    measured RTN-SQNR stats (stats.sqnr) — opt-in, ~6 extra weight passes.
     """
     row_ratio, col_ratio = amax_ratios(tensor)
     summary = distribution_summary(tensor, seed=distribution_seed)
+    sqnr: dict[str, float] = (
+        {
+            "sqnr_int8_ch": SQNRInt8PerChannel().compute(tensor),
+            "sqnr_int4_g128": SQNRInt4Group128().compute(tensor),
+            "sqnr_fp8_e4m3": SQNRFp8E4M3().compute(tensor),
+        }
+        if quant_probe
+        else {}
+    )
     return TensorStats(
         name=tensor.name,
         shape=tensor.shape,
@@ -78,6 +94,7 @@ def _make_handles(tensor: TensorHandle, svd_seed: int = 0, distribution_seed: in
         row_amax_ratio=row_ratio,
         col_amax_ratio=col_ratio,
         **summary,
+        **sqnr,
         expert_id=tensor.expert_id,
     )
 
@@ -90,7 +107,9 @@ def _resolve_jobs(jobs: int | None) -> int:
     return max(1, min(8, os.cpu_count() or 1))
 
 
-def _stats_for_handle(h: TensorHandle, svd_seed: int = 0, distribution_seed: int = 0) -> TensorStats:
+def _stats_for_handle(
+    h: TensorHandle, svd_seed: int = 0, distribution_seed: int = 0, quant_probe: bool = False
+) -> TensorStats:
     """Compute all statistics for one tensor.
 
     BLAS threading is capped once by ``scan()`` around the whole parallel
@@ -99,7 +118,7 @@ def _stats_for_handle(h: TensorHandle, svd_seed: int = 0, distribution_seed: int
     OpenBLAS (observed on large MoE scans), so the limit must be applied a
     single time before the pool starts, not re-entered for every tensor.
     """
-    return _make_handles(h, svd_seed)
+    return _make_handles(h, svd_seed, quant_probe=quant_probe)
 
 
 def scan(
@@ -110,6 +129,7 @@ def scan(
     loader_id: str | None = None,
     progress: Callable[[float, str], None] | None = None,
     jobs: int | None = None,
+    quant_probe: bool = False,
 ) -> list[Path]:
     """Run the full scan pipeline.
 
@@ -129,6 +149,9 @@ def scan(
             phase of the pipeline completes (loading, statistics, rasterizing,
             smoothing, expert panels, embedding, manifest).
         jobs: number of parallel statistics workers (default: min(8, CPUs)).
+        quant_probe: also compute the measured RTN-SQNR stats
+            (``sqnr_int8_ch``/``sqnr_int4_g128``/``sqnr_fp8_e4m3``); opt-in
+            because it adds ~6 chunked passes over every weight tensor.
             Each tensor's statistics are computed independently and
             deterministically, so results are identical for any ``jobs``.
     """
@@ -198,14 +221,14 @@ def scan(
 
             with ThreadPoolExecutor(max_workers=jobs_n) as ex:
                 for i, ts in ex.map(
-                    lambda i: (i, _stats_for_handle(handles[i], svd_seed, distribution_seed)), items
+                    lambda i: (i, _stats_for_handle(handles[i], svd_seed, distribution_seed, quant_probe)), items
                 ):
                     handles[i].clear()
                     stats[i] = ts
                     _report_stats(i)
         else:
             for i in items:
-                ts = _stats_for_handle(handles[i], svd_seed, distribution_seed)
+                ts = _stats_for_handle(handles[i], svd_seed, distribution_seed, quant_probe)
                 handles[i].clear()
                 stats[i] = ts
                 _report_stats(i)
@@ -608,6 +631,9 @@ def _build_fingerprint(
             "outlier_4s": ts.outlier_4s,
             "outlier_6s": ts.outlier_6s,
             "dyn_range": ts.dyn_range,
+            "sqnr_int8_ch": ts.sqnr_int8_ch,
+            "sqnr_int4_g128": ts.sqnr_int4_g128,
+            "sqnr_fp8_e4m3": ts.sqnr_fp8_e4m3,
         }
         # Add ggml_type if present
         if ts.name in ggml_types:

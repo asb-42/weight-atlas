@@ -97,6 +97,11 @@ class TensorStats:
     row_amax_ratio: float = float("nan")
     col_amax_ratio: float = float("nan")
     sv_decay: float = float("nan")
+    # Measured RTN quantizability (alesha-pro adoption, P1.4): opt-in via
+    # `scan --quant-probe`; NaN = probe off or not applicable.
+    sqnr_int8_ch: float = float("nan")
+    sqnr_int4_g128: float = float("nan")
+    sqnr_fp8_e4m3: float = float("nan")
     expert_id: int | None = None  # For MoE expert tensors
 
 

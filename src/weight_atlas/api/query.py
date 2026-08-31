@@ -53,6 +53,11 @@ METRICS = (
     "outlier_4s",
     "outlier_6s",
     "dyn_range",
+    # Measured RTN quantizability (P1.4; opt-in --quant-probe; older
+    # fingerprints / probe-off scans serialize as null).
+    "sqnr_int8_ch",
+    "sqnr_int4_g128",
+    "sqnr_fp8_e4m3",
 )
 
 METRIC_DESCRIPTIONS: dict[str, dict[str, Any]] = {
@@ -169,6 +174,24 @@ METRIC_DESCRIPTIONS: dict[str, dict[str, Any]] = {
         "description": "dynamic range: absmax / p50 of |w|",
         "min": 1,
         "expected_range": [1, 10000],
+    },
+    "sqnr_int8_ch": {
+        "description": "measured RTN quantizability: INT8 per-channel SQNR in dB "
+        "(opt-in quant probe; null when the probe was off or N/A)",
+        "min": 0,
+        "expected_range": [20, 50],
+    },
+    "sqnr_int4_g128": {
+        "description": "measured RTN quantizability: INT4 group-128 SQNR in dB "
+        "(opt-in quant probe; null when the probe was off, N/A, or row length not a 128 multiple)",
+        "min": 0,
+        "expected_range": [10, 35],
+    },
+    "sqnr_fp8_e4m3": {
+        "description": "measured RTN quantizability: FP8 e4m3 SQNR in dB "
+        "(opt-in quant probe; null when the probe was off or N/A)",
+        "min": 0,
+        "expected_range": [15, 40],
     },
 }
 
