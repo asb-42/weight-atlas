@@ -43,6 +43,13 @@ compare two scanned models. The web UI (api + ui) is the primary interface.
 - **Shared rSVD seed**: `spec.seeds.svd` drives BOTH the scan-side
   SpectralNorm/EffectiveRank/StableRank and the paired Δ-spectrum — change it
   once, both pipelines reseed together.
+- **Distribution stats** (`stats/distribution.py`): percentile ladder,
+  outlier fractions, dyn_range and the row/col amax outlier-channel ratios
+  share one chunked summary per tensor (WeakKeyDictionary cache, like the
+  spectrum). Percentile subsampling above 16M elements is seeded via
+  `spec.seeds.distribution` — never unseeded. Non-applicable values (channel
+  ratios / sv_decay on 1-D tensors) are NaN, never zero; the query API
+  serializes NaN/inf as JSON null.
 
 ## Work Guidance
 

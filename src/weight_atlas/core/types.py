@@ -62,10 +62,14 @@ class TensorHandle:
         if self._on_clear is not None:
             self._on_clear()
 
-
 @dataclass
 class TensorStats:
-    """Computed statistics for a single tensor."""
+    """Computed statistics for a single tensor.
+
+    NaN means "not applicable" (e.g. channel ratios on 1-D tensors) — the
+    established never-zero discipline; the query API serializes it as null.
+    """
+
     name: str
     shape: tuple[int, ...]
     frobenius: float = 0.0
@@ -75,6 +79,24 @@ class TensorStats:
     kurtosis: float = 0.0
     sparsity: float = 0.0
     kernel_norm: float = 0.0
+    # Distribution-shape ladder + outlier-channel ratios (alesha-pro adoption;
+    # NaN = not applicable, see docs/2026-08-31_atlas-alesha-pro-analysis.md).
+    mean: float = float("nan")
+    std: float = float("nan")
+    absmax: float = float("nan")
+    absmean: float = float("nan")
+    p50: float = float("nan")
+    p90: float = float("nan")
+    p99: float = float("nan")
+    p999: float = float("nan")
+    p9999: float = float("nan")
+    outlier_3s: float = float("nan")
+    outlier_4s: float = float("nan")
+    outlier_6s: float = float("nan")
+    dyn_range: float = float("nan")
+    row_amax_ratio: float = float("nan")
+    col_amax_ratio: float = float("nan")
+    sv_decay: float = float("nan")
     expert_id: int | None = None  # For MoE expert tensors
 
 

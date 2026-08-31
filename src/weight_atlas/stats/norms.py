@@ -102,3 +102,27 @@ class EffectiveRank:
         if t.load().ndim == 1:
             return 1.0
         return entropy_rank(truncated_spectrum(t, seed=self._seed))
+
+
+@register_stat("sv_decay")
+class SVDecay:
+    """Spectral tail decay: smallest / largest singular value of the spectrum.
+
+    Adopted from alesha-pro/atlas (MIT): ``σ_k / σ_1`` over the shared
+    (possibly truncated) spectrum — small values mean the energy is
+    concentrated in the top modes. For 1-D tensors the concept is **not
+    applicable**: compute returns NaN (never a fake 0/1).
+    """
+
+    stat_id = "sv_decay"
+
+    def __init__(self, seed: int = 0) -> None:
+        self._seed = seed
+
+    def compute(self, t: TensorHandle) -> float:
+        if t.load().ndim == 1:
+            return float("nan")
+        s = truncated_spectrum(t, seed=self._seed)
+        if s.size == 0 or s[0] == 0:
+            return float("nan")
+        return float(s[-1] / s[0])

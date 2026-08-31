@@ -34,6 +34,25 @@ METRICS = (
     "kurtosis",
     "sparsity",
     "kernel_norm",
+    # Distribution-shape ladder + outlier-channel ratios (alesha-pro adoption,
+    # docs/2026-08-31_atlas-alesha-pro-analysis.md §P1). Older fingerprints
+    # without these fields serialize as null.
+    "sv_decay",
+    "row_amax_ratio",
+    "col_amax_ratio",
+    "mean",
+    "std",
+    "absmax",
+    "absmean",
+    "p50",
+    "p90",
+    "p99",
+    "p999",
+    "p9999",
+    "outlier_3s",
+    "outlier_4s",
+    "outlier_6s",
+    "dyn_range",
 )
 
 METRIC_DESCRIPTIONS: dict[str, dict[str, Any]] = {
@@ -71,6 +90,85 @@ METRIC_DESCRIPTIONS: dict[str, dict[str, Any]] = {
         "description": "mean per-output-channel L2 norm of a conv kernel; Frobenius for non-4-D tensors",
         "min": 0,
         "expected_range": [0, 500],
+    },
+    "sv_decay": {
+        "description": "spectral tail decay: smallest/largest singular value of the (possibly truncated) spectrum",
+        "min": 0,
+        "expected_range": [0.0001, 0.5],
+    },
+    "row_amax_ratio": {
+        "description": "outlier-channel ratio: max/median of per-row amax (2-D only; null otherwise)",
+        "min": 1,
+        "expected_range": [1, 100],
+    },
+    "col_amax_ratio": {
+        "description": "outlier-channel ratio: max/median of per-column amax (2-D only; null otherwise)",
+        "min": 1,
+        "expected_range": [1, 100],
+    },
+    "mean": {
+        "description": "mean of the weight values",
+        "expected_range": [-0.1, 0.1],
+    },
+    "std": {
+        "description": "standard deviation of the weight values",
+        "min": 0,
+        "expected_range": [0, 0.5],
+    },
+    "absmax": {
+        "description": "largest absolute weight",
+        "min": 0,
+        "expected_range": [0, 10],
+    },
+    "absmean": {
+        "description": "mean absolute weight",
+        "min": 0,
+        "expected_range": [0, 0.5],
+    },
+    "p50": {
+        "description": "50th percentile of |w|",
+        "min": 0,
+        "expected_range": [0, 1],
+    },
+    "p90": {
+        "description": "90th percentile of |w|",
+        "min": 0,
+        "expected_range": [0, 1],
+    },
+    "p99": {
+        "description": "99th percentile of |w|",
+        "min": 0,
+        "expected_range": [0, 1],
+    },
+    "p999": {
+        "description": "99.9th percentile of |w|",
+        "min": 0,
+        "expected_range": [0, 1],
+    },
+    "p9999": {
+        "description": "99.99th percentile of |w|",
+        "min": 0,
+        "expected_range": [0, 1],
+    },
+    "outlier_3s": {
+        "description": "fraction of weights beyond 3 standard deviations",
+        "min": 0,
+        "expected_range": [0, 0.01],
+    },
+    "outlier_4s": {
+        "description": "fraction of weights beyond 4 standard deviations",
+        "min": 0,
+        "expected_range": [0, 0.001],
+    },
+    "outlier_6s": {
+        "description": "fraction of weights beyond 6 standard deviations",
+        "min": 0,
+        "expected_range": [0, 1e-5],
+    },
+    "dyn_range": {
+        "description": "dynamic range: absmax / p50 of |w|",
+        "min": 1,
+        "expected_range": [1, 10000],
     },
 }
 
@@ -274,7 +372,13 @@ def _build_records(fp: dict[str, Any]) -> list[dict[str, Any]]:
         }
         for metric in METRICS:
             val = info.get(metric)
-            rec[metric] = None if val is None else float(val)
+            if val is None:
+                rec[metric] = None
+            else:
+                fval = float(val)
+                # NaN = "not applicable" (never zero), inf = degenerate scale;
+                # both must serialize as JSON null, not as invalid JSON.
+                rec[metric] = fval if np.isfinite(fval) else None
         records.append(rec)
     records.sort(key=lambda r: r["tensor_name"])
     return records

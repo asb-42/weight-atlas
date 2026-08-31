@@ -29,11 +29,13 @@ from weight_atlas.loaders import (
     pytorch_loader,  # noqa: F401 — triggers registration
     safetensors_loader,  # noqa: F401 — triggers registration
 )
+from weight_atlas.stats.distribution import amax_ratios, distribution_summary
 from weight_atlas.stats.norms import (
     EffectiveRank,
     FrobeniusNorm,
     KernelNorm,
     SpectralNorm,
+    SVDecay,
 )
 from weight_atlas.stats.shape_moments import Kurtosis, Sparsity
 from weight_atlas.stats.stable_rank import StableRank
@@ -52,12 +54,16 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _make_handles(tensor: TensorHandle, svd_seed: int = 0) -> TensorStats:
+def _make_handles(tensor: TensorHandle, svd_seed: int = 0, distribution_seed: int = 0) -> TensorStats:
     """Compute all registered statistics for one tensor.
 
     ``svd_seed`` comes from the spec's ``seeds.svd`` so scan spectra and
-    paired-pipeline Δ-spectra share the same seeded rSVD contract.
+    paired-pipeline Δ-spectra share the same seeded rSVD contract;
+    ``distribution_seed`` drives the deterministic percentile subsample above
+    the 16M-element cap (stats.distribution).
     """
+    row_ratio, col_ratio = amax_ratios(tensor)
+    summary = distribution_summary(tensor, seed=distribution_seed)
     return TensorStats(
         name=tensor.name,
         shape=tensor.shape,
@@ -68,6 +74,10 @@ def _make_handles(tensor: TensorHandle, svd_seed: int = 0) -> TensorStats:
         kurtosis=Kurtosis().compute(tensor),
         sparsity=Sparsity().compute(tensor),
         kernel_norm=KernelNorm().compute(tensor),
+        sv_decay=SVDecay(seed=svd_seed).compute(tensor),
+        row_amax_ratio=row_ratio,
+        col_amax_ratio=col_ratio,
+        **summary,
         expert_id=tensor.expert_id,
     )
 
@@ -80,7 +90,7 @@ def _resolve_jobs(jobs: int | None) -> int:
     return max(1, min(8, os.cpu_count() or 1))
 
 
-def _stats_for_handle(h: TensorHandle, svd_seed: int = 0) -> TensorStats:
+def _stats_for_handle(h: TensorHandle, svd_seed: int = 0, distribution_seed: int = 0) -> TensorStats:
     """Compute all statistics for one tensor.
 
     BLAS threading is capped once by ``scan()`` around the whole parallel
@@ -158,6 +168,7 @@ def scan(
     # Shared rSVD seed: the paired pipeline reads the same spec key, so scan
     # spectra and Δ-spectra stay comparable when it changes.
     svd_seed = int(spec.seeds.get("svd", 0))
+    distribution_seed = int(spec.seeds.get("distribution", 0))
 
     # Tensors that materialize to >= 1 GiB float32 are handled serially to keep
     # peak RAM bounded even on models with very large tensors.
@@ -187,14 +198,14 @@ def scan(
 
             with ThreadPoolExecutor(max_workers=jobs_n) as ex:
                 for i, ts in ex.map(
-                    lambda i: (i, _stats_for_handle(handles[i], svd_seed)), items
+                    lambda i: (i, _stats_for_handle(handles[i], svd_seed, distribution_seed)), items
                 ):
                     handles[i].clear()
                     stats[i] = ts
                     _report_stats(i)
         else:
             for i in items:
-                ts = _stats_for_handle(handles[i], svd_seed)
+                ts = _stats_for_handle(handles[i], svd_seed, distribution_seed)
                 handles[i].clear()
                 stats[i] = ts
                 _report_stats(i)
@@ -581,6 +592,22 @@ def _build_fingerprint(
             "kurtosis": ts.kurtosis,
             "sparsity": ts.sparsity,
             "kernel_norm": ts.kernel_norm,
+            "sv_decay": ts.sv_decay,
+            "row_amax_ratio": ts.row_amax_ratio,
+            "col_amax_ratio": ts.col_amax_ratio,
+            "mean": ts.mean,
+            "std": ts.std,
+            "absmax": ts.absmax,
+            "absmean": ts.absmean,
+            "p50": ts.p50,
+            "p90": ts.p90,
+            "p99": ts.p99,
+            "p999": ts.p999,
+            "p9999": ts.p9999,
+            "outlier_3s": ts.outlier_3s,
+            "outlier_4s": ts.outlier_4s,
+            "outlier_6s": ts.outlier_6s,
+            "dyn_range": ts.dyn_range,
         }
         # Add ggml_type if present
         if ts.name in ggml_types:
