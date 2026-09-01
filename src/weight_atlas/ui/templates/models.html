@@ -13,6 +13,11 @@
                    required>
             <button type="button" class="btn-small" data-browse="model_path" data-browse-mode="model">Browse…</button>
         </div>
+        <label class="checkbox-label" for="quant_probe">
+            <input type="checkbox" id="quant_probe" name="quant_probe">
+            Measure quantizability (RTN-SQNR for INT8 / INT4-g128 / FP8 e4m3;
+            adds ~6 passes over all weights)
+        </label>
         <button type="submit">Start Scan</button>
     </form>
     <div id="job-result"></div>

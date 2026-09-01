@@ -63,6 +63,9 @@ class Job:
     compare_mode: str = "strict"
     compare_interp: str = "linear"
     sheet_knobs: dict[str, Any] = field(default_factory=dict)
+    # Scan-only: run the measured RTN-SQNR probe (scan --quant-probe) during
+    # the job. Persisted so restart recovery re-runs the SAME probe settings.
+    quant_probe: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -82,6 +85,7 @@ class Job:
             "compare_mode": self.compare_mode,
             "compare_interp": self.compare_interp,
             "sheet_knobs": self.sheet_knobs,
+            "quant_probe": self.quant_probe,
         }
 
 
@@ -175,6 +179,7 @@ class JobQueue:
             ("compare_mode", "TEXT NOT NULL DEFAULT 'strict'"),
             ("compare_interp", "TEXT NOT NULL DEFAULT 'linear'"),
             ("sheet_knobs", "TEXT NOT NULL DEFAULT '{}'"),
+            ("quant_probe", "INTEGER NOT NULL DEFAULT 0"),
         ):
             if name not in cols:
                 conn.execute(f"ALTER TABLE jobs ADD COLUMN {name} {ddl}")
@@ -236,8 +241,9 @@ class JobQueue:
                 INSERT OR REPLACE INTO jobs
                 (job_id, model_path, out_dir, spec_path, status, progress,
                  message, created_at, updated_at, error, artefacts,
-                 job_type, renderer, compare_mode, compare_interp, sheet_knobs)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 job_type, renderer, compare_mode, compare_interp, sheet_knobs,
+                 quant_probe)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job.job_id,
@@ -256,6 +262,7 @@ class JobQueue:
                     job.compare_mode,
                     job.compare_interp,
                     json.dumps(job.sheet_knobs),
+                    1 if job.quant_probe else 0,
                 ),
             )
 
@@ -284,6 +291,7 @@ class JobQueue:
             compare_mode=row[13],
             compare_interp=row[14],
             sheet_knobs=json.loads(row[15]) if len(row) > 15 else {},
+            quant_probe=bool(row[16]) if len(row) > 16 else False,
         )
 
     def start(self) -> None:
@@ -443,6 +451,7 @@ class JobQueue:
                 artefacts = [str(a) for a in run_scan(
                     Path(job.model_path), Path(job.out_dir), spec,
                     progress=scan_progress,
+                    quant_probe=job.quant_probe,
                 )]
                 # Auto-render sheets after scan (v0.2.0) → [0.85, 1.0]
                 progress_cb(0.85, "Rendering sheets...")
@@ -582,6 +591,7 @@ class JobQueue:
         model_path: Path,
         out_dir: Path,
         spec_path: Path,
+        quant_probe: bool = False,
     ) -> Job:
         """Create a new job and enqueue it."""
         now = self._now()
@@ -595,6 +605,7 @@ class JobQueue:
             updated_at=now,
             message="Queued",
             job_type="scan",
+            quant_probe=quant_probe,
         )
         self._save(job)
         self._enqueued.add(job.job_id)

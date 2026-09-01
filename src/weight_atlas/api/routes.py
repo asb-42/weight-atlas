@@ -181,7 +181,11 @@ def create_router(
         out_dir = output_root / f"{model_path.name}_{uuid.uuid4().hex[:8]}"
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        job = job_queue.submit(model_path, out_dir, spec_path)
+        # Checkbox form field: checked sends "on"/"true", unchecked is absent.
+        quant_probe_raw = payload.get("quant_probe", "")
+        quant_probe = str(quant_probe_raw).lower() in ("on", "true", "1", "yes")
+
+        job = job_queue.submit(model_path, out_dir, spec_path, quant_probe=quant_probe)
         # Keep the job JSON for the API, but have HTMX navigate the browser to
         # the job's live progress page.
         return JSONResponse(

@@ -98,6 +98,9 @@ def build_parser() -> argparse.ArgumentParser:
     activity.add_argument("--dtype", default="float32", choices=["float32", "bfloat16"], help="Data type")
     activity.add_argument("--seed", type=int, default=0, help="Random seed for determinism")
     activity.add_argument("--max-layers", type=int, default=None, help="Max layers to capture")
+    activity.add_argument("--probes", default="",
+                          help="Comma-separated opt-in activity probes: actq,fragility,linattn "
+                               "(default: none — pinned baseline capture)")
 
     diagnose = sub.add_parser("diagnose", help="Diagnose tensor name mapping coverage")
     diagnose.add_argument("path", type=Path, help="Path to model file or directory")
@@ -284,11 +287,13 @@ def _cmd_activity(args: argparse.Namespace) -> int:
     from weight_atlas.activity.capture import CaptureConfig
 
     protocol = load_protocol(args.protocol)
+    probes = tuple(p.strip() for p in args.probes.split(",") if p.strip())
     config = CaptureConfig(
         device=args.device,
         dtype=args.dtype,
         seed=args.seed,
         max_layers=args.max_layers,
+        probes=probes,
     )
 
     # Load model and tokenizer

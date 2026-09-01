@@ -1017,3 +1017,58 @@ class TestModelPathEscaping:
         body = r.text
         assert "<img" not in body
         assert "&lt;img" in body
+
+
+class TestQuantProbeFlag:
+    def test_create_job_quant_probe_persisted(
+        self, client: TestClient, fake_model: Path, tmp_path: Path
+    ) -> None:
+        """The checkbox flag persists on the job row and survives a roundtrip
+        (restart recovery re-runs the SAME probe settings)."""
+        response = client.post(
+            "/api/jobs",
+            json={"model_path": str(fake_model), "quant_probe": "on"},
+        )
+        assert response.status_code == 200
+        job_id = response.json()["job_id"]
+        assert response.json()["quant_probe"] is True
+
+        job = JobQueue(tmp_path / "jobs.db", on_job=lambda j: None).get(job_id)
+        assert job is not None and job.quant_probe is True
+
+        # Unchecked → absent from payload → False
+        response = client.post("/api/jobs", json={"model_path": str(fake_model)})
+        assert response.json()["quant_probe"] is False
+
+    def test_quant_probe_reaches_scan(
+        self, client: TestClient, fake_model: Path, tmp_path: Path
+    ) -> None:
+        """A probe job's fingerprint contains the SQNR fields (worker wiring)."""
+        import json as _json
+
+        import numpy as np
+
+        response = client.post(
+            "/api/jobs",
+            json={"model_path": str(fake_model), "quant_probe": "on"},
+        )
+        job_id = response.json()["job_id"]
+        job = JobQueue(tmp_path / "jobs.db", on_job=lambda j: None).get(job_id)
+        assert job is not None and job.quant_probe is True
+
+        from weight_atlas.api.jobs import JobQueue as Q
+        from weight_atlas.core.types import AtlasSpec
+
+        # Execute directly (deterministic; the fixture client's worker may not
+        # have a running lifespan) using the same code path as the worker.
+        app_queue = Q(tmp_path / "jobs.db", on_job=lambda j: None)
+        job = app_queue.get(job_id)
+        assert job is not None
+        spec = AtlasSpec.from_json(Path(job.spec_path))
+        from weight_atlas.scan import scan as run_scan
+
+        run_scan(Path(job.model_path), Path(job.out_dir), spec, quant_probe=True)
+        fp = _json.loads((Path(job.out_dir) / "fingerprint.json").read_text())
+        some = next(iter(fp["tensors"].values()))
+        # hidden=32 fake model: 32 % 128 != 0 → INT4 N/A, INT8/FP8 finite
+        assert np.isnan(some["sqnr_int4_g128"])

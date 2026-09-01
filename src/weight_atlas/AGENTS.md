@@ -40,6 +40,17 @@ compare two scanned models. The web UI (api + ui) is the primary interface.
   `finally`; hook reductions upcast to float32 (bf16 has no numpy dtype);
   padded positions are excluded via the attention mask; the protocol
   registry fails loudly at import if its spec file is missing.
+- **Activity probes** (`activity/probes.py`, opt-in `CaptureConfig.probes` /
+  CLI `--probes actq,fragility,linattn`): additive artefacts
+  (`activity_actq.json`, `activity_fragility.json`, `activity_linattn.json`)
+  that never touch the pinned protocol hash. actq = activation INT8/FP8
+  SQNR at Linear inputs (torch twins of the stats.sqnr schemes); fragility
+  = per-layer KL(base ‖ INT4-g128) with weight swap + restore in a
+  `finally` (one forward per layer — expensive); linattn = GDN write-gate
+  β / decay g / state RMS / half-life via `chunk_gated_delta_rule`
+  wrapping (restored on remove). torch is optional: mypy ignores it
+  project-wide (`[[tool.mypy.overrides]]`), tests run dry (skip without
+  torch), real validation happens on the GPU box.
 - **Shared rSVD seed**: `spec.seeds.svd` drives BOTH the scan-side
   SpectralNorm/EffectiveRank/StableRank and the paired Δ-spectrum — change it
   once, both pipelines reseed together.

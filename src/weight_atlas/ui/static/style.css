@@ -658,3 +658,14 @@ dd {
     color: #aaa;
     margin-right: 0.35rem;
 }
+
+.checkbox-label {
+    display: block;
+    margin: 0.5rem 0;
+    font-size: 0.85rem;
+    color: #aaa;
+    cursor: pointer;
+}
+.checkbox-label input {
+    margin-right: 0.4rem;
+}

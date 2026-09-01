@@ -63,6 +63,14 @@ warn_redundant_casts = true
 warn_unused_configs = true
 disallow_any_generics = false
 
+# torch is an optional extra (activity probes) and never importable in the
+# scan venv; mypy's per-module error deduplication made inline
+# `# type: ignore[import-not-found]` comments fragile (only the first
+# occurrence per module counts). Ignore torch missing-imports globally.
+[[tool.mypy.overrides]]
+module = ["torch", "torch.*"]
+ignore_missing_imports = true
+
 [dependency-groups]
 dev = [
     "ruff>=0.16.1",

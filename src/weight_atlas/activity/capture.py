@@ -20,6 +20,9 @@ class CaptureConfig:
     dtype: str = "float32"
     seed: int = 0
     max_layers: int | None = None
+    # Opt-in P3 probes ("actq", "fragility", "linattn"; see activity.probes).
+    # Empty tuple = the pinned baseline capture only (protocol unchanged).
+    probes: tuple[str, ...] = ()
 
 
 @dataclass
@@ -78,7 +81,7 @@ def capture_activity(
     # set before the first CUDA context is created. Harmless on CPU-only runs.
     os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
-    import torch  # type: ignore[import-not-found]
+    import torch
 
     old_num_threads = torch.get_num_threads()
     old_deterministic = torch.are_deterministic_algorithms_enabled()
@@ -167,6 +170,7 @@ def _capture(
 
     # Capture activity for each state
     state_activities: dict[str, StateActivity] = {}
+    inputs_by_state: dict[str, Any] = {}
 
     try:
         for state in protocol.states:
@@ -177,6 +181,7 @@ def _capture(
                 truncation=True,
                 padding="max_length",
             ).to(config.device)
+            inputs_by_state[state.name] = inputs
 
             # Positions where the attention mask is 0 are padding: their
             # activations are meaningless and would pollute the Layer x
@@ -230,6 +235,17 @@ def _capture(
         if hasattr(model, "train"):
             model.train(was_training)
 
+    # Optional P3 probes (opt-in, additive artefacts, protocol untouched)
+    probe_files: list[Path] = []
+    if config.probes:
+        from weight_atlas.activity.probes import run_probes, validate_probes
+
+        config.probes = validate_probes(config.probes)
+        probe_files = [
+            out_dir / name
+            for name in run_probes(model, tokenizer, protocol, config, inputs_by_state, out_dir)
+        ]
+
     # Save artefacts
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -278,6 +294,7 @@ def _capture(
         "seed": config.seed,
         "n_layers": len(layers),
         "states": [s.name for s in protocol.states],
+        "probes": sorted(config.probes),
         "torch_version": torch.__version__,
     }
 
@@ -287,7 +304,7 @@ def _capture(
     # Build manifest
     artefacts = list(out_dir.glob("*.tif")) + [
         out_dir / "activity_meta.json",
-    ]
+    ] + probe_files
     manifest = {str(p.relative_to(out_dir)): _sha256(p) for p in artefacts}
     with open(out_dir / "manifest.json", "w") as f:
         json.dump(manifest, f, indent=2, sort_keys=True)
