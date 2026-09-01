@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
+import time
 from pathlib import Path
+from typing import Any
 
 from weight_atlas.core.registry import get_renderer, list_loaders
 from weight_atlas.core.types import AtlasSpec, load_default_spec
@@ -321,10 +324,47 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         )
         return 1
 
+    # Timestamped terminal output so serve logs can be correlated in time —
+    # with long-running scan jobs the default untimestaped uvicorn lines are
+    # useless for "when did this happen" questions.
+    datefmt = "%Y-%m-%d %H:%M:%S"
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt=datefmt,
+    )
+    # uvicorn replaces its own loggers' handlers at startup (log_config);
+    # give both uvicorn formatters timestamps too.
+    log_config: dict[str, Any] = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "default": {
+                "()": "uvicorn.logging.DefaultFormatter",
+                "fmt": "%(asctime)s %(levelprefix)s %(message)s",
+                "datefmt": datefmt,
+            },
+            "access": {
+                "()": "uvicorn.logging.AccessFormatter",
+                "fmt": '%(asctime)s %(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s',
+                "datefmt": datefmt,
+            },
+        },
+        "handlers": {
+            "default": {"formatter": "default", "class": "logging.StreamHandler", "stream": "ext://sys.stderr"},
+            "access": {"formatter": "access", "class": "logging.StreamHandler", "stream": "ext://sys.stdout"},
+        },
+        "loggers": {
+            "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
+            "uvicorn.error": {"level": "INFO"},
+            "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
+        },
+    }
+
     loopback = args.host in ("127.0.0.1", "localhost", "::1")
     if not loopback:
         print(
-            f"WARNING: serving on {args.host} exposes the web UI to the LAN. "
+            f"WARNING [{time.strftime(datefmt)}]: serving on {args.host} exposes the web UI to the LAN. "
             "Weight Atlas has no authentication and its API can read scan "
             "directories and serve artefacts. Run only on a trusted network "
             "or behind a firewall/VPN.",
@@ -332,12 +372,13 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         )
 
     url_host = "127.0.0.1" if loopback else "<this-machine-lan-ip>"
-    print(f"Web UI: http://{url_host}:{args.port}  (Ctrl+C to stop)")
+    print(f"Web UI [{time.strftime(datefmt)}]: http://{url_host}:{args.port}  (Ctrl+C to stop)")
     # Factory mode: uvicorn calls create_app() per worker instead of importing a
     # module-level app, so the job worker thread only starts on lifespan startup
     # (no import-time side effects; safe under --reload).
     uvicorn.run(
         "weight_atlas.api.main:create_app",
+        log_config=log_config,
         host=args.host,
         port=args.port,
         reload=args.reload,
