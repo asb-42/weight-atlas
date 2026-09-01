@@ -145,6 +145,10 @@ _GGUF_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"blk\.\d+\.encoder$"), "bdh_encoder"),
     (re.compile(r"blk\.\d+\.decoder$"), "bdh_decoder"),
     (re.compile(r"rope_freqs"), "rope_freqs"),
+    # Qwen3.8-family n-gram embedding table (own slot: kept separate from
+    # token_embd so the embedding-vs-lookup measurement is visible per table).
+    # MUST precede the token_embd rule: the name contains "token_embd".
+    (re.compile(r"per_layer_token_embd"), "ngram_embd"),
     (re.compile(r"token_embd"), "embed"),
     (re.compile(r"output\.weight"), "lm_head"),
     (re.compile(r"output_norm"), "norm_mlp"),

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 import struct
+from collections.abc import Iterator
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -174,6 +175,8 @@ class SafetensorsLoader:
         files = _discover_files(path)
         seen: dict[str, Path] = {}
         self.metadata: dict[str, str] = {}
+        # Row-major payload ranges for row-block streaming (giant tensors).
+        self._tensor_ranges: dict[str, tuple[Path, str, tuple[int, ...], int, int, int]] = {}
 
         handles: list[TensorHandle] = []
         for f in files:
@@ -189,6 +192,8 @@ class SafetensorsLoader:
                 dtype = str(info["dtype"])
                 start, end = info["data_offsets"]
                 entries.append((name, shape, dtype, start, end))
+                if len(shape) == 2 and dtype in ("F32", "F16", "BF16"):
+                    self._tensor_ranges[name] = (f, dtype, shape, data_offset + start, end - start, 0)
 
             # Names in this file for MXFP4 pair resolution.
             names_in_file = {e[0] for e in entries}
@@ -226,6 +231,34 @@ class SafetensorsLoader:
                 )
 
         return handles
+
+    def iter_row_blocks(
+        self, handle: TensorHandle, rows_per_block: int
+    ) -> Iterator[np.ndarray] | None:
+        """Yield float32 row blocks of a 2-D F32/F16/BF16 tensor from its
+        row-major file payload (memory-mapped reads, no materialization)."""
+        info = self._tensor_ranges.get(handle.name)
+        if info is None:
+            return None
+        f, dtype, shape, abs_start, _length, _zero = info
+        rows, cols = handle.shape
+        itemsize = {"F32": 4, "F16": 2, "BF16": 2}[dtype]
+
+        def _gen() -> Iterator[np.ndarray]:
+            with open(f, "rb") as fh:
+                for lo in range(0, rows, rows_per_block):
+                    hi = min(lo + rows_per_block, rows)
+                    fh.seek(abs_start + lo * cols * itemsize)
+                    raw = fh.read((hi - lo) * cols * itemsize)
+                    if dtype == "BF16":
+                        bits = np.frombuffer(raw, dtype="<u2")
+                        yield (bits.astype(np.uint32) << np.uint32(16)).view(np.float32).reshape(hi - lo, cols)
+                    elif dtype == "F16":
+                        yield np.frombuffer(raw, dtype="<f2").astype(np.float32).reshape(hi - lo, cols)
+                    else:
+                        yield np.frombuffer(raw, dtype="<f4").reshape(hi - lo, cols)
+
+        return _gen()
 
 
 def _load_named(path: Path, header: dict, name: str, data_offset: int, dtype: str, shape: tuple[int, ...]) -> np.ndarray:

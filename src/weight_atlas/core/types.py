@@ -102,6 +102,10 @@ class TensorStats:
     sqnr_int8_ch: float = float("nan")
     sqnr_int4_g128: float = float("nan")
     sqnr_fp8_e4m3: float = float("nan")
+    # True when computed via the block-streaming path (giant tensors):
+    # spectral values are exact on the Gram path / top-k on the Halko path,
+    # and quant_source is the on-disk dtype field.
+    streamed: bool = False
     expert_id: int | None = None  # For MoE expert tensors
 
 

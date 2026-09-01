@@ -8,7 +8,7 @@ import json
 import logging
 import multiprocessing
 import os
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
 from pathlib import Path
 from typing import Any
@@ -34,6 +34,7 @@ from weight_atlas.loaders import (
     pytorch_loader,  # noqa: F401 — triggers registration
     safetensors_loader,  # noqa: F401 — triggers registration
 )
+from weight_atlas.loaders.blocking import _ROWS_PER_BLOCK_DEFAULT, iter_row_blocks
 from weight_atlas.stats.distribution import amax_ratios, distribution_summary
 from weight_atlas.stats.norms import (
     EffectiveRank,
@@ -45,6 +46,7 @@ from weight_atlas.stats.norms import (
 from weight_atlas.stats.shape_moments import Kurtosis, Sparsity
 from weight_atlas.stats.sqnr import SQNRFp8E4M3, SQNRInt4Group128, SQNRInt8PerChannel
 from weight_atlas.stats.stable_rank import StableRank
+from weight_atlas.stats.streaming import streaming_tensor_stats
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,10 @@ logger = logging.getLogger(__name__)
 # serially (one at a time) during the stats phase to keep peak RAM bounded on
 # models with very large tensors (see ``scan``).
 _BIG_TENSOR_THRESHOLD_BYTES = 1 << 30  # 1 GiB
+# Tensors whose float32 materialization would exceed this are computed via
+# the block-streaming path (stats.streaming) — never fully materialized.
+# 8 GiB fp32 ≈ 2G elements.
+_STREAM_TENSOR_BYTES = 8 << 30
 
 
 def _sha256(path: Path) -> str:
@@ -78,15 +84,10 @@ def _make_handles(
     """
     row_ratio, col_ratio = amax_ratios(tensor)
     summary = distribution_summary(tensor, seed=distribution_seed)
-    sqnr: dict[str, float] = (
-        {
-            "sqnr_int8_ch": SQNRInt8PerChannel().compute(tensor),
-            "sqnr_int4_g128": SQNRInt4Group128().compute(tensor),
-            "sqnr_fp8_e4m3": SQNRFp8E4M3().compute(tensor),
-        }
-        if quant_probe
-        else {}
-    )
+    nans = float("nan")
+    sqnr_int8 = SQNRInt8PerChannel().compute(tensor) if quant_probe else nans
+    sqnr_int4 = SQNRInt4Group128().compute(tensor) if quant_probe else nans
+    sqnr_fp8 = SQNRFp8E4M3().compute(tensor) if quant_probe else nans
     return TensorStats(
         name=tensor.name,
         shape=tensor.shape,
@@ -100,8 +101,22 @@ def _make_handles(
         sv_decay=SVDecay(seed=svd_seed).compute(tensor),
         row_amax_ratio=row_ratio,
         col_amax_ratio=col_ratio,
-        **summary,
-        **sqnr,
+        mean=summary["mean"],
+        std=summary["std"],
+        absmax=summary["absmax"],
+        absmean=summary["absmean"],
+        p50=summary["p50"],
+        p90=summary["p90"],
+        p99=summary["p99"],
+        p999=summary["p999"],
+        p9999=summary["p9999"],
+        outlier_3s=summary["outlier_3s"],
+        outlier_4s=summary["outlier_4s"],
+        outlier_6s=summary["outlier_6s"],
+        dyn_range=summary["dyn_range"],
+        sqnr_int8_ch=sqnr_int8,
+        sqnr_int4_g128=sqnr_int4,
+        sqnr_fp8_e4m3=sqnr_fp8,
         expert_id=tensor.expert_id,
     )
 
@@ -116,6 +131,28 @@ def _resolve_jobs(jobs: int | None) -> int:
     if jobs is not None and jobs > 0:
         return jobs
     return max(1, (os.cpu_count() or 8) - 2)
+
+
+def _constant_blocks(arr: np.ndarray) -> Callable[[], Iterator[np.ndarray]]:
+    """Restartable factory over one materialized array (streaming fallback)."""
+
+    def factory() -> Iterator[np.ndarray]:
+        return iter([arr])
+
+    return factory
+
+
+def _loader_blocks(
+    handle: TensorHandle, loader: Any, rows_per_block: int
+) -> Callable[[], Iterator[np.ndarray]]:
+    """Restartable factory re-opening the loader's row-block iterator."""
+
+    def factory() -> Iterator[np.ndarray]:
+        it = iter_row_blocks(handle, loader, rows_per_block)
+        assert it is not None
+        return it
+
+    return factory
 
 
 def _worker_init() -> None:
@@ -431,13 +468,20 @@ def scan(
     # Tensors that materialize to >= 1 GiB float32 are handled serially to keep
     # peak RAM bounded even on models with very large tensors.
     big_threshold = _BIG_TENSOR_THRESHOLD_BYTES
+    # Giant tensors: block-streamed (never materialized). These take
+    # precedence over the big/small split.
+    stream_idxs = [
+        i for i, h in enumerate(handles)
+        if int(np.prod(h.shape)) * 4 >= _STREAM_TENSOR_BYTES
+    ]
+    stream_set = set(stream_idxs)
     big_idxs = [
         i for i, h in enumerate(handles)
-        if int(np.prod(h.shape)) * 4 >= big_threshold
+        if big_threshold <= int(np.prod(h.shape)) * 4 < _STREAM_TENSOR_BYTES
     ]
     small_idxs = [
         i for i, h in enumerate(handles)
-        if int(np.prod(h.shape)) * 4 < big_threshold
+        if int(np.prod(h.shape)) * 4 < big_threshold and i not in stream_set
     ]
 
     stats: list[TensorStats | None] = [None] * n_total
@@ -448,11 +492,12 @@ def scan(
     resumed: dict[str, TensorStats] = {} if fresh else _journal_load(checkpoint_path, identity)
     pending_small = [i for i in small_idxs if handles[i].name not in resumed]
     pending_big = [i for i in big_idxs if handles[i].name not in resumed]
-    for i in small_idxs + big_idxs:
+    pending_stream = [i for i in stream_idxs if handles[i].name not in resumed]
+    for i in small_idxs + big_idxs + stream_idxs:
         ts = resumed.get(handles[i].name)
         if ts is not None:
             stats[i] = ts
-    n_resumed = n_total - len(pending_small) - len(pending_big)
+    n_resumed = n_total - len(pending_small) - len(pending_big) - len(pending_stream)
     if n_resumed:
         _report(
             0.04 + 0.36 * (n_resumed / n_total),
@@ -546,6 +591,41 @@ def scan(
                 remaining_small = []
         if remaining_small:
             _run_stats(remaining_small, parallel=False)
+
+        # Giant tensors: block-streamed, serial (I/O bound — never
+        # materialized, hence never pooled). Each pass re-opens the block
+        # iterator (blocks_factory) — the mmap data stays on the loader.
+        for i in pending_stream:
+            h = handles[i]
+            probe = iter_row_blocks(h, loader, _ROWS_PER_BLOCK_DEFAULT)
+            if probe is None:
+                logger.warning(
+                    "tensor %s needs streaming but the loader has no block "
+                    "support — falling back to full load (may OOM)",
+                    h.name,
+                )
+                blocks_factory = _constant_blocks(h.load())
+            else:
+                del probe  # cheap to re-open; streaming_tensor_stats walks 3-4x
+                blocks_factory = _loader_blocks(h, loader, _ROWS_PER_BLOCK_DEFAULT)
+
+            head_bounds = None
+            ngram_info = getattr(loader, "ngram_head_bounds", None)
+            if ngram_info is not None:
+                head_name, bounds = ngram_info
+                if h.name == head_name:
+                    head_bounds = bounds
+            ts, head_records = streaming_tensor_stats(
+                h.name, h.shape, h.dtype, h.expert_id, blocks_factory,
+                svd_seed=svd_seed, distribution_seed=distribution_seed,
+                quant_probe=quant_probe, head_bounds=head_bounds,
+            )
+            h.clear()
+            stats[i] = ts
+            record(ts)
+            for head_rec in head_records:
+                record(head_rec)
+            _report_stats(i)
 
         # Few multi-GB tensors: serial, BLAS capped, peak RAM bounded.
         if threadpool_limits is not None:
@@ -939,6 +1019,7 @@ def _build_fingerprint(
             "sqnr_int8_ch": ts.sqnr_int8_ch,
             "sqnr_int4_g128": ts.sqnr_int4_g128,
             "sqnr_fp8_e4m3": ts.sqnr_fp8_e4m3,
+            "streamed": ts.streamed,
         }
         # Add ggml_type if present
         if ts.name in ggml_types:

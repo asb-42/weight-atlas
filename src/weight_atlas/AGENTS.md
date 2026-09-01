@@ -67,6 +67,28 @@ compare two scanned models. The web UI (api + ui) is the primary interface.
   floor damage, NOT the paired qimpact recipe analysis. Adds ~6 chunked
   passes over every weight — never enable by default. Lossless → finite
   300.0 ceiling (JSON-safe), zero signal / 1-D / non-128-multiple → NaN.
+- **Streaming stats for giant tensors** (`stats/streaming.py`, routing in
+  `scan.py` at `_STREAM_TENSOR_BYTES` = 8 GiB fp32-equivalent): tensors at or
+  above the threshold never materialize — `loaders/blocking.iter_row_blocks`
+  yields dequantized row blocks from the loader plugin (GGUF bucket-packed
+  and row-major layouts; default fallback materializes via `load()` —
+  loaders without block support may OOM there, logged). Stream orientation
+  is derived from the FIRST BLOCK (GGUF file order stores dims reversed for
+  bucket-packed tables), never from the handle shape; the blocks factory is
+  restartable by contract (fresh iterator per call — every pass re-walks).
+  cols ≤ 8192 → exact full spectrum via fp64 Gram accumulation (`eigvalsh`);
+  wider → Halko rSVD k=32. Three walks: (1) scalars + Gram + row-amax +
+  strided element sample (s1/s2 give mean/m2 exactly), (2) m4 + outliers +
+  sparsity + col-amax (both need pass-1 scalars only — merged into ONE walk),
+  (3) opt-in INT8/FP8 RTN-SQNR. Per-head records when the loader supplies
+  `ngram_head_bounds` (GGUF KV `*.ple.head_offsets`, metadata shard only):
+  each head segment gets its own Gram accumulator + exact spectrum; head
+  denominators count ELEMENTS (regression-pinned). Determinism: two streaming
+  runs are bit-identical; cross-path identity vs. the in-process path holds
+  at F-1 tolerance (rel 1e-4 on σ, equal_nan on sums) — NOT byte-identity
+  (fp64 Gram vs. float32 rSVD differ at 1e-15). Accepted on the real
+  Flash-Next 51.2B-param table: see
+  `docs/reports/2026-09-02_ngram-streaming-acceptance.md`.
 - **Stats parallelism**: small tensors compute in a **spawn-process pool**
   (`_run_stats_processes`, gate `_PROCESS_POOL_MIN_TENSORS`); workers pin
   BLAS to 1 thread (`_worker_init`) so the numeric path is identical to the
