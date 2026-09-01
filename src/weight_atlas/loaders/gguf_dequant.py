@@ -69,6 +69,15 @@ SUPPORTED_TYPES = {
     GGML_TYPE_Q5_K,
     GGML_TYPE_Q6_K,
     GGML_TYPE_Q8_K,
+    GGML_TYPE_IQ1_S,
+    GGML_TYPE_IQ1_M,
+    GGML_TYPE_IQ2_XXS,
+    GGML_TYPE_IQ2_XS,
+    GGML_TYPE_IQ2_S,
+    GGML_TYPE_IQ3_XXS,
+    GGML_TYPE_IQ3_S,
+    GGML_TYPE_IQ4_NL,
+    GGML_TYPE_IQ4_XS,
     GGML_TYPE_TQ1_0,
     GGML_TYPE_TQ2_0,
     GGML_TYPE_MXFP4,
@@ -161,8 +170,20 @@ _GGUF_ONLY = {
     GGML_TYPE_Q4_K,
     GGML_TYPE_Q5_K,
     GGML_TYPE_Q6_K,
-    GGML_TYPE_TQ1_0,
-    GGML_TYPE_TQ2_0,
+    # IQ family (importance-matrix quants): block layouts are intricate
+    # (E8-grid lookups, 6-bit sub-scales, packed nibbles) — delegate to the
+    # official gguf library, which is authoritative. Needed for Unsloth
+    # UD dynamic quants (e.g. Qwen3.8-Flash-Next UD-IQ4_XS, whose MoE
+    # expert tensors mix IQ4_XS with IQ2/IQ3 variants).
+    GGML_TYPE_IQ1_S,
+    GGML_TYPE_IQ1_M,
+    GGML_TYPE_IQ2_XXS,
+    GGML_TYPE_IQ2_XS,
+    GGML_TYPE_IQ2_S,
+    GGML_TYPE_IQ3_XXS,
+    GGML_TYPE_IQ3_S,
+    GGML_TYPE_IQ4_NL,
+    GGML_TYPE_IQ4_XS,
     GGML_TYPE_MXFP4,
     GGML_TYPE_NVFP4,
 }

@@ -33,6 +33,10 @@ formats).
   ndarray payloads (GGUFReader hands over `(rows, block_bytes)` arrays), and
   raise `ValueError` on payloads that are not an exact multiple of the block
   size — never floor-divide away trailing bytes.
+- **IQ family (IQ1/IQ2/IQ3/IQ4)**: delegated to the official gguf library
+  (`_GGUF_ONLY`, authoritative) — block layouts are too intricate for
+  self-contained decoders. Needed for Unsloth UD dynamic quants
+  (Qwen3.8-Flash-Next UD-IQ4_XS mixes IQ4_XS experts with IQ2/IQ3 layers).
 - **Plain fixed-width types** (I8/I16/I32/I64/F64): `np.frombuffer` →
   `astype(np.float32)`, no block encoding; empty payloads raise ValueError.
   Pinned by `TestPlainTypes`.

@@ -508,11 +508,12 @@ class TestQ8Scan:
 
 class TestUnsupportedQuant:
     def test_unsupported_quant_error_message(self):
-        """Unsupported quant type should produce error with type name."""
-        from weight_atlas.loaders.gguf_dequant import GGML_TYPE_IQ2_XXS, check_supported
+        """Genuinely unsupported quant types (not in gguf's QUANT_SIZES) must
+        produce an error with the type name."""
+        from weight_atlas.loaders.gguf_dequant import check_supported
 
-        with pytest.raises(ValueError, match="IQ2_XXS"):
-            check_supported(GGML_TYPE_IQ2_XXS)
+        with pytest.raises(ValueError, match="UNKNOWN"):
+            check_supported(99)  # Unknown type
 
 
 class TestCrossLoaderCompare:
@@ -669,3 +670,139 @@ class TestPlainTypes:
         raw = np.array([10, 20, 30], dtype=np.int32)
         result = dequantize(raw.tobytes(), GGML_TYPE_I32)
         np.testing.assert_array_equal(result, [10.0, 20.0, 30.0])
+
+
+# ---------------------------------------------------------------------------
+# IQ family (importance-matrix quants) — delegated to the official gguf lib
+# ---------------------------------------------------------------------------
+
+
+class TestIQTypes:
+    """Unsloth UD dynamic quants (e.g. Qwen3.8-Flash-Next UD-IQ4_XS) mix IQ
+    tensors into MoE expert layers. The block layouts are intricate (E8-grid
+    lookups, 6-bit sub-scales, packed nibbles), so dequantization delegates to
+    the official gguf library (authoritative, _GGUF_ONLY); these tests pin the
+    dispatch + behavioral contract, not the grid math."""
+
+    IQ_TYPES = (
+        ("IQ1_S", 256, 50),
+        ("IQ1_M", 256, 56),
+        ("IQ2_XXS", 256, 66),
+        ("IQ2_XS", 256, 74),
+        ("IQ2_S", 256, 82),
+        ("IQ3_XXS", 256, 98),
+        ("IQ3_S", 256, 110),
+        ("IQ4_NL", 32, 18),
+        ("IQ4_XS", 256, 136),
+    )
+
+    def test_all_iq_types_are_supported(self):
+        from weight_atlas.loaders.gguf_dequant import (
+            GGML_TYPE_IQ1_M,
+            GGML_TYPE_IQ1_S,
+            GGML_TYPE_IQ2_S,
+            GGML_TYPE_IQ2_XS,
+            GGML_TYPE_IQ2_XXS,
+            GGML_TYPE_IQ3_S,
+            GGML_TYPE_IQ3_XXS,
+            GGML_TYPE_IQ4_NL,
+            GGML_TYPE_IQ4_XS,
+        )
+        for t in (
+            GGML_TYPE_IQ1_S, GGML_TYPE_IQ1_M, GGML_TYPE_IQ2_XXS, GGML_TYPE_IQ2_XS,
+            GGML_TYPE_IQ2_S, GGML_TYPE_IQ3_XXS, GGML_TYPE_IQ3_S, GGML_TYPE_IQ4_NL,
+            GGML_TYPE_IQ4_XS,
+        ):
+            check_supported(t)  # must not raise
+
+    @pytest.mark.parametrize(
+        "name,block_size,type_size",
+        [(t[0], t[1], t[2]) for t in IQ_TYPES],
+    )
+    def test_dequantize_shape_dtype_determinism(self, name, block_size, type_size):  # noqa: ARG002
+        import gguf
+
+        qtype = gguf.GGMLQuantizationType[name]
+        ggml_type = int(qtype)
+        rng = np.random.default_rng(42)
+        n_blocks = 3
+        raw = rng.integers(0, 256, size=n_blocks * type_size, dtype=np.uint8)
+        out1 = dequantize(raw, ggml_type)
+        out2 = dequantize(raw, ggml_type)
+        assert out1.shape == (n_blocks * block_size,)
+        assert out1.dtype == np.float32
+        assert np.isfinite(out1).all()
+        # deterministic: same payload → same values
+        np.testing.assert_array_equal(out1, out2)
+
+    def test_iq4_xs_zero_block_dequantizes_to_zero(self):
+        import gguf
+
+        qtype = gguf.GGMLQuantizationType["IQ4_XS"]
+        _, type_size = gguf.GGML_QUANT_SIZES[qtype]
+        raw = np.zeros(2 * type_size, dtype=np.uint8)
+        out = dequantize(raw, int(qtype))
+        # zero scale + zero indices → zero weights
+        np.testing.assert_array_equal(out, np.zeros(512, dtype=np.float32))
+
+    def test_iq4_xs_misaligned_payload_raises(self):
+        import gguf
+
+        qtype = gguf.GGMLQuantizationType["IQ4_XS"]
+        ggml_type = int(qtype)
+        with pytest.raises(ValueError):
+            dequantize(np.zeros(136 + 10, dtype=np.uint8), ggml_type)
+
+    def test_iq4_xs_loader_end_to_end(self, tmp_path):
+        """A GGUF fixture with crafted IQ4_XS blocks flows through the loader
+        into float32 handles (the full ingest path). The gguf lib cannot
+        *quantize* IQ4_XS without an importance matrix, so the fixture writes
+        hand-crafted blocks with known decode semantics: d=1.0, sub-scales
+        h=2/l=1 → scale 2, nibble index 8 → kvalue 1 → every weight decodes
+        to 2.0."""
+        from gguf import GGMLQuantizationType, GGUFWriter
+
+        qtype = GGMLQuantizationType["IQ4_XS"]
+        _, type_size = (256, 136)
+        n_blocks = 4  # 4 rows × 256 weights: one block per row (loader
+        # validates per-row byte alignment against the type size)
+        blocks = np.zeros((n_blocks, type_size), dtype=np.uint8)
+        blocks[:, 0:2] = np.frombuffer(np.float16(1.0).tobytes(), dtype=np.uint8)
+        blocks[:, 2:4] = np.frombuffer(np.uint16(0xAAAA).tobytes(), dtype=np.uint8)
+        blocks[:, 4:8] = 0x11
+        blocks[:, 8:type_size] = 0x88
+        tensor_data = blocks.tobytes()
+
+        path = tmp_path / "iq4xs.gguf"
+        writer = GGUFWriter(str(path), arch="llama")
+        writer.add_architecture()
+        writer.add_block_count(1)
+        writer.add_tensor(
+            "blk.0.attn_q.weight", np.frombuffer(tensor_data, dtype=np.uint8),
+            raw_shape=[4, 136], raw_dtype=qtype,  # byte shape (4 blocks × 136 B);
+            # header carries logical [4, 256]
+        )
+        writer.write_header_to_file()
+        writer.write_kv_data_to_file()
+        writer.write_tensors_to_file()
+        writer.close()
+
+        from weight_atlas.core.types import detect_loader
+        from weight_atlas.loaders.gguf_loader import GGUFLoader
+
+        assert detect_loader(path) == "gguf"
+        handles = GGUFLoader().open(path)
+        assert len(handles) == 1
+        h = handles[0]
+        assert h.dtype == "ggml_23"  # IQ4_XS
+        arr = h.load()
+        # GGUF stores dims reversed; the handle carries the file order
+        assert arr.shape == (256, 4)
+        assert arr.dtype == np.float32
+        assert np.isfinite(arr).all()
+        expected_value = float(np.unique(
+            __import__("gguf").dequantize(blocks, qtype)
+        )[0])
+        np.testing.assert_array_equal(arr, np.full((256, 4), expected_value, dtype=np.float32))
+        # deterministic
+        np.testing.assert_array_equal(arr, GGUFLoader().open(path)[0].load())
