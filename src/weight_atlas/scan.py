@@ -11,6 +11,7 @@ import os
 from collections.abc import Callable, Iterable
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -175,6 +176,7 @@ def _run_stats_processes(
     distribution_seed: int,
     quant_probe: bool,
     report_stats: Callable[[int], None],
+    record: Callable[[TensorStats], None],
 ) -> None:
     """Compute stats for ``idxs`` in a process pool, draining in place.
 
@@ -226,8 +228,114 @@ def _run_stats_processes(
                     ts = _stats_for_handle(h, svd_seed, distribution_seed, quant_probe)
                     h.clear()
                 stats[i] = ts
+                record(ts)
                 report_stats(i)
             _fill()
+
+
+# ── Stats checkpoint journal (crash resume) ────────────────────────────────
+# Append-only JSONL, one line per completed tensor, flushed per line. On
+# resume, a torn trailing line (crash mid-write) is skipped and the affected
+# tensor recomputed — values are identical because every stat is a pure
+# function of (tensor, seeds, probe flag), which the header identity pins.
+
+
+def _model_identity(
+    handles: list[TensorHandle],
+    svd_seed: int,
+    distribution_seed: int,
+    quant_probe: bool,
+) -> str:
+    """Cheap identity of everything that changes per-tensor stat values."""
+    import hashlib
+
+    parts = sorted(
+        f"{h.name}|{h.shape}|{h.dtype}|{h.expert_id}" for h in handles
+    )
+    payload = "\n".join(parts) + (
+        f"|svd={svd_seed}|dist={distribution_seed}|probe={int(quant_probe)}|tool={_tool_version()}"
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _tool_version() -> str:
+    try:
+        return importlib.metadata.version("weight-atlas")
+    except importlib.metadata.PackageNotFoundError:  # pragma: no cover
+        return "0"
+
+
+_CHECKPOINT_NAME = "stats_checkpoint.jsonl"
+
+
+def _journal_load(path: Path, identity: str) -> dict[str, TensorStats]:
+    """Read a checkpoint journal; empty dict when absent/invalid/foreign.
+
+    Tolerates a torn trailing line (crash mid-write): unparseable lines are
+    skipped, later duplicate entries win (identical values — stats are pure).
+    """
+    if not path.exists():
+        return {}
+    identity_ok = False
+    entries: dict[str, TensorStats] = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    continue  # torn line
+                if not isinstance(obj, dict):
+                    continue
+                if "_checkpoint_header" in obj:
+                    identity_ok = obj["_checkpoint_header"].get("identity") == identity
+                    continue
+                if not identity_ok:
+                    continue  # foreign journal — do not trust any entry
+                name = obj.pop("name", None)
+                if name is None:
+                    continue
+                try:
+                    shape = tuple(int(s) for s in obj.pop("shape", []))
+                    entries[str(name)] = TensorStats(name=str(name), shape=shape, **obj)
+                except (TypeError, ValueError):
+                    continue
+    except OSError:
+        return {}
+    return entries if identity_ok else {}
+
+
+def _journal_open(path: Path, identity: str, has_entries: bool) -> Any:
+    """Open the journal for appending; write the header when starting fresh.
+
+    Returns an open handle — the caller owns closing it (SIM115 is fine here:
+    the handle's lifetime spans the whole stats phase, not a lexical block).
+    """
+    if not has_entries:
+        fh = open(path, "w")  # noqa: SIM115
+        fh.write(json.dumps({"_checkpoint_header": {"identity": identity}}) + "\n")
+        fh.flush()
+        return fh
+    return open(path, "a")  # noqa: SIM115
+
+
+def _journal_append(fh: Any, ts: TensorStats) -> None:
+    from dataclasses import asdict
+
+    # asdict carries name + shape; NaN floats are Python-JSON (consistent
+    # with fingerprint.json).
+    fh.write(json.dumps(asdict(ts)) + "\n")
+    fh.flush()
+
+
+def _journal_discard(path: Path) -> None:
+    import contextlib
+
+    with contextlib.suppress(OSError):
+        path.unlink()
 
 
 def _stats_for_handle(
@@ -253,6 +361,7 @@ def scan(
     progress: Callable[[float, str], None] | None = None,
     jobs: int | None = None,
     quant_probe: bool = False,
+    fresh: bool = False,
 ) -> list[Path]:
     """Run the full scan pipeline.
 
@@ -271,12 +380,15 @@ def scan(
         progress: optional ``(fraction, message)`` callback reported as each
             phase of the pipeline completes (loading, statistics, rasterizing,
             smoothing, expert panels, embedding, manifest).
-        jobs: number of parallel statistics workers (default: min(8, CPUs)).
+        jobs: number of parallel statistics workers (default: cores - 2).
         quant_probe: also compute the measured RTN-SQNR stats
             (``sqnr_int8_ch``/``sqnr_int4_g128``/``sqnr_fp8_e4m3``); opt-in
             because it adds ~6 chunked passes over every weight tensor.
             Each tensor's statistics are computed independently and
             deterministically, so results are identical for any ``jobs``.
+        fresh: ignore and overwrite an existing stats checkpoint journal
+            (default: resume a crashed scan when the journal identity
+            matches — same tensor set, seeds, probe flag and tool version).
     """
     def _report(pct: float, msg: str) -> None:
         if progress is not None:
@@ -330,6 +442,27 @@ def scan(
 
     stats: list[TensorStats | None] = [None] * n_total
 
+    # ── Checkpoint journal: resume a crashed scan from per-tensor stats ────
+    checkpoint_path = out / _CHECKPOINT_NAME
+    identity = _model_identity(handles, svd_seed, distribution_seed, quant_probe)
+    resumed: dict[str, TensorStats] = {} if fresh else _journal_load(checkpoint_path, identity)
+    pending_small = [i for i in small_idxs if handles[i].name not in resumed]
+    pending_big = [i for i in big_idxs if handles[i].name not in resumed]
+    for i in small_idxs + big_idxs:
+        ts = resumed.get(handles[i].name)
+        if ts is not None:
+            stats[i] = ts
+    n_resumed = n_total - len(pending_small) - len(pending_big)
+    if n_resumed:
+        _report(
+            0.04 + 0.36 * (n_resumed / n_total),
+            f"Resuming from checkpoint ({n_resumed}/{n_total} tensors)...",
+        )
+    journal_fh = _journal_open(checkpoint_path, identity, bool(resumed))
+
+    def record(ts: TensorStats) -> None:
+        _journal_append(journal_fh, ts)
+
     def _report_stats(i: int) -> None:
         if i % report_every == 0 or i == n_total - 1:
             _report(
@@ -348,12 +481,14 @@ def scan(
                 ):
                     handles[i].clear()
                     stats[i] = ts
+                    record(ts)
                     _report_stats(i)
         else:
             for i in items:
                 ts = _stats_for_handle(handles[i], svd_seed, distribution_seed, quant_probe)
                 handles[i].clear()
                 stats[i] = ts
+                record(ts)
                 _report_stats(i)
 
     # Small tensors first (process pool → thread pool → serial), then the few
@@ -364,65 +499,73 @@ def scan(
     except ImportError:  # pragma: no cover - optional dep
         threadpool_limits = None
 
-    remaining_small = list(small_idxs)
-    if (
-        use_pool
-        and len(remaining_small) >= _PROCESS_POOL_MIN_TENSORS
-    ):
-        # Primary path: spawn-process pool. Workers have their own BLAS
-        # context (pinned to 1 thread by _worker_init), so the OpenBLAS
-        # concurrent-LAPACK hazard that forces _spectrum_lock in-process does
-        # not apply — the SVD phase parallelizes across cores. All process
-        # failures degrade to the in-process paths below.
-        try:
-            _run_stats_processes(
-                remaining_small, jobs_n, handles, stats,
-                svd_seed, distribution_seed, quant_probe, _report_stats,
-            )
-            remaining_small = []
-        except Exception:
-            # Pool-level failure (broken /dev/shm, spawn issues) → thread path.
-            logger.warning(
-                "process stats pool failed — falling back to threads", exc_info=True
-            )
-    if remaining_small and use_pool:
+    remaining_small = list(pending_small)
+    try:
+        if (
+            use_pool
+            and len(remaining_small) >= _PROCESS_POOL_MIN_TENSORS
+        ):
+            # Primary path: spawn-process pool. Workers have their own BLAS
+            # context (pinned to 1 thread by _worker_init), so the OpenBLAS
+            # concurrent-LAPACK hazard that forces _spectrum_lock in-process does
+            # not apply — the SVD phase parallelizes across cores. All process
+            # failures degrade to the in-process paths below.
+            try:
+                _run_stats_processes(
+                    remaining_small, jobs_n, handles, stats,
+                    svd_seed, distribution_seed, quant_probe, _report_stats, record,
+                )
+                remaining_small = []
+            except Exception:
+                # Pool-level failure (broken /dev/shm, spawn issues) → thread path.
+                logger.warning(
+                    "process stats pool failed — falling back to threads", exc_info=True
+                )
+        if remaining_small and use_pool:
+            if threadpool_limits is not None:
+                # The stats thread pool runs numpy/BLAS concurrently. Cap the BLAS
+                # thread pool ONCE around the whole section: entering/exiting
+                # ``threadpool_limits`` from several worker threads at once resizes
+                # OpenBLAS's internal pool concurrently and can deadlock inside
+                # OpenBLAS (observed on large MoE scans). A single cap keeps every
+                # BLAS call single-threaded with no pool resizing mid-flight.
+                try:
+                    with threadpool_limits(limits=1):
+                        _run_stats(remaining_small, parallel=True)
+                    remaining_small = []
+                except RuntimeError:
+                    # threadpoolctl present but no supported BLAS loaded → there is no
+                    # shared thread pool to resize, so parallel numpy is safe.
+                    _run_stats(remaining_small, parallel=True)
+                    remaining_small = []
+            else:
+                # jobs=1, or no threadpoolctl → cannot cap BLAS. Concurrent
+                # multithreaded OpenBLAS calls from several Python threads risk the
+                # same deadlock, so stats run serially (safe, deterministic).
+                _run_stats(remaining_small, parallel=False)
+                remaining_small = []
+        if remaining_small:
+            _run_stats(remaining_small, parallel=False)
+
+        # Few multi-GB tensors: serial, BLAS capped, peak RAM bounded.
         if threadpool_limits is not None:
-            # The stats thread pool runs numpy/BLAS concurrently. Cap the BLAS
-            # thread pool ONCE around the whole section: entering/exiting
-            # ``threadpool_limits`` from several worker threads at once resizes
-            # OpenBLAS's internal pool concurrently and can deadlock inside
-            # OpenBLAS (observed on large MoE scans). A single cap keeps every
-            # BLAS call single-threaded with no pool resizing mid-flight.
             try:
                 with threadpool_limits(limits=1):
-                    _run_stats(remaining_small, parallel=True)
-                remaining_small = []
+                    _run_stats(pending_big, parallel=False)
             except RuntimeError:
-                # threadpoolctl present but no supported BLAS loaded → there is no
-                # shared thread pool to resize, so parallel numpy is safe.
-                _run_stats(remaining_small, parallel=True)
-                remaining_small = []
+                _run_stats(pending_big, parallel=False)
         else:
-            # jobs=1, or no threadpoolctl → cannot cap BLAS. Concurrent
-            # multithreaded OpenBLAS calls from several Python threads risk the
-            # same deadlock, so stats run serially (safe, deterministic).
-            _run_stats(remaining_small, parallel=False)
-            remaining_small = []
-    if remaining_small:
-        _run_stats(remaining_small, parallel=False)
+            _run_stats(pending_big, parallel=False)
+    finally:
+        # Close (data is flushed per line). The journal FILE is kept on
+        # failure — that is the resume payload — and discarded on success
+        # below; in all cases the handle is closed deterministically.
+        journal_fh.close()
 
-    # Few multi-GB tensors: serial, BLAS capped, peak RAM bounded.
-    if threadpool_limits is not None:
-        try:
-            with threadpool_limits(limits=1):
-                _run_stats(big_idxs, parallel=False)
-        except RuntimeError:
-            _run_stats(big_idxs, parallel=False)
-    else:
-        _run_stats(big_idxs, parallel=False)
+    _journal_discard(checkpoint_path)  # success → fingerprint is authoritative
 
-    # Rebind: drop the None placeholders (the assert above guarantees the
-    # list is complete) so downstream consumers see list[TensorStats].
+    # Rebind: drop the None placeholders (all tensors are computed now) so
+    # downstream consumers see list[TensorStats].
     stats_narrow: list[TensorStats] = [s for s in stats if s is not None]
     assert len(stats_narrow) == n_total
 

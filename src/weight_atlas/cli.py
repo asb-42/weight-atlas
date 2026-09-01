@@ -53,6 +53,10 @@ def build_parser() -> argparse.ArgumentParser:
                       help="Also measure RTN quantizability per tensor (SQNR for INT8 "
                            "per-channel, INT4 group-128, FP8 e4m3); opt-in, adds ~6 "
                            "passes over all weights")
+    scan.add_argument("--fresh", action="store_true",
+                      help="Ignore and overwrite any existing stats checkpoint "
+                           "(default: resume a crashed scan when the checkpoint "
+                           "matches this model)")
 
     render = sub.add_parser("render", help="Render PNGs from scan artefacts")
     render.add_argument("out_dir", type=Path, help="Directory containing scan artefacts")
@@ -127,7 +131,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
     try:
         artefacts = run_scan(args.path, args.out, spec, loader_id=args.loader, jobs=args.jobs,
-                             quant_probe=args.quant_probe)
+                             quant_probe=args.quant_probe, fresh=args.fresh)
     except FileNotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

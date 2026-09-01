@@ -66,7 +66,7 @@ class TestProcessPoolDeterminism:
         _run_stats_processes(
             list(range(len(handles))), 4, handles, stats,
             svd_seed=0, distribution_seed=0, quant_probe=False,
-            report_stats=lambda i: None,
+            report_stats=lambda i: None, record=lambda ts: None,
         )
         assert all(s is not None for s in stats)
         for got, exp in zip(stats, expected, strict=True):
@@ -131,7 +131,7 @@ class TestPerTensorFallback:
         _run_stats_processes(
             list(range(len(handles))), 2, handles, stats,
             svd_seed=0, distribution_seed=0, quant_probe=False,
-            report_stats=lambda i: None,
+            report_stats=lambda i: None, record=lambda ts: None,
         )
         assert all(s is not None for s in stats)
         for i, (got, exp) in enumerate(zip(stats, expected, strict=True)):
@@ -163,7 +163,7 @@ class TestPerTensorFallback:
         _run_stats_processes(
             [0], 1, handles, stats,
             svd_seed=0, distribution_seed=0, quant_probe=False,
-            report_stats=lambda i: None,
+            report_stats=lambda i: None, record=lambda ts: None,
         )
         assert stats[0] is not None
         assert loads["count"] >= 2  # submitted once, recomputed once
