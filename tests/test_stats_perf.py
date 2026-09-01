@@ -135,10 +135,14 @@ class TestParallelScan:
             assert p1.read_bytes() == p2.read_bytes()
 
     def test_resolve_jobs_default_bounds(self):
+        """Default = cores - 2 (dedicated scan machine, small reserve for
+        OS/main/BLAS); explicit --jobs always wins; floor at 1."""
+        import os
+
         from weight_atlas.scan import _resolve_jobs
 
-        assert _resolve_jobs(None) <= 8
-        assert _resolve_jobs(None) >= 1
+        cpus = os.cpu_count() or 8
+        assert _resolve_jobs(None) == max(1, cpus - 2)
         assert _resolve_jobs(2) == 2
         assert _resolve_jobs(0) >= 1
 

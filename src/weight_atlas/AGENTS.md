@@ -67,6 +67,19 @@ compare two scanned models. The web UI (api + ui) is the primary interface.
   floor damage, NOT the paired qimpact recipe analysis. Adds ~6 chunked
   passes over every weight — never enable by default. Lossless → finite
   300.0 ceiling (JSON-safe), zero signal / 1-D / non-128-multiple → NaN.
+- **Stats parallelism**: small tensors compute in a **spawn-process pool**
+  (`_run_stats_processes`, gate `_PROCESS_POOL_MIN_TENSORS`); workers pin
+  BLAS to 1 thread (`_worker_init`) so the numeric path is identical to the
+  serial/thread paths — byte-identical fingerprints across execution paths
+  is pinned by test. The main process loads each tensor and pickles the
+  payload into the task (loader closures are not picklable; GGUF 3D expert
+  parents live in main RAM); in-flight tasks are bounded (≈2× workers).
+  Per-tensor worker failures recompute serially (infra errors heal, data
+  errors surface); pool-level failures fall back to the thread pool under
+  `threadpool_limits(1)`. `_spectrum_lock` remains for the in-process
+  paths — process workers bypass the OpenBLAS concurrent-LAPACK hazard
+  structurally. Default jobs = `cores - 2` (`_resolve_jobs`); `--jobs`
+  always wins.
 
 ## Work Guidance
 

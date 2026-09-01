@@ -5,7 +5,11 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata
 import json
+import logging
+import multiprocessing
+import os
 from collections.abc import Callable, Iterable
+from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
 from pathlib import Path
 
 import numpy as np
@@ -40,6 +44,8 @@ from weight_atlas.stats.norms import (
 from weight_atlas.stats.shape_moments import Kurtosis, Sparsity
 from weight_atlas.stats.sqnr import SQNRFp8E4M3, SQNRInt4Group128, SQNRInt8PerChannel
 from weight_atlas.stats.stable_rank import StableRank
+
+logger = logging.getLogger(__name__)
 
 # Tensors whose float32 materialization is >= this many bytes are computed
 # serially (one at a time) during the stats phase to keep peak RAM bounded on
@@ -100,11 +106,128 @@ def _make_handles(
 
 
 def _resolve_jobs(jobs: int | None) -> int:
-    """Resolve the stats worker count: explicit value, else min(8, cpu_count)."""
+    """Resolve the stats worker count: explicit value, else ``cores - 2``.
+
+    The scan machine is dedicated while scanning, so every core except a
+    small reserve (2 for the OS / main process / BLAS overhead) should join
+    the stats pool.
+    """
     if jobs is not None and jobs > 0:
         return jobs
-    import os
-    return max(1, min(8, os.cpu_count() or 1))
+    return max(1, (os.cpu_count() or 8) - 2)
+
+
+def _worker_init() -> None:
+    """Process-pool initializer: pin BLAS to one thread per worker.
+
+    Same numeric path as the in-process stats phase (which runs under
+    ``threadpool_limits(1)``), so results are byte-identical between the
+    process-pool and serial paths. Also avoids 18 workers × N BLAS threads
+    oversubscription.
+    """
+    try:
+        from threadpoolctl import threadpool_limits  # type: ignore[import-untyped]
+
+        threadpool_limits(limits=1)
+    except Exception:  # pragma: no cover - no supported BLAS in the worker
+        pass
+
+
+def _worker_stats(task: tuple) -> tuple[int, TensorStats]:
+    """Compute all statistics for one tensor payload in a pool worker.
+
+    The payload carries the dequantized float32 array (loaded by the main
+    process — loader closures are not picklable and GGUF's shared 3D expert
+    parents live in main-process RAM). ``stats.spectrum``'s lock is present
+    in the worker too but uncontended (one stats thread per process).
+    """
+    i, name, shape, dtype, expert_id, arr, svd_seed, distribution_seed, quant_probe = task
+    handle = TensorHandle(
+        name=name,
+        shape=tuple(shape),
+        dtype=dtype,
+        loader=_payload_loader(arr),
+        expert_id=expert_id,
+    )
+    return i, _stats_for_handle(handle, svd_seed, distribution_seed, quant_probe)
+
+
+def _payload_loader(arr: np.ndarray) -> Callable[[], np.ndarray]:
+    """Loader returning a pickled-over payload array (mypy-friendly, no lambda)."""
+
+    def _load() -> np.ndarray:
+        return arr
+
+    return _load
+
+
+# Below this tensor count the process-pool spawn overhead (~1 s per worker)
+# outweighs the parallelism gain; small scans stay on the thread path.
+_PROCESS_POOL_MIN_TENSORS = 64
+
+
+def _run_stats_processes(
+    idxs: list[int],
+    jobs_n: int,
+    handles: list[TensorHandle],
+    stats: list[TensorStats | None],
+    svd_seed: int,
+    distribution_seed: int,
+    quant_probe: bool,
+    report_stats: Callable[[int], None],
+) -> None:
+    """Compute stats for ``idxs`` in a process pool, draining in place.
+
+    - spawn context: no inherited locks (the API server runs scans from a
+      worker thread while other threads exist — fork would be hazardous)
+    - bounded outstanding submissions: the main process loads each tensor
+      (mmap-backed), pickles it into the task, and releases the handle
+      immediately — peak RAM stays ≈ 2 × workers × tensor size
+    - per-tensor fallback: a failed worker task is recomputed serially in
+      the main process (infra errors heal; genuine data errors still raise)
+    """
+    ctx = multiprocessing.get_context("spawn")
+    inflight_limit = max(2, 2 * jobs_n)
+    with ProcessPoolExecutor(
+        max_workers=jobs_n, mp_context=ctx, initializer=_worker_init
+    ) as ex:
+        futures: dict[Future, int] = {}
+        pending = iter(idxs)
+
+        def _fill() -> None:
+            while len(futures) < inflight_limit:
+                try:
+                    i = next(pending)
+                except StopIteration:
+                    return
+                h = handles[i]
+                arr = h.load()
+                task = (
+                    i, h.name, h.shape, h.dtype, h.expert_id, arr,
+                    svd_seed, distribution_seed, quant_probe,
+                )
+                futures[ex.submit(_worker_stats, task)] = i
+                h.clear()
+
+        _fill()
+        while futures:
+            done, _ = wait(list(futures), return_when=FIRST_COMPLETED)
+            for fut in done:
+                i = futures.pop(fut)
+                try:
+                    _, ts = fut.result()
+                except Exception:
+                    logger.warning(
+                        "stats worker failed for tensor index %d — recomputing serially",
+                        i,
+                        exc_info=True,
+                    )
+                    h = handles[i]
+                    ts = _stats_for_handle(h, svd_seed, distribution_seed, quant_probe)
+                    h.clear()
+                stats[i] = ts
+                report_stats(i)
+            _fill()
 
 
 def _stats_for_handle(
@@ -205,7 +328,7 @@ def scan(
         if int(np.prod(h.shape)) * 4 < big_threshold
     ]
 
-    stats: list[TensorStats] = [None] * n_total  # type: ignore[list-item]
+    stats: list[TensorStats | None] = [None] * n_total
 
     def _report_stats(i: int) -> None:
         if i % report_every == 0 or i == n_total - 1:
@@ -233,42 +356,81 @@ def scan(
                 stats[i] = ts
                 _report_stats(i)
 
-    # Small tensors first (parallel), then the few multi-GB tensors serially.
+    # Small tensors first (process pool → thread pool → serial), then the few
+    # multi-GB tensors serially.
     use_pool = jobs_n > 1 and n_total > 1
     try:
-        from threadpoolctl import threadpool_limits  # type: ignore[import-untyped]
+        from threadpoolctl import threadpool_limits
     except ImportError:  # pragma: no cover - optional dep
         threadpool_limits = None
-    if use_pool and threadpool_limits is not None:
-        # The stats thread pool runs numpy/BLAS concurrently. Cap the BLAS
-        # thread pool ONCE around the whole section: entering/exiting
-        # ``threadpool_limits`` from several worker threads at once resizes
-        # OpenBLAS's internal pool concurrently and can deadlock inside
-        # OpenBLAS (observed on large MoE scans). A single cap keeps every
-        # BLAS call single-threaded with no pool resizing mid-flight.
+
+    remaining_small = list(small_idxs)
+    if (
+        use_pool
+        and len(remaining_small) >= _PROCESS_POOL_MIN_TENSORS
+    ):
+        # Primary path: spawn-process pool. Workers have their own BLAS
+        # context (pinned to 1 thread by _worker_init), so the OpenBLAS
+        # concurrent-LAPACK hazard that forces _spectrum_lock in-process does
+        # not apply — the SVD phase parallelizes across cores. All process
+        # failures degrade to the in-process paths below.
+        try:
+            _run_stats_processes(
+                remaining_small, jobs_n, handles, stats,
+                svd_seed, distribution_seed, quant_probe, _report_stats,
+            )
+            remaining_small = []
+        except Exception:
+            # Pool-level failure (broken /dev/shm, spawn issues) → thread path.
+            logger.warning(
+                "process stats pool failed — falling back to threads", exc_info=True
+            )
+    if remaining_small and use_pool:
+        if threadpool_limits is not None:
+            # The stats thread pool runs numpy/BLAS concurrently. Cap the BLAS
+            # thread pool ONCE around the whole section: entering/exiting
+            # ``threadpool_limits`` from several worker threads at once resizes
+            # OpenBLAS's internal pool concurrently and can deadlock inside
+            # OpenBLAS (observed on large MoE scans). A single cap keeps every
+            # BLAS call single-threaded with no pool resizing mid-flight.
+            try:
+                with threadpool_limits(limits=1):
+                    _run_stats(remaining_small, parallel=True)
+                remaining_small = []
+            except RuntimeError:
+                # threadpoolctl present but no supported BLAS loaded → there is no
+                # shared thread pool to resize, so parallel numpy is safe.
+                _run_stats(remaining_small, parallel=True)
+                remaining_small = []
+        else:
+            # jobs=1, or no threadpoolctl → cannot cap BLAS. Concurrent
+            # multithreaded OpenBLAS calls from several Python threads risk the
+            # same deadlock, so stats run serially (safe, deterministic).
+            _run_stats(remaining_small, parallel=False)
+            remaining_small = []
+    if remaining_small:
+        _run_stats(remaining_small, parallel=False)
+
+    # Few multi-GB tensors: serial, BLAS capped, peak RAM bounded.
+    if threadpool_limits is not None:
         try:
             with threadpool_limits(limits=1):
-                _run_stats(small_idxs, parallel=True)
                 _run_stats(big_idxs, parallel=False)
         except RuntimeError:
-            # threadpoolctl present but no supported BLAS loaded → there is no
-            # shared thread pool to resize, so parallel numpy is safe.
-            _run_stats(small_idxs, parallel=True)
             _run_stats(big_idxs, parallel=False)
     else:
-        # jobs=1, or no threadpoolctl → cannot cap BLAS. Concurrent
-        # multithreaded OpenBLAS calls from several Python threads risk the
-        # same deadlock, so stats run serially (safe, deterministic).
-        _run_stats(small_idxs, parallel=False)
         _run_stats(big_idxs, parallel=False)
 
-    assert all(s is not None for s in stats)
+    # Rebind: drop the None placeholders (the assert above guarantees the
+    # list is complete) so downstream consumers see list[TensorStats].
+    stats_narrow: list[TensorStats] = [s for s in stats if s is not None]
+    assert len(stats_narrow) == n_total
 
     _report(0.42, "Building fingerprint...")
-    fingerprint = _build_fingerprint(stats, spec, loader_id, handles, loader_metadata)
+    fingerprint = _build_fingerprint(stats_narrow, spec, loader_id, handles, loader_metadata)
 
     # Compute scaling metadata for fingerprint (v2.1)
-    scaling_meta = _compute_scaling_metadata(stats, spec)
+    scaling_meta = _compute_scaling_metadata(stats_narrow, spec)
     if scaling_meta:
         fingerprint["scaling"] = scaling_meta
 
@@ -285,7 +447,7 @@ def scan(
         chan_hi = 0.44 + 0.20 * ((ci + 1) / n_channels)
         stat_key = ch_spec["stat"]
         _report(chan_lo, f"Rasterizing {channel} field ({stat_key})...")
-        field_raw = rasterize(stats, spec, stat_key)
+        field_raw = rasterize(stats_narrow, spec, stat_key)
         raw_path = out / f"field_{channel}_raw.tif"
         write_tif(raw_path, field_raw.data)
         artefacts.append(raw_path)
@@ -312,12 +474,12 @@ def scan(
     # layer=None).
     has_flat = any(
         map_name(ts.name)[0] is None
-        for ts in stats
+        for ts in stats_narrow
         if not is_expert_tensor(ts.name) and not is_shared_expert(ts.name)
     )
     has_per_layer = any(
         map_name(ts.name)[0] is not None
-        for ts in stats
+        for ts in stats_narrow
         if not is_expert_tensor(ts.name) and not is_shared_expert(ts.name)
     )
     if has_flat and not has_per_layer:
@@ -326,7 +488,7 @@ def scan(
         for _ci, (channel, ch_spec) in enumerate(spec.channels.items()):
             stat_key = ch_spec["stat"]
             _report(0.65, f"Rasterizing flat field ({channel})...")
-            flat_field = rasterize_flat(stats, spec, stat_key)
+            flat_field = rasterize_flat(stats_narrow, spec, stat_key)
             if flat_field is None:
                 continue
             flat_raw_path = out / f"field_flat_{channel}_raw.tif"
@@ -358,7 +520,7 @@ def scan(
             0.66 + 0.06 * (pi / n_panel_channels),
             f"Generating expert panels ({stat_key})...",
         )
-        expert_panels = rasterize_expert_panels(stats, spec, stat_key)
+        expert_panels = rasterize_expert_panels(stats_narrow, spec, stat_key)
         for panel in expert_panels:
             panel_raw_path = out / f"field_expert_{panel.slot}_{channel}_raw.tif"
             write_tif(panel_raw_path, panel.data)
@@ -382,7 +544,7 @@ def scan(
     # (spectral/stable SVD stats are cheap at [D, unit] block size).
     lattice_panels: list = []
     for _channel, ch_spec in spec.channels.items():
-        lattice_panels.extend(rasterize_bdh_lattice(stats, spec, ch_spec["stat"]))
+        lattice_panels.extend(rasterize_bdh_lattice(stats_narrow, spec, ch_spec["stat"]))
     if lattice_panels:
         _report(0.72, "Generating BDH route-lattice panels...")
         from weight_atlas.fields.smoothing import smooth, upsample
@@ -417,7 +579,7 @@ def scan(
             vis_lo = 0.74 + 0.04 * (vi / n_vis)
             stat_key = ch_spec["stat"]
             _report(vis_lo, f"Rasterizing vision {channel} field ({stat_key})...")
-            vision_field = rasterize_vision(stats, spec, stat_key)
+            vision_field = rasterize_vision(stats_narrow, spec, stat_key)
             if vision_field is None:
                 continue  # text-only model — no vision tensors
             field_name = f"vision_{channel}"
