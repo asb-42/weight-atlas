@@ -125,3 +125,35 @@ def test_unknown_maps_to_other():
     layer, slot = map_name("model.layers.0.weird_tensor.weight")
     assert slot == "other"
     assert layer == 0
+
+
+def test_flash_next_ple_projections_map_to_ngram_slots():
+    """Qwen3.8-Flash-Next per-layer PLE projections (blk.N.ple_*)."""
+    cases = {
+        "blk.1.ple_conv1d.weight": "ngram_conv",
+        "blk.1.ple_key.weight": "ngram_key",
+        "blk.1.ple_value.weight": "ngram_value",
+        "blk.1.ple_norm_conv.weight": "ngram_norm",
+        "blk.1.ple_norm_key.weight": "ngram_norm",
+        "blk.1.ple_norm_query.weight": "ngram_norm",
+    }
+    for name, expected in cases.items():
+        layer, slot = map_name(name)
+        assert slot == expected, f"{name} -> {slot}, want {expected}"
+        assert layer == 1
+
+
+def test_flash_next_output_hc_maps_to_hc_slots():
+    """Qwen3.8-Flash-Next output hyper-connections (non-layer)."""
+    cases = {
+        "output_hc_down.weight": "output_hc_base",
+        "output_hc_up.weight": "output_hc_base",
+        "output_hc_norm.weight": "output_hc_scale",
+        "output_hc_base.weight": "output_hc_base",
+        "output_hc_fn.weight": "output_hc_fn",
+        "output_hc_scale.weight": "output_hc_scale",
+    }
+    for name, expected in cases.items():
+        layer, slot = map_name(name)
+        assert slot == expected, f"{name} -> {slot}, want {expected}"
+        assert layer is None

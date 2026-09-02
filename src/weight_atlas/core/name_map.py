@@ -148,10 +148,24 @@ _GGUF_RULES: list[tuple[re.Pattern[str], str]] = [
     # Qwen3.8-family n-gram embedding table (own slot: kept separate from
     # token_embd so the embedding-vs-lookup measurement is visible per table).
     # MUST precede the token_embd rule: the name contains "token_embd".
+    (re.compile(r"blk\.\d+\.ple_norm_conv"), "ngram_norm"),
+    (re.compile(r"blk\.\d+\.ple_norm_key"), "ngram_norm"),
+    (re.compile(r"blk\.\d+\.ple_norm_query"), "ngram_norm"),
+    (re.compile(r"blk\.\d+\.ple_conv1d"), "ngram_conv"),
+    (re.compile(r"blk\.\d+\.ple_key"), "ngram_key"),
+    (re.compile(r"blk\.\d+\.ple_value"), "ngram_value"),
     (re.compile(r"per_layer_token_embd"), "ngram_embd"),
     (re.compile(r"token_embd"), "embed"),
     (re.compile(r"output\.weight"), "lm_head"),
     (re.compile(r"output_norm"), "norm_mlp"),
+    # Qwen3.8-Flash-Next output hyper-connections (hc): down/up are the
+    # base mixing matrices, norm is the per-stream scale (16 streams).
+    (re.compile(r"output_hc_down"), "output_hc_base"),
+    (re.compile(r"output_hc_up"), "output_hc_base"),
+    (re.compile(r"output_hc_norm"), "output_hc_scale"),
+    (re.compile(r"output_hc_base"), "output_hc_base"),
+    (re.compile(r"output_hc_fn"), "output_hc_fn"),
+    (re.compile(r"output_hc_scale"), "output_hc_scale"),
 ]
 
 # Qwen3-Next / hybrid Mamba-aware GGUF rules (applied after base GGUF rules).
