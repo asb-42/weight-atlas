@@ -123,6 +123,25 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=8000, help="Port (default: 8000)")
     serve.add_argument("--reload", action="store_true", help="Enable auto-reload (development)")
 
+    export = sub.add_parser("export", help="Export a scan as a shareable .wasc package")
+    export.add_argument("scan_dir", type=Path, help="Directory containing scan artefacts")
+    export.add_argument("--out", type=Path, default=None,
+                        help="Package path (default: <scan_dir>.wasc)")
+    export.add_argument("--profile", choices=["stats", "full"], default="stats",
+                        help="stats = fingerprint only (~16 MB max, default); "
+                             "full = + fields and renders")
+    export.add_argument("--model-name", default="",
+                        help="Display name for the model (default: scan dir name)")
+    export.add_argument("--license-model", default="",
+                        help="Declared license of the scanned model (self-declared, unverified)")
+    export.add_argument("--license-scan", default="CC-BY-4.0",
+                        help="License of the scan data itself (default: CC-BY-4.0)")
+
+    importp = sub.add_parser("import", help="Verify and extract a .wasc scan package")
+    importp.add_argument("package", type=Path, help="Path to the .wasc package")
+    importp.add_argument("--out", type=Path, required=True,
+                          help="Directory to extract the scan into")
+
     return parser
 
 
@@ -390,6 +409,37 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     )
     return 0
 
+
+def _cmd_export(args: argparse.Namespace) -> int:
+    from weight_atlas.sharing.package import PackageError, export_package
+
+    out = args.out if args.out is not None else args.scan_dir.with_suffix(".wasc")
+    try:
+        pkg = export_package(
+            args.scan_dir, out,
+            profile=args.profile, model_name=args.model_name,
+            license_model=args.license_model, license_scan=args.license_scan,
+        )
+    except PackageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"exported {pkg} ({pkg.stat().st_size / 1e6:.1f} MB, profile={args.profile})")
+    return 0
+
+
+def _cmd_import(args: argparse.Namespace) -> int:
+    from weight_atlas.sharing.package import PackageError, import_package
+
+    try:
+        scan_dir = import_package(args.package, args.out)
+    except PackageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"imported {args.package.name} -> {scan_dir}")
+    print("register it with a running server: POST /api/import {\"scan_dir\": \"...\"}")
+    return 0
+
+
 def _cmd_diagnose(args: argparse.Namespace) -> int:
     """Diagnose tensor name mapping coverage for a model."""
     from weight_atlas.core.registry import get_loader
@@ -461,6 +511,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_diagnose(args)
     if args.command == "serve":
         return _cmd_serve(args)
+    if args.command == "export":
+        return _cmd_export(args)
+    if args.command == "import":
+        return _cmd_import(args)
     parser.print_help()
     return 0
 

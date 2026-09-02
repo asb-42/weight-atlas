@@ -337,6 +337,10 @@ class PyTorchLoader:
         self._storage_cache: dict[str, np.ndarray] = {}
         self.metadata: dict[str, str] = {}
 
+    def source_files(self, path: Path) -> list[Path]:
+        """Same discovery as ``open`` — the .pt files the scan hashes."""
+        return _discover_pt_files(path)
+
     def open(self, path: Path) -> list[TensorHandle]:
         files = _discover_pt_files(path)
         handles: list[TensorHandle] = []

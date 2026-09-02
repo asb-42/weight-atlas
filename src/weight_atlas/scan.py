@@ -43,6 +43,7 @@ from weight_atlas.stats.norms import (
     SpectralNorm,
     SVDecay,
 )
+from weight_atlas.stats.provenance import source_provenance
 from weight_atlas.stats.shape_moments import Kurtosis, Sparsity
 from weight_atlas.stats.sqnr import SQNRFp8E4M3, SQNRInt4Group128, SQNRInt8PerChannel
 from weight_atlas.stats.stable_rank import StableRank
@@ -494,6 +495,17 @@ def scan(
     handles = list(loader.open(model_path))
     loader_metadata = getattr(loader, "metadata", {})
 
+    # Provenance anchoring (Phase 0 scan sharing): per-file SHA-256 of the
+    # source model files + composite source_digest, recorded in the
+    # fingerprint's model block. Basenames only; deterministic (the file
+    # list is name-sorted loader discovery). Hashing streams 1 MiB chunks.
+    _report(0.03, "Hashing source files...")
+    try:
+        source_files = loader.source_files(model_path)
+    except Exception:  # pragma: no cover - a loader without the method
+        source_files = []
+    source_block = source_provenance(source_files) if source_files else {}
+
     # Compute per-tensor statistics (the expensive SVD steps), optionally in
     # parallel across tensors. Every handle's memoized payload is released
     # right after its statistics are computed so the whole model is never held
@@ -717,7 +729,9 @@ def scan(
     fp_stats = stats_narrow + extra_stats if extra_stats else stats_narrow
 
     _report(0.42, "Building fingerprint...")
-    fingerprint = _build_fingerprint(fp_stats, spec, loader_id, handles, loader_metadata)
+    fingerprint = _build_fingerprint(
+        fp_stats, spec, loader_id, handles, loader_metadata, source_block
+    )
 
     # Compute scaling metadata for fingerprint (v2.1)
     scaling_meta = _compute_scaling_metadata(stats_narrow, spec)
@@ -1027,6 +1041,7 @@ def _build_fingerprint(
     loader_id: str,
     handles: list[TensorHandle] | None = None,
     loader_metadata: dict[str, str] | None = None,
+    source_provenance_block: dict[str, object] | None = None,
 ) -> dict:
     """Build the fingerprint dict from computed tensor statistics."""
     # Get tool version from package metadata
@@ -1098,6 +1113,11 @@ def _build_fingerprint(
 
     out["model"]["n_tensors"] = len(out["tensors"])
     out["model"]["n_layers"] = len(layers)
+
+    # Provenance anchoring (Phase 0 scan sharing): per-source-file hashes +
+    # composite source_digest. Additive key — older readers ignore it.
+    if source_provenance_block:
+        out["model"].update(source_provenance_block)
 
     # Add mapping coverage (name audit)
     n_mapped = sum(1 for name in out["tensors"] if map_name(name)[1] != "other")

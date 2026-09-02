@@ -89,6 +89,13 @@ compare two scanned models. The web UI (api + ui) is the primary interface.
   (fp64 Gram vs. float32 rSVD differ at 1e-15). Accepted on the real
   Flash-Next 51.2B-param table: see
   `docs/reports/2026-09-02_ngram-streaming-acceptance.md`.
+- **Provenance anchoring** (`stats/provenance.py`): every scan records
+  per-source-file SHA-256 (basenames only) + composite `source_digest` in
+  `fingerprint.model.sources` — computed in `scan()` via the loader
+  `source_files()` contract (same name-sorted discovery as `open`).
+  Additive key: older readers ignore it. Shareable packages
+  (`sharing/`) refuse scans without it. Verification primitive:
+  `provenance_matches` (re-scan → identical block, determinism).
 - **Stats parallelism**: small tensors compute in a **spawn-process pool**
   (`_run_stats_processes`, gate `_PROCESS_POOL_MIN_TENSORS`); workers pin
   BLAS to 1 thread (`_worker_init`) so the numeric path is identical to the
@@ -121,6 +128,8 @@ compare two scanned models. The web UI (api + ui) is the primary interface.
 
 - `src/weight_atlas/api/AGENTS.md` — FastAPI web server: routes, job queue,
   file browsing, compare/render endpoints.
+- `src/weight_atlas/sharing/AGENTS.md` — .wasc scan packages: deterministic
+  export, verified import, provenance requirements.
 - `src/weight_atlas/compare/AGENTS.md` — M4 comparison pipeline: alignment
   (strict/aligned), delta computation, hotspot ranking, compare report.
 - `src/weight_atlas/fields/AGENTS.md` — field rasterisation, scaling,

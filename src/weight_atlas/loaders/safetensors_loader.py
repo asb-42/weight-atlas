@@ -171,6 +171,10 @@ class SafetensorsLoader:
 
     format_id = "safetensors"
 
+    def source_files(self, path: Path) -> list[Path]:
+        """Same discovery as ``open`` — the shards the scan hashes."""
+        return _discover_files(path)
+
     def open(self, path: Path) -> list[TensorHandle]:
         files = _discover_files(path)
         seen: dict[str, Path] = {}

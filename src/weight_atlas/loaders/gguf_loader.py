@@ -136,6 +136,10 @@ class GGUFLoader:
 
     format_id = "gguf"
 
+    def source_files(self, path: Path) -> list[Path]:
+        """Same discovery as ``open`` — the shards the scan hashes."""
+        return _discover_gguf_files(path)
+
     def open(self, path: Path) -> list[TensorHandle]:
         try:
             from gguf import GGUFReader

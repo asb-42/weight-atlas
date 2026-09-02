@@ -235,6 +235,44 @@ weight-atlas activity <model_path> --out <dir> [options]
 
 **Output**: `activity_meta.json`, `field_activity_<state>_residual_raw.tif`, `field_activity_<state>_experts_raw.tif`, `manifest.json`
 
+### `export` — Share a Scan
+
+Packages a scan into a `.wasc` file for sharing (Phase 0 scan sharing — see
+`docs/2026-09-02_scan-sharing-phase0.md`). Every scan records SHA-256 of
+its source model files; a package is verifiable by anyone holding the
+model (re-scan → identical fingerprint, determinism contract).
+
+```bash
+weight-atlas export <scan_dir> [--out pkg.wasc] [--profile stats|full]
+                 [--model-name NAME] [--license-model LIC] [--license-scan LIC]
+```
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `scan_dir` | Path | Yes | Directory containing scan artefacts |
+| `--out` | Path | No | Package path (default `<scan_dir>.wasc`) |
+| `--profile` | choice | No | `stats` (fingerprint only, default) or `full` (+ fields/renders) |
+| `--model-name` | str | No | Display name (default: scan dir name) |
+| `--license-model` | str | No | License of the scanned model (self-declared, unverified) |
+| `--license-scan` | str | No | License of the scan data (default `CC-BY-4.0`) |
+
+Refuses fingerprints without provenance (scans made before this feature) —
+re-scan to export. Do not share scans of models whose license forbids
+redistribution of derived data.
+
+### `import` — Ingest a Shared Scan
+
+```bash
+weight-atlas import <pkg.wasc> --out <scan_dir>
+```
+
+Verifies format version, every content hash, and provenance (refuses
+corrupt, zip-slipped, or unanchored packages), extracts to `<scan_dir>`,
+then register with a running server: `POST /api/import {"scan_dir": ...}`.
+
+**Output**: the extracted scan directory (fingerprint byte-identical to the
+packaged one).
+
 ---
 
 ## Web UI Guide
