@@ -106,6 +106,16 @@ class TestScatterTab:
         assert resp.text.count("<circle") == 5
         # axis labels name the metrics
         assert "kurtosis" in resp.text and "sqnr_int4_g128" in resp.text
+        # regression (2026-09-02, Flash-Next scan: empty scatter despite 4k
+        # points): every circle must land INSIDE the plot box. The SVG
+        # transforms consumed already-log10 clamped values as raw and
+        # re-applied log10 → cy ~850 on a 560px canvas.
+        import re
+
+        for m in re.finditer(r'<circle cx="([\d.]+)" cy="([\d.]+)"', resp.text):
+            cx, cy = float(m.group(1)), float(m.group(2))
+            assert 0.0 <= cx <= 900.0, f"cx {cx} outside canvas"
+            assert 0.0 <= cy <= 560.0, f"cy {cy} outside canvas"
 
     def test_xy_params_select_axes(self, scatter_env) -> None:
         client, job_id = scatter_env

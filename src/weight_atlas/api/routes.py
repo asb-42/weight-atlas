@@ -366,7 +366,6 @@ def create_router(
         2.4px circles in slot-group colors; hover title = tensor name (native
         SVG <title> tooltip).
         """
-        from math import log10
 
         w, h = 900, 560
         ml, mt, mr, mb = 64, 14, 14, 46
@@ -390,12 +389,14 @@ def create_router(
         y_lo, y_hi = float(y_axis["lo"]), float(y_axis["hi"])
 
         def tx(v: float) -> float:
-            t = log10(v) if x_axis["log"] else v
-            return ml + (t - x_lo) / (x_hi - x_lo) * pw
+            # v is ALREADY axis-transformed (log10 applied by scatter_points'
+            # clamp — see query.scatter_points): never transform twice.
+            return ml + (v - x_lo) / (x_hi - x_lo) * pw
 
         def ty(v: float) -> float:
-            t = log10(v) if y_axis["log"] else v
-            return mt + (1.0 - (t - y_lo) / (y_hi - y_lo)) * ph
+            # v is ALREADY axis-transformed (log10 applied by scatter_points'
+            # clamp — see query.scatter_points): never transform twice.
+            return mt + (1.0 - (v - y_lo) / (y_hi - y_lo)) * ph
 
         parts = [
             f'<svg viewBox="0 0 {w} {h}" role="img" class="scatter-svg" '
