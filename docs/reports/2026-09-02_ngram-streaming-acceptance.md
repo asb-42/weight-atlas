@@ -100,12 +100,38 @@ changed no numbers — cross-path identity is pinned by
 `tests/test_streaming_stats.py` (F-1 tolerance rel 1e-4 on σ, exact-sum
 equal_nan).
 
-## 6. Follow-ups
+## 6. Full-model scan acceptance (supplement, same day)
 
-- Full-scan acceptance of the whole 74,808-handle model remains to be run
-  (server down, CPU available; the giant tensor dominates wall time).
-- The `streamed` flag routes records into `fingerprint.json` — records tab /
-  scatter views pick head records up as ordinary tensors with `.h{n}` names.
-- `docs/2026-09-01_ngram-table-streaming.md` §5 open questions 1–3 are now
+The whole 74,808-handle scan completed end-to-end (fingerprint 85.6 MB,
+main + expert-panel fields, manifest; journal discarded on success).
+
+- Wall: ~2.5 h total — pooled phase ~35 min (18 spawn workers, ~30
+  tensors/s), big-serial phase ~45 min (two 2.4 GiB tensors, exact SVD,
+  BLAS-capped serial), giant streaming ~66 min, fields/manifest minutes.
+- Giant-table stats in `fingerprint.json` are **bit-identical** to the
+  standalone §2 runs (third independent confirmation of determinism).
+- Two incidents on the way, both fixed and committed:
+  1. **Kernel OOM 02:16** — pool workers accumulated 10–14 GiB anon RSS
+     each for ≤120 MiB live tasks (glibc malloc arena fragmentation over
+     ~75k varying-size numpy tasks; glibc never returns it). Post-mortem
+     fix (commit `d9bd366`): `malloc_trim` after every pool task (measured
+     avg worker RSS after fix: **81 MiB**), payloads >256 MiB excluded
+     from the pool (serial tail) so inflight bytes stay bounded.
+  2. **Lost head records** — the completed scan's fingerprint had zero
+     `.h{n}` records: `record()` journaled them but the success path built
+     the fingerprint from the handle-indexed stats list alone. Fixed in
+     the same commit (`extra_stats` list; scaling/rasterize still see
+     handle records only, so headless scans stay byte-identical); pinned
+     by `TestScanStreamingIntegration::test_head_records_reach_fingerprint_and_survive_resume`.
+     The scan output at `output/flash-next-ud-iq4xs-accept/` predates the
+     fix — a re-run adds the 16 head records (~2.5 h, resumable).
+
+## 7. Follow-ups
+
+- Re-run the full scan to capture the 16 head records in the artefacts
+  (then import into the server DB).
+- Records tab / scatter views pick head records up as ordinary tensors
+  with `.h{n}` names.
+- `docs/2026-09-01_ngram-table-streaming.md` §5 open questions 1–3 are
   answered by this report (shapes/KV: §2; quant type: IQ4_NL; axis order:
   bucket-major, handled by the orientation probe).
