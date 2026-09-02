@@ -162,6 +162,11 @@ def _worker_init() -> None:
     ``threadpool_limits(1)``), so results are byte-identical between the
     process-pool and serial paths. Also avoids 18 workers × N BLAS threads
     oversubscription.
+
+    Heap containment (2026-09-02 OOM post-mortem): worker RSS must stay
+    proportional to live tensors. Two mechanisms — see ``_worker_stats``
+    for the per-task trim, and ``_run_stats_processes`` for the payload cap
+    that keeps multi-hundred-MB tensors out of the pool entirely.
     """
     try:
         from threadpoolctl import threadpool_limits  # type: ignore[import-untyped]
@@ -171,6 +176,22 @@ def _worker_init() -> None:
         pass
 
 
+def _malloc_trim() -> None:
+    """Return freed glibc heap to the OS (no-op on non-glibc)."""
+    try:
+        import ctypes
+
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:  # pragma: no cover - non-glibc platforms
+        pass
+
+
+# Pool tasks above this size run serially in the main process instead of
+# being pickled into a worker: the inflight bound (2 x workers) multiplied
+# by multi-hundred-MB payloads can approach the RAM budget on huge scans.
+_POOL_TASK_MAX_BYTES = 256 << 20  # 256 MiB
+
+
 def _worker_stats(task: tuple) -> tuple[int, TensorStats]:
     """Compute all statistics for one tensor payload in a pool worker.
 
@@ -178,16 +199,26 @@ def _worker_stats(task: tuple) -> tuple[int, TensorStats]:
     process — loader closures are not picklable and GGUF's shared 3D expert
     parents live in main-process RAM). ``stats.spectrum``'s lock is present
     in the worker too but uncontended (one stats thread per process).
+
+    ``_malloc_trim`` after every task bounds glibc heap growth: numpy
+    temporaries of varying sizes fragment the arena free lists and glibc
+    rarely returns that memory to the OS on its own. Untrimmed workers on
+    the 74k-tensor Flash-Next scan reached 10-14 GiB anon RSS for ≤120 MiB
+    live tasks (kernel OOM, 2026-09-02); trimming keeps RSS flat.
     """
     i, name, shape, dtype, expert_id, arr, svd_seed, distribution_seed, quant_probe = task
-    handle = TensorHandle(
-        name=name,
-        shape=tuple(shape),
-        dtype=dtype,
-        loader=_payload_loader(arr),
-        expert_id=expert_id,
-    )
-    return i, _stats_for_handle(handle, svd_seed, distribution_seed, quant_probe)
+    try:
+        handle = TensorHandle(
+            name=name,
+            shape=tuple(shape),
+            dtype=dtype,
+            loader=_payload_loader(arr),
+            expert_id=expert_id,
+        )
+        return i, _stats_for_handle(handle, svd_seed, distribution_seed, quant_probe)
+    finally:
+        del arr
+        _malloc_trim()
 
 
 def _payload_loader(arr: np.ndarray) -> Callable[[], np.ndarray]:
@@ -224,9 +255,17 @@ def _run_stats_processes(
       immediately — peak RAM stays ≈ 2 × workers × tensor size
     - per-tensor fallback: a failed worker task is recomputed serially in
       the main process (infra errors heal; genuine data errors still raise)
+
+    Heap containment (2026-09-02 OOM post-mortem, Flash-Next 74k-tensor
+    scan on a 125 GB host): payloads above ``_POOL_TASK_MAX_BYTES`` are NOT
+    pickled into the pool — they are deferred to a serial tail pass after
+    the pool drains, so inflight bytes stay bounded by small tensors × 2 x
+    workers. Worker RSS is additionally trimmed per task
+    (``_worker_stats``'s ``_malloc_trim``).
     """
     ctx = multiprocessing.get_context("spawn")
     inflight_limit = max(2, 2 * jobs_n)
+    serial_tail: list[int] = []  # oversized for the pool — serial after drain
     with ProcessPoolExecutor(
         max_workers=jobs_n, mp_context=ctx, initializer=_worker_init
     ) as ex:
@@ -240,6 +279,9 @@ def _run_stats_processes(
                 except StopIteration:
                     return
                 h = handles[i]
+                if int(np.prod(h.shape)) * 4 > _POOL_TASK_MAX_BYTES:
+                    serial_tail.append(i)  # too big to pickle safely
+                    continue
                 arr = h.load()
                 task = (
                     i, h.name, h.shape, h.dtype, h.expert_id, arr,
@@ -268,6 +310,15 @@ def _run_stats_processes(
                 record(ts)
                 report_stats(i)
             _fill()
+
+    # Oversized payloads: serial, one at a time, in the main process.
+    for i in serial_tail:
+        h = handles[i]
+        ts = _stats_for_handle(h, svd_seed, distribution_seed, quant_probe)
+        h.clear()
+        stats[i] = ts
+        record(ts)
+        report_stats(i)
 
 
 # ── Stats checkpoint journal (crash resume) ────────────────────────────────
@@ -505,8 +556,19 @@ def scan(
         )
     journal_fh = _journal_open(checkpoint_path, identity, bool(resumed))
 
+    # Records with no handle slot (streaming per-head n-gram segments): they
+    # ride the journal for crash resume but live in this list for the
+    # fingerprint — the resume path re-reads them by name.
+    extra_stats: list[TensorStats] = []
+    extra_names = {h.name for h in handles}
+    for ts in resumed.values():
+        if ts.name not in extra_names:
+            extra_stats.append(ts)
+
     def record(ts: TensorStats) -> None:
         _journal_append(journal_fh, ts)
+        if ts.name not in extra_names:
+            extra_stats.append(ts)
 
     def _report_stats(i: int) -> None:
         if i % report_every == 0 or i == n_total - 1:
@@ -645,12 +707,17 @@ def scan(
     _journal_discard(checkpoint_path)  # success → fingerprint is authoritative
 
     # Rebind: drop the None placeholders (all tensors are computed now) so
-    # downstream consumers see list[TensorStats].
+    # downstream consumers see list[TensorStats]. Per-head extras (no handle
+    # slot) are NOT appended to stats_narrow: scaling metadata and field
+    # rasterisation must see exactly the handle records (byte-identical
+    # with scans that have no head segments); the fingerprint gets
+    # handle records + extras.
     stats_narrow: list[TensorStats] = [s for s in stats if s is not None]
     assert len(stats_narrow) == n_total
+    fp_stats = stats_narrow + extra_stats if extra_stats else stats_narrow
 
     _report(0.42, "Building fingerprint...")
-    fingerprint = _build_fingerprint(stats_narrow, spec, loader_id, handles, loader_metadata)
+    fingerprint = _build_fingerprint(fp_stats, spec, loader_id, handles, loader_metadata)
 
     # Compute scaling metadata for fingerprint (v2.1)
     scaling_meta = _compute_scaling_metadata(stats_narrow, spec)

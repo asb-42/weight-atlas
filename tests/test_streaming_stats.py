@@ -384,3 +384,83 @@ class TestScanStreamingIntegration:
         scan(model_path, out2, spec, jobs=1)
         assert (out2 / "fingerprint.json").read_bytes() == ref_bytes
         mp_threshold.undo()
+
+    def test_head_records_reach_fingerprint_and_survive_resume(self, tmp_path: Path) -> None:
+        """Per-head streaming records must land in fingerprint.json (they
+        have no handle slot) AND survive a crash+resume via the journal.
+        Regression: the 2026-09-02 full-model acceptance scan lost all 16
+        head records because record() only journaled them — the fingerprint
+        was built from the handle-indexed stats list alone."""
+        import weight_atlas.scan as scan_mod
+        from tests.fixtures import make_fake_model
+        from weight_atlas.core.types import load_default_spec
+        from weight_atlas.scan import scan
+
+        model_path = tmp_path / "fake.safetensors"
+        tensors = make_fake_model(model_path, n_layers=1)
+        # add the n-gram table the head bounds will segment (2 heads of
+        # 10000 buckets each on the row axis)
+        rng = np.random.default_rng(7)
+        tensors["per_layer_token_embd.weight"] = rng.normal(
+            0, 0.1, (20000, 64)
+        ).astype(np.float32)
+        from safetensors.numpy import save_file as st_save
+
+        st_save(tensors, str(model_path))
+        spec = load_default_spec()
+
+        real_get_loader = scan_mod.get_loader
+
+        def loader_with_heads(loader_id: str):
+            class _WithHeads(real_get_loader(loader_id)):
+                ngram_head_bounds = ("per_layer_token_embd.weight", [0, 10000])
+
+            return _WithHeads
+
+        mp = pytest.MonkeyPatch()
+        mp.setattr(scan_mod, "get_loader", loader_with_heads)
+        mp.setattr(scan_mod, "_STREAM_TENSOR_BYTES", 1 << 10)  # everything streams
+        try:
+            out = tmp_path / "out_heads"
+            scan(model_path, out, spec, jobs=1)
+            fp = json.loads((out / "fingerprint.json").read_text())
+            tensors = fp["tensors"]
+            assert "per_layer_token_embd.weight" in tensors
+            heads = [n for n in tensors if n.startswith("per_layer_token_embd.weight.h")]
+            assert heads, "per-head records missing from fingerprint"
+            assert len(heads) == 2
+            for n in heads:
+                assert tensors[n]["streamed"] is True
+        finally:
+            mp.undo()
+
+        # crash after the giant (+heads) is journaled, resume → heads back
+        mp2 = pytest.MonkeyPatch()
+        mp2.setattr(scan_mod, "get_loader", loader_with_heads)
+        mp2.setattr(scan_mod, "_STREAM_TENSOR_BYTES", 1 << 10)
+        real_stream = scan_mod.streaming_tensor_stats
+        calls = {"n": 0}
+
+        def exploding_stream(name, *a, **k):  # type: ignore[no-untyped-def]
+            calls["n"] += 1
+            if calls["n"] > 3:
+                raise RuntimeError("simulated crash")
+            return real_stream(name, *a, **k)
+
+        mp2.setattr(scan_mod, "streaming_tensor_stats", exploding_stream)
+        out2 = tmp_path / "out_heads_crash"
+        try:
+            with pytest.raises(RuntimeError, match="simulated crash"):
+                scan(model_path, out2, spec, jobs=1)
+        finally:
+            mp2.undo()
+        mp3 = pytest.MonkeyPatch()
+        mp3.setattr(scan_mod, "get_loader", loader_with_heads)
+        mp3.setattr(scan_mod, "_STREAM_TENSOR_BYTES", 1 << 10)
+        try:
+            scan(model_path, out2, spec, jobs=1)
+            fp2 = json.loads((out2 / "fingerprint.json").read_text())
+            heads2 = [n for n in fp2["tensors"] if n.startswith("per_layer_token_embd.weight.h")]
+            assert len(heads2) == 2, "per-head records lost across crash+resume"
+        finally:
+            mp3.undo()
