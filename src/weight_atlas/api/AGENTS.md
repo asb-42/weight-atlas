@@ -89,6 +89,11 @@ scan/render/compare, and provides file-browsing and result endpoints. The UI
   sheets/terrain/stats/scatter/records/spec load as htmx fragments via `?tab=`.
   The statistics table is server-paginated (200 rows/page, clamped) — never render the full
   tensor table inline (74k-tensor fingerprints made the old page ~25 MB).
+  **htmx fragment protocol**: requests with `HX-Request: true` get the BARE
+  tab fragment (`HTMLResponse(ctx["tab_content"])`); only direct URLs get
+  the full page. A full page swapped into `#model-tab-content` duplicated
+  header/nav/footer on every tab click — pinned by
+  `test_htmx_tab_request_gets_fragment_only`.
   Fragment templates are `ui/templates/_model_{tab}.html`; add new tabs to
   `model_tabs` in `routes.py` + a template. The scatter tab renders a
   deterministic server-side SVG (`x`/`y` metric params, p1–p99 clamped axes,
@@ -97,6 +102,21 @@ scan/render/compare, and provides file-browsing and result endpoints. The UI
   (`query.RECORD_BOARDS` → `extreme_records`), linking into the stats table
   page the tensor sits on. Both are pure `query.py` data + presentation in
   `routes.py` — no client JS.
+- **Query-API twins of the UI tabs**: `GET /api/model/{id}/scatter`
+  (x/y metric params, cap-clamped points, axis configs) and
+  `GET /api/model/{id}/records` (boards, optional `metric` filter) expose
+  the same pure `query.py` data to agents — `scatter_body` /
+  `records_body` in `query.py`, registered in the discovery body. Errors
+  via the spec's QueryError envelope.
+- **Package endpoints (Phase 0 scan sharing)**: `POST /api/packages/prepare`
+  (job_id + profile stats|full → deterministic `.wasc` under
+  `output_root/packages/`) and `POST /api/packages` (local package PATH →
+  verified extract + register via `import_package`/`import_scan`).
+  LAN-local by contract: public upload/download is Phase 1 and NOT
+  IMPLEMENTED — the prepare response's `note` says so and a public
+  deployment must not expose these. Import auto-render titles use
+  `Path(model_path).name` — never the full local path (shared PNGs are
+  public artefacts).
 
 ## Work Guidance
 

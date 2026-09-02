@@ -26,8 +26,10 @@ declarations, and verified import (hashes, versions, zip-slip guards).
   re-verified after extraction; foreign `spec_version` hard-rejected
   (same policy as compare).
 - **Local-only**: extraction happens into a user-chosen directory; there
-  is NO public upload surface here. Phase 1 (public site) is explicitly
-  out of scope.
+  is NO public upload surface here. The server exposes LAN-local package
+  endpoints (`POST /api/packages/prepare`, `POST /api/packages` in
+  `routes.py` — verified extract + register); public upload/download is
+  Phase 1, explicitly NOT IMPLEMENTED.
 - **Additive format versioning**: `format_version: 1`; new keys are
   tolerated by old readers, never bump the version for additions.
 

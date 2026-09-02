@@ -241,6 +241,22 @@ class TestModelDetail:
         assert resp.status_code == 200
         assert "stats-table" in resp.text
 
+    def test_htmx_tab_request_gets_fragment_only(self, client: TestClient, fake_model: Path, tmp_path: Path) -> None:
+        """HX-Request tab switches must return the bare fragment — a full
+        page swapped into #model-tab-content duplicated header/nav/footer
+        on every Sheets/Terrain click (2026-09-02 UI bug)."""
+        job_id = self._import_scan(client, tmp_path, fake_model)
+        for tab in ("sheets", "terrain", "stats", "scatter", "records"):
+            full = client.get(f"/models/{job_id}?tab={tab}")
+            frag = client.get(
+                f"/models/{job_id}?tab={tab}", headers={"HX-Request": "true"}
+            )
+            assert frag.status_code == 200
+            # fragment carries the tab content but NO page chrome
+            assert "<header" not in frag.text
+            assert "model-tabs" not in frag.text
+            assert frag.text in full.text  # it is exactly the tab body
+
     def test_stats_tab_clamps_page(self, client: TestClient, fake_model: Path, tmp_path: Path) -> None:
         """Out-of-range stats page must clamp, not error."""
         job_id = self._import_scan(client, tmp_path, fake_model, n_tensors=450)
@@ -1072,3 +1088,127 @@ class TestQuantProbeFlag:
         some = next(iter(fp["tensors"].values()))
         # hidden=32 fake model: 32 % 128 != 0 → INT4 N/A, INT8/FP8 finite
         assert np.isnan(some["sqnr_int4_g128"])
+
+
+class TestPackageEndpoints:
+    """Phase 0 scan sharing: /api/packages/prepare + /api/packages."""
+
+    @staticmethod
+    def _anchored_scan(tmp_path: Path, n_tensors: int = 3) -> Path:
+        """A scan dir with a hash-anchored fingerprint (exportable)."""
+        scan_dir = tmp_path / f"anchored_{n_tensors}"
+        scan_dir.mkdir(exist_ok=True)
+        tensors = {
+            f"blk.{i}.attn_q.weight": {
+                "shape": [32, 32], "frobenius": 1.0, "spectral_norm": 1.0
+            }
+            for i in range(n_tensors)
+        }
+        import hashlib
+
+        fp = {
+            "spec_version": 2,
+            "tool_version": "0.2.0",
+            "model": {
+                "n_tensors": n_tensors,
+                "n_layers": 1,
+                "sources": [{
+                    "file": "m.safetensors", "bytes": 1,
+                    "sha256": hashlib.sha256(b"x").hexdigest(),
+                }],
+                "source_digest": "d" * 64,
+            },
+            "tensors": tensors,
+        }
+        with open(scan_dir / "fingerprint.json", "w") as f:
+            json.dump(fp, f)
+        return scan_dir
+
+    def _register(self, client: TestClient, scan_dir: Path) -> str:
+        resp = client.post(
+            "/api/import", json={"scan_dir": str(scan_dir)}
+        )
+        assert resp.status_code == 200
+        return resp.json()["job_id"]
+
+    def test_prepare_writes_package(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        job_id = self._register(client, self._anchored_scan(tmp_path))
+        resp = client.post(
+            "/api/packages/prepare",
+            json={"job_id": job_id, "profile": "stats"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["profile"] == "stats"
+        assert Path(body["package"]).exists()
+        assert body["bytes"] > 0
+        assert "NOT YET IMPLEMENTED" in body["note"]
+
+    def test_prepare_refuses_unanchored_scan(
+        self, client: TestClient, tmp_path: Path, fake_model: Path
+    ) -> None:
+        """Pre-provenance scans are not shareable (Phase 0 contract)."""
+        scan_dir = tmp_path / "old_scan"
+        scan_dir.mkdir()
+        with open(scan_dir / "fingerprint.json", "w") as f:
+            json.dump({"spec_version": 2, "model": {"n_tensors": 1}, "tensors": {}}, f)
+        resp = client.post("/api/import", json={"scan_dir": str(scan_dir)})
+        job_id = resp.json()["job_id"]
+        resp = client.post("/api/packages/prepare", json={"job_id": job_id})
+        assert resp.status_code == 400
+        assert "provenance" in resp.json()["detail"]
+
+    def test_prepare_rejects_bad_profile(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        job_id = self._register(client, self._anchored_scan(tmp_path))
+        resp = client.post(
+            "/api/packages/prepare", json={"job_id": job_id, "profile": "mega"}
+        )
+        assert resp.status_code == 400
+
+    def test_roundtrip_prepare_then_ingest(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """prepare → ingest registers a second job with the same fingerprint."""
+        scan_dir = self._anchored_scan(tmp_path)
+        job_id = self._register(client, scan_dir)
+        resp = client.post(
+            "/api/packages/prepare", json={"job_id": job_id, "profile": "full"}
+        )
+        assert resp.status_code == 200
+        pkg = resp.json()["package"]
+
+        ingest = client.post("/api/packages", json={"package": pkg})
+        assert ingest.status_code == 200
+        new_id = ingest.json()["job_id"]
+        assert new_id != job_id
+        # the newly registered scan renders in the UI
+        detail = client.get(f"/models/{new_id}?tab=overview")
+        assert detail.status_code == 200
+
+    def test_ingest_refuses_corrupt_package(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        scan_dir = self._anchored_scan(tmp_path)
+        job_id = self._register(client, scan_dir)
+        resp = client.post("/api/packages/prepare", json={"job_id": job_id})
+        pkg = Path(resp.json()["package"])
+        # flip one byte in the zip
+        raw = bytearray(pkg.read_bytes())
+        raw[-10] ^= 0xFF
+        pkg.write_bytes(bytes(raw))
+        ingest = client.post("/api/packages", json={"package": str(pkg)})
+        assert ingest.status_code == 400
+
+    def test_models_page_shows_package_section(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        self._register(client, self._anchored_scan(tmp_path))
+        page = client.get("/")
+        assert page.status_code == 200
+        assert "Share a Scan" in page.text
+        assert "/api/packages/prepare" in page.text
+        assert "NOT YET IMPLEMENTED" in page.text

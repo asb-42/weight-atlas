@@ -44,6 +44,43 @@
     <div id="import-result"></div>
 </section>
 
+<section class="submit-job">
+    <h3>Share a Scan (.wasc package)</h3>
+    <p class="channel-info">
+        Packages are deterministic, hash-anchored archives of a scan
+        (fingerprint + optional fields). Sharing scans of models whose
+        license forbids redistributing derived data is on you.
+        Public upload/download is <strong>NOT YET IMPLEMENTED</strong> —
+        packages are written to disk for manual exchange.
+    </p>
+    <form hx-post="/api/packages/prepare" hx-target="#package-result" hx-swap="innerHTML">
+        <label for="pkg_job">Prepare package from scan:</label>
+        <select id="pkg_job" name="job_id" required>
+            <option value="" disabled selected>— choose a completed scan —</option>
+            {% for model in models %}
+            <option value="{{ model.job_id }}">{{ model.model_path }}</option>
+            {% endfor %}
+        </select>
+        <label class="checkbox-label" for="pkg_profile_full">
+            <input type="checkbox" id="pkg_profile_full" name="profile_full" value="1">
+            Full profile (include field TIFFs + renders; default is
+            fingerprint-only "stats")
+        </label>
+        <input type="hidden" name="profile" value="stats">
+        <button type="submit">Prepare Package</button>
+    </form>
+    <form hx-post="/api/packages" hx-target="#package-result" hx-swap="innerHTML">
+        <label for="pkg_path">Ingest a received package (local path):</label>
+        <div class="path-picker">
+            <input type="text" id="pkg_path" name="package"
+                   placeholder="/path/to/scan.wasc" required>
+            <button type="button" class="btn-small" data-browse="pkg_path" data-browse-mode="file">Browse…</button>
+        </div>
+        <button type="submit">Ingest Package</button>
+    </form>
+    <div id="package-result"></div>
+</section>
+
 <section class="model-list">
     <h3>Completed Models</h3>
     {% if models %}

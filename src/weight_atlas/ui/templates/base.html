@@ -92,6 +92,18 @@
             e.preventDefault();
             openFileBrowser(opener.dataset.browse, opener.dataset.browseMode);
         });
+
+        // Package profile checkbox: flips the hidden "profile" field
+        // between stats (default) and full. Server-side htmx forms submit
+        // every named input, so the checkbox itself carries no value.
+        document.body.addEventListener("change", function (e) {
+            if (e.target && e.target.id === "pkg_profile_full") {
+                const hidden = document.querySelector(
+                    'form[hx-post="/api/packages/prepare"] input[name="profile"]'
+                );
+                if (hidden) hidden.value = e.target.checked ? "full" : "stats";
+            }
+        });
     </script>
     {% block scripts %}{% endblock %}
 </body>

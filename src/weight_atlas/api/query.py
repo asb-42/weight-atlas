@@ -1503,6 +1503,100 @@ def _find_edit_job(
 
 
 # ---------------------------------------------------------------------------
+# Scatter + records (query-API twins of the UI tabs; alesha-pro adoption P2)
+# ---------------------------------------------------------------------------
+
+
+def scatter_body(
+    job: Job,
+    fp: dict[str, Any],
+    x_metric: str,
+    y_metric: str,
+    cap: int = SCATTER_CAP,
+) -> dict[str, Any]:
+    """GET /api/model/{id}/scatter — deterministic (x, y) point cloud.
+
+    Same data as the UI scatter tab (``scatter_points``), minus the SVG:
+    agents get the points, axis configs (log flags, p1–p99 bounds) and the
+    stride culling info. ``cap`` clamped to ``SCATTER_CAP``.
+    """
+    for m in (x_metric, y_metric):
+        if m not in METRICS:
+            raise QueryError(
+                400, "invalid_param", f"unknown metric: {m}",
+                f"one of {', '.join(METRICS)}",
+            )
+    cap = max(1, min(int(cap), SCATTER_CAP))
+    data = scatter_points(_load_records(job, fp), x_metric, y_metric, cap=cap)
+    return {
+        "model_id": job.job_id,
+        "x_metric": x_metric,
+        "y_metric": y_metric,
+        "points": [
+            {
+                "tensor_name": p["tensor_name"],
+                "slot": p["slot"],
+                "layer": p["layer"],
+                "numel": p["numel"],
+                "x": _r(p["x"]),
+                "y": _r(p["y"]),
+            }
+            for p in data["points"]
+        ],
+        "total": data["total"],
+        "rendered": data["rendered"],
+        "cap": data["cap"],
+        "x_axis": {
+            "log": data["x_axis"]["log"],
+            "lo": _r(data["x_axis"]["lo"]),
+            "hi": _r(data["x_axis"]["hi"]),
+        },
+        "y_axis": {
+            "log": data["y_axis"]["log"],
+            "lo": _r(data["y_axis"]["lo"]),
+            "hi": _r(data["y_axis"]["hi"]),
+        },
+    }
+
+
+def records_body(job: Job, fp: dict[str, Any], metric: str | None) -> dict[str, Any]:
+    """GET /api/model/{id}/records — extremes leaderboard boards.
+
+    All ``RECORD_BOARDS`` (metric, direction) pairs, or the single board
+    for ``metric`` when given. Same data as the UI records tab.
+    """
+    records = _load_records(job, fp)
+    boards: list[dict[str, Any]] = []
+    for m, direction, label in RECORD_BOARDS:
+        if metric is not None and m != metric:
+            continue
+        rows = extreme_records(records, m, direction, limit=5)
+        boards.append(
+            {
+                "metric": m,
+                "direction": direction,
+                "label": label,
+                "rows": [
+                    {
+                        "tensor_name": r["tensor_name"],
+                        "slot": r["slot"],
+                        "layer": r["layer"],
+                        "numel": r["numel"],
+                        "value": _r(r[m]),
+                    }
+                    for r in rows
+                ],
+            }
+        )
+    if metric is not None and not boards:
+        raise QueryError(
+            400, "invalid_param", f"unknown metric: {metric}",
+            f"one of {', '.join(m for m, _, _ in RECORD_BOARDS)}",
+        )
+    return {"model_id": job.job_id, "boards": boards}
+
+
+# ---------------------------------------------------------------------------
 # Discovery
 # ---------------------------------------------------------------------------
 def discovery_body() -> dict[str, Any]:
@@ -1518,6 +1612,8 @@ def discovery_body() -> dict[str, Any]:
         {"method": "GET", "path": "/api/model/{model_id}/query", "purpose": "filtered, sorted, paginated tensor list", "params": ["layer", "type", "metric", "order", "fields", "limit", "offset", "min", "max"]},
         {"method": "GET", "path": "/api/model/{model_id}/compare", "purpose": "two slices within one model", "params": ["a", "b", "metrics", "fields"]},
         {"method": "GET", "path": "/api/model/{model_id}/histogram", "purpose": "distribution of a metric", "params": ["metric", "bins", "log", "type", "layer_range", "density"]},
+        {"method": "GET", "path": "/api/model/{model_id}/scatter", "purpose": "deterministic (x, y) metric point cloud (stride-capped)", "params": ["x", "y", "cap"]},
+        {"method": "GET", "path": "/api/model/{model_id}/records", "purpose": "extreme-value leaderboard boards", "params": ["metric"]},
         {"method": "GET", "path": "/api/model/{model_id}/tensor/{name}", "purpose": "full detail for one tensor", "params": []},
         {"method": "GET", "path": "/api/model/{model_id}/delta", "purpose": "cross-scan comparison (weight-space tier preferred)", "params": ["with", "metric", "n", "min_change_pct", "fields"]},
     ]

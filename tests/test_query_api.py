@@ -328,6 +328,61 @@ class TestHistogram:
         assert "density" in resp.json()["bins"][0]
 
 
+class TestScatterRecords:
+    """Query-API twins of the UI Scatter/Records tabs."""
+
+    def test_scatter_points_and_axes(self, client: TestClient, queue: JobQueue) -> None:
+        resp = client.get(
+            f"/api/model/{_model_id(queue)}/scatter?x=frobenius&y=spectral_norm"
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["x_metric"] == "frobenius"
+        assert body["y_metric"] == "spectral_norm"
+        assert 0 < body["rendered"] <= body["total"]
+        assert body["rendered"] <= body["cap"] <= 4000
+        for key in ("log", "lo", "hi"):
+            assert key in body["x_axis"] and key in body["y_axis"]
+        p0 = body["points"][0]
+        assert {"tensor_name", "slot", "layer", "numel", "x", "y"} <= set(p0)
+        # clamped to the axis bounds (log10 space when log)
+
+        if body["x_axis"]["log"]:
+            assert body["x_axis"]["lo"] <= p0["x"] <= body["x_axis"]["hi"]
+
+    def test_scatter_rejects_unknown_metric(self, client: TestClient, queue: JobQueue) -> None:
+        resp = client.get(f"/api/model/{_model_id(queue)}/scatter?x=nope")
+        assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == 400
+
+    def test_scatter_deterministic(self, client: TestClient, queue: JobQueue) -> None:
+        a = client.get(f"/api/model/{_model_id(queue)}/scatter").json()
+        b = client.get(f"/api/model/{_model_id(queue)}/scatter").json()
+        assert a == b
+
+    def test_records_boards(self, client: TestClient, queue: JobQueue) -> None:
+        resp = client.get(f"/api/model/{_model_id(queue)}/records")
+        assert resp.status_code == 200
+        boards = resp.json()["boards"]
+        assert len(boards) >= 1
+        for b in boards:
+            assert {"metric", "direction", "label", "rows"} <= set(b)
+            assert len(b["rows"]) <= 5
+            for r in b["rows"]:
+                assert {"tensor_name", "slot", "layer", "numel", "value"} <= set(r)
+
+    def test_records_single_metric_filter(self, client: TestClient, queue: JobQueue) -> None:
+        resp = client.get(f"/api/model/{_model_id(queue)}/records?metric=spectral_norm")
+        assert resp.status_code == 200
+        boards = resp.json()["boards"]
+        assert len(boards) == 1
+        assert boards[0]["metric"] == "spectral_norm"
+
+    def test_records_rejects_unknown_metric(self, client: TestClient, queue: JobQueue) -> None:
+        resp = client.get(f"/api/model/{_model_id(queue)}/records?metric=nope")
+        assert resp.status_code == 400
+
+
 class TestTensor:
     def test_tensor_detail(self, client: TestClient, queue: JobQueue) -> None:
         resp = client.get(

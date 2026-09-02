@@ -140,6 +140,36 @@ def create_query_router(job_queue: JobQueue) -> APIRouter:
         job, fp = _get_scan(model_id)
         return q.histogram_body(job, fp, metric, bins, log, type_, layer_range, density)
 
+    @router.get("/api/model/{model_id}/scatter")
+    async def scatter(
+        model_id: str,
+        x: str = "frobenius",
+        y: str = "spectral_norm",
+        cap: int = 4000,
+    ) -> dict[str, Any]:
+        """Deterministic (x, y) point cloud of per-tensor metrics.
+
+        The query-API twin of the UI Scatter tab: axis configs carry the
+        log flags and p1-p99 bounds; values are clamped to those bounds.
+        Stride-culled to ``cap`` (hard max 4000) over name-sorted pairs —
+        deterministic, never random.
+        """
+        job, fp = _get_scan(model_id)
+        return q.scatter_body(job, fp, x, y, cap=cap)
+
+    @router.get("/api/model/{model_id}/records")
+    async def records(
+        model_id: str,
+        metric: str | None = None,
+    ) -> dict[str, Any]:
+        """Extreme-value leaderboard boards (per metric).
+
+        The query-API twin of the UI Records tab: all boards, or one when
+        ``metric`` is given. Each board lists top-5 tensors with values.
+        """
+        job, fp = _get_scan(model_id)
+        return q.records_body(job, fp, metric)
+
     @router.get("/api/model/{model_id}/tensor/{name}")
     async def tensor(model_id: str, name: str) -> dict[str, Any]:
         """Full detail for one tensor (name is URL-encoded; dots preserved)."""

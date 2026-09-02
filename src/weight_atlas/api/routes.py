@@ -504,6 +504,11 @@ def create_router(
         ctx = _model_context(job)
         ctx["tab_content"] = _render_model_tab(request, job, tab, ctx, page=page, x=x, y=y)
         ctx["active_tab"] = tab
+        # htmx tab switches (hx-get) swap into #model-tab-content: serve the
+        # bare fragment, never a full page (a full page would duplicate
+        # header/nav/footer inside the tab div on every swap).
+        if request.headers.get("HX-Request") == "true":
+            return HTMLResponse(ctx["tab_content"])
         return templates.TemplateResponse(
             request,
             "detail.html",
@@ -811,6 +816,98 @@ def create_router(
         # polling and other requests stay responsive.
         job = await run_in_threadpool(job_queue.import_scan, scan_dir, model_path)
         # Import is immediate (job is already done) → go straight to the detail page.
+        return JSONResponse(
+            job.to_dict(),
+            headers={"HX-Redirect": f"/models/{job.job_id}"},
+        )
+
+    @router.post("/api/packages/prepare")
+    async def prepare_package(request: Request) -> JSONResponse:
+        """Export a registered scan as a .wasc share package (Phase 0).
+
+        ``job_id`` selects the scan; ``profile`` is stats|full. Writes
+        ``<output_root>/packages/<job_id>.wasc`` deterministically and
+        returns its path — the UI shows it for manual sharing. LAN-local
+        only; a public download surface is Phase 1 (NOT IMPLEMENTED).
+        """
+        from starlette.concurrency import run_in_threadpool
+
+        from weight_atlas.sharing.package import PackageError, export_package
+
+        payload = await _read_body(request)
+        job_id = str(payload.get("job_id", ""))
+        profile = str(payload.get("profile", "stats"))
+        if profile not in ("stats", "full"):
+            raise HTTPException(status_code=400, detail="profile must be stats|full")
+        job = job_queue.get(job_id)
+        if job is None or job.status != JobStatus.DONE:
+            raise HTTPException(status_code=404, detail="job not found or not done")
+        scan_dir = Path(job.out_dir)
+        if not (scan_dir / "fingerprint.json").exists():
+            raise HTTPException(status_code=404, detail="scan has no fingerprint")
+
+        packages_root = output_root / "packages"
+        out_path = packages_root / f"{job_id}.wasc"
+
+        def _export() -> Path:
+            return export_package(
+                scan_dir, out_path, profile=profile,
+                model_name=str(payload.get("model_name", "") or scan_dir.name),
+            )
+
+        try:
+            pkg = await run_in_threadpool(_export)
+        except PackageError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse(
+            {
+                "package": str(pkg),
+                "bytes": pkg.stat().st_size,
+                "profile": profile,
+                "note": (
+                    "Package written to disk for manual sharing. Public "
+                    "upload/download is NOT YET IMPLEMENTED (Phase 1)."
+                ),
+            }
+        )
+
+    @router.post("/api/packages")
+    async def upload_package(request: Request) -> JSONResponse:
+        """Ingest a .wasc scan package: verify, extract, register.
+
+        Phase 0 scan sharing (docs/2026-09-02_scan-sharing-phase0.md).
+        This endpoint is LAN-local by design: it accepts a package PATH on
+        this machine (the browser picker uses /api/browse) — NOT a public
+        upload surface. Public upload (Phase 1: auth, quotas, archive-bomb
+        limits, untrusted-archive hardening) is explicitly NOT IMPLEMENTED;
+        a public deployment must not expose this endpoint.
+        """
+        from starlette.concurrency import run_in_threadpool
+
+        from weight_atlas.sharing.package import PackageError, import_package
+
+        payload = await _read_body(request)
+        pkg_str = payload.get("package", "")
+        if not pkg_str:
+            raise HTTPException(status_code=400, detail="package path required")
+        import uuid
+
+        pkg_path = Path(pkg_str).resolve()
+        if not pkg_path.exists():
+            raise HTTPException(status_code=404, detail=f"package not found: {pkg_path}")
+        _require_allowed(pkg_path)
+        dest = output_root / f"pkg_{pkg_path.stem}_{uuid.uuid4().hex[:8]}"
+
+        def _extract() -> Path:
+            return import_package(pkg_path, dest)
+
+        try:
+            scan_dir = await run_in_threadpool(_extract)
+        except PackageError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        model_name = str(payload.get("model_name", "") or pkg_path.stem)
+        job = await run_in_threadpool(job_queue.import_scan, scan_dir, model_name)
         return JSONResponse(
             job.to_dict(),
             headers={"HX-Redirect": f"/models/{job.job_id}"},

@@ -745,7 +745,12 @@ class JobQueue:
 
                 render_dir = scan_dir / "render"
                 for channel in channels:
-                    field = load_channel_field(scan_dir, channel, spec, model_name=model_path or scan_dir.name)
+                    # basename only — the full local path must never leak
+                    # into render titles (shared PNGs are public artefacts)
+                    field = load_channel_field(
+                        scan_dir, channel, spec,
+                        model_name=Path(model_path).name or scan_dir.name,
+                    )
                     if field is None:
                         continue
                     renderer.render(field, spec, render_dir)
