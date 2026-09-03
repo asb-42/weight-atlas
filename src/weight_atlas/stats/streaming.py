@@ -70,7 +70,8 @@ def _spectrum_gram(blocks: Callable[[], Iterator[np.ndarray]], cols: int) -> np.
         gram += b.T @ b
     eig = np.linalg.eigvalsh(gram)
     eig = np.clip(eig[::-1], 0.0, None)
-    return np.sqrt(eig)
+    spectrum: np.ndarray = np.sqrt(eig)  # annotated local: ufunc returns Any under numpy 2.4 stubs
+    return spectrum
 
 
 def _spectrum_halko(
