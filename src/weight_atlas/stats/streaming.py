@@ -115,7 +115,9 @@ def _head_stats_from_gram(
         spectral_norm=spectral_norm,
         effective_rank=float(entropy_rank(spectrum)) if spectrum.size else float("nan"),
         stable_rank=(
-            float(np.log1p((frobenius / spectral_norm) ** 2))
+            1.0
+            if spectrum.size == 1
+            else float(np.log1p((frobenius / spectral_norm) ** 2))
             if spectrum.size and spectral_norm > 0
             else float("nan")
         ),
@@ -323,11 +325,14 @@ def streaming_tensor_stats(
     effective_rank = float(entropy_rank(spectrum)) if spectrum.size else float("nan")
     sv_decay = float(spectrum[-1] / spectrum[0]) if spectrum.size and spectrum[0] > 0 else float("nan")
     frobenius = float(np.sqrt((spectrum**2).sum())) if spectrum.size else float("nan")
-    stable_rank = (
-        float(np.log1p((frobenius / spectral_norm) ** 2))
-        if spectrum.size and spectral_norm > 0
-        else float("nan")
-    )
+    if spectrum.size == 1:
+        stable_rank = 1.0  # rank-1 by construction (same 1-D fix as StableRank)
+    else:
+        stable_rank = (
+            float(np.log1p((frobenius / spectral_norm) ** 2))
+            if spectrum.size and spectral_norm > 0
+            else float("nan")
+        )
     kernel_norm = frobenius  # non-4-D fallback, same as KernelNorm
 
     # ── Per-head records ───────────────────────────────────────────────────

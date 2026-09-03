@@ -31,7 +31,11 @@ from weight_atlas.stats.spectrum import truncated_spectrum
 class StableRank:
     """Stable rank = log1p((frobenius / spectral_norm)²).
 
-    For 1-D tensors (vectors), stable_rank = log(2) since frobenius == spectral_norm.
+    For 1-D tensors (vectors) the log1p variant degenerates to the
+    constant ln(2) (frobenius == spectral_norm) — meaningless. The raw
+    stable rank of a rank-1 object is exactly 1.0, so 1-D tensors return
+    1.0 (flagged 2026-09-02 by Quinn from the Flash-Next scan: every 1-D
+    norm vector reported sr = 0.6931 to full float precision).
     """
 
     stat_id = "stable_rank"
@@ -40,6 +44,8 @@ class StableRank:
         self._seed = seed
 
     def compute(self, t: TensorHandle) -> float:
+        if len(t.shape) == 1:
+            return 1.0  # a vector is rank-1: raw stable rank == 1
         frob = FrobeniusNorm().compute(t)
         spec = float(truncated_spectrum(t, seed=self._seed)[0])
         if spec == 0.0:

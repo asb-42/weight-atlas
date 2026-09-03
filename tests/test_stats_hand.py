@@ -8,6 +8,7 @@ import pytest
 from weight_atlas.core.types import TensorHandle
 from weight_atlas.stats.norms import EffectiveRank, FrobeniusNorm, SpectralNorm
 from weight_atlas.stats.shape_moments import Kurtosis, Sparsity
+from weight_atlas.stats.stable_rank import StableRank
 
 
 def _handle(arr: np.ndarray) -> TensorHandle:
@@ -67,3 +68,22 @@ def test_frobenius_chunked_matches_naive():
     got = FrobeniusNorm().compute(h)
     expected = float(np.sqrt(np.astype(arr, np.float64).dot(np.astype(arr, np.float64))))
     assert pytest.approx(got, rel=1e-10) == expected
+
+
+def test_1d_stable_rank_is_one():
+    """A vector is rank-1: raw stable rank is exactly 1.0 — NOT the
+    log1p degenerate ln(2) (flagged by Quinn 2026-09-02 from the
+    Flash-Next scan: every 1-D norm vector reported sr = 0.6931…)."""
+    arr = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+    h = _handle(arr)
+    assert StableRank().compute(h) == 1.0
+
+
+def test_stable_rank_matrix_matches_formula():
+    """2-D tensors keep the log1p((frob/spec)^2) definition."""
+    rng = np.random.default_rng(7)
+    arr = rng.normal(0, 1, (16, 8)).astype(np.float32)
+    h = _handle(arr)
+    sigma = np.linalg.svd(arr, compute_uv=False)
+    expect = float(np.log1p((np.linalg.norm(arr) / sigma[0]) ** 2))
+    assert pytest.approx(StableRank().compute(h), rel=1e-5) == expect
