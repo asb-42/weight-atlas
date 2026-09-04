@@ -132,7 +132,17 @@
             ["linear_attn\\.dt_bias", "ssm_dt"],
             ["linear_attn\\.A_log", "ssm_a"],
             ["linear_attn\\.norm", "ssm_norm"],
-            ["linear_attn\\.out_proj", "ssm_out"]
+            ["linear_attn\\.out_proj", "ssm_out"],
+            ["ple\\.key_proj", "ngram_key"],
+            ["ple\\.value_proj", "ngram_value"],
+            ["ple\\.conv1d", "ngram_conv"],
+            ["ple\\.norm_", "ngram_norm"],
+            ["indexer\\.index_qk_proj", "indexer"],
+            ["indexer\\.[qk]_layernorm", "indexer"],
+            ["attn_hyper_connection\\.", "hc_attn"],
+            ["mlp_hyper_connection\\.", "hc_ffn"],
+            ["hyper_connection_mixer\\.input_mix_weight_(down|up)", "output_hc_base"],
+            ["hyper_connection_mixer\\.hc_norm", "output_hc_scale"]
           ],
           "kimi": [
             ["self_attn\\.q_a_proj", "attn_q_a"],

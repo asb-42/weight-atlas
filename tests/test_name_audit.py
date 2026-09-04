@@ -227,13 +227,17 @@ def test_mapping_coverage_qwen38_ratio():
 
 
 def test_qwen38_mtp_layer_collision_known():
-    """Documented known issue: mtp.layers.N.* shares the main-stack layer
-    index space, so e.g. mtp.layers.0.self_attn.q_proj collides with
-    model.language_model.layers.0.self_attn.q_proj at (0, attn_q). Fixing
-    this needs an MTP slot design (see analysis doc); here we pin the
-    current behaviour so the gap stays visible."""
+    """MTP draft tower must NOT share the main-stack layer index space.
+
+    Previously `mtp.layers.0.self_attn.q_proj` mapped to `(0, attn_q)` and
+    silently overwrote the language layer-0 cell (raster cells are
+    last-wins) — pinned as a known gap since the alesha-pro analysis.
+    Fixed by treating the MTP tower as non-layer (vision precedent):
+    `mtp.*` names keep their generic slot for records but carry layer
+    None, so the raster can never collide.
+    """
     main_layer, main_slot = map_name("model.language_model.layers.0.self_attn.q_proj.weight")
     mtp_layer, mtp_slot = map_name("mtp.layers.0.self_attn.q_proj.weight")
-    assert (mtp_layer, mtp_slot) == (main_layer, main_slot), (
-        "collision behaviour changed — revisit _QWEN38_MTP_GLOBAL_OTHER / analysis doc"
-    )
+    assert (main_layer, main_slot) == (0, "attn_q")
+    assert mtp_layer is None, f"MTP tensor got language row {mtp_layer}"
+    assert mtp_slot == "attn_q", f"MTP slot lost: {mtp_slot}"

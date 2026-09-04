@@ -68,6 +68,20 @@ def is_nvfp4_packed_tensor(name: str) -> bool:
     return name.endswith(PACKED_SUFFIX)
 
 
+def is_hf_nvfp4_weight(name: str) -> bool:
+    """True if ``name`` is an HF-named NVFP4 ``*.weight`` (U8 packed).
+
+    Unsloth/HF NVFP4 checkpoints (verified against the real
+    Qwen3.8-Flash-Next-NVFP4 plefp8 export) store the packed weights as
+    ``<base>.weight`` with dtype U8 — the same two-per-byte FP4 payload as
+    compressed-tensors but WITHOUT the ``_packed`` suffix, with sibling
+    ``<base>.weight_scale`` (F8_E4M3) + ``<base>.weight_scale_2`` (F32
+    scalar, the global scale). A U8 2-D ``*.weight`` is unambiguous —
+    no dense format stores weights as uint8.
+    """
+    return name.endswith(".weight") and not name.endswith(PACKED_SUFFIX)
+
+
 def weight_name_for_packed(name: str) -> str:
     """Canonical dense weight name: ``...w.weight_packed`` -> ``...w.weight``."""
     if not name.endswith(PACKED_SUFFIX):
@@ -80,6 +94,18 @@ def scale_name_for_packed(name: str) -> str:
     if not name.endswith(PACKED_SUFFIX):
         raise ValueError(f"not an NVFP4 packed tensor name: {name!r}")
     return name[: -len(PACKED_SUFFIX)] + SCALE_SUFFIX
+
+
+def hf_scale_names(weight_name: str) -> tuple[str, str]:
+    """Sibling scale tensor names for an HF-named NVFP4 ``<base>.weight``.
+
+    Returns ``(<base>.weight_scale, <base>.weight_scale_2)`` — the E4M3
+    group scales and the F32 scalar global scale (Unsloth plefp8 naming).
+    """
+    if not weight_name.endswith(".weight"):
+        raise ValueError(f"not an HF NVFP4 weight name: {weight_name!r}")
+    base = weight_name[: -len(".weight")]
+    return f"{base}.weight_scale", f"{base}.weight_scale_2"
 
 
 def global_scale_name_for_packed(name: str) -> str:

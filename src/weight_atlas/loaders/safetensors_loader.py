@@ -51,6 +51,9 @@ _BF16 = "BF16"
 
 # Kimi-K3 MoE expert id extraction for dequantized handles.
 _KIMI_EXPERT_RE = re.compile(r"block_sparse_moe\.experts\.(\d+)")
+# HF MoE convention (Llama/Qwen-style): ...mlp.experts.<N>.gate_proj...
+# (matches Unsloth plefp8, stock HF MoE, and DeepSeek safetensors).
+_HF_EXPERT_RE = re.compile(r"(?:^|\.)experts\.(\d+)(?:\.|$)")
 
 
 def _read_header(path: Path) -> dict[str, dict[str, Any]]:
@@ -126,11 +129,16 @@ def _from_raw(raw: bytes, dtype: str, shape: tuple[int, ...]) -> np.ndarray:
 
     BF16 (16-bit: sign|8-bit exp|7-bit mantissa) widens to float32 by shifting
     the bit pattern left 16 — no bf16 numpy dtype registration required.
+    F8_E4M3 (standalone fp8 tensors — group scales that lost their packed
+    sibling, e.g. partial shards) decode via the nvfp4 bitfield table.
     """
     if dtype == _BF16:
         bits = np.frombuffer(raw, dtype=np.dtype("<u2"))
         f32 = (bits.astype(np.uint32) << np.uint32(16)).view(np.float32)
         return f32.reshape(shape).copy()
+    if dtype in ("F8_E4M3", "F8_E4M3FN"):
+        bytes_arr = np.frombuffer(raw, dtype=np.uint8)
+        return nvfp4.e4m3_to_float(bytes_arr).reshape(shape).astype(np.float32, copy=False)
     np_dtype = _DTYPE_MAP.get(dtype)
     if np_dtype is None:
         raise ValueError(f"unsupported safetensors dtype {dtype!r}")
@@ -218,31 +226,46 @@ class SafetensorsLoader:
             # Names in this file for FP4-pair/triple resolution.
             names_in_file = {e[0] for e in entries}
             consumed: set[str] = set()
+            merge_heads: set[str] = set()  # consumed names that emit a merged handle
 
             # Pre-scan: mergeable FP4 families are resolved by their PACKED
             # tensor name; the scale/global-scale siblings can iterate in any
             # order, so mark every member of a resolved triple/pair consumed
             # BEFORE the handle loop runs (dict order otherwise leaks a
             # stray handle for a sibling seen first).
-            for name, _shape, _dtype, _s, _e in entries:
+            for name, shape, dtype, _s, _e in entries:
                 if nvfp4.is_nvfp4_packed_tensor(name):
                     scale_name = nvfp4.scale_name_for_packed(name)
                     gs_name = nvfp4.global_scale_name_for_packed(name)
                     if scale_name in names_in_file and gs_name in names_in_file:
                         consumed.update({name, scale_name, gs_name})
+                        merge_heads.add(name)
+                elif (
+                    nvfp4.is_hf_nvfp4_weight(name)
+                    and dtype == "U8"
+                    and len(shape) == 2
+                ):
+                    # Unsloth/HF NVFP4 (plefp8): ``<base>.weight`` U8 packed +
+                    # ``<base>.weight_scale`` F8_E4M3 + ``<base>.weight_scale_2``
+                    # F32 scalar. Verified against the real Flash-Next NVFP4
+                    # export — a U8 2-D .weight is unambiguous (no dense
+                    # format stores weights as uint8).
+                    scale_name, gs_name = nvfp4.hf_scale_names(name)
+                    if (
+                        scale_name in names_in_file
+                        and gs_name in names_in_file
+                    ):
+                        consumed.update({name, scale_name, gs_name})
+                        merge_heads.add(name)
                 elif mxfp4.is_packed_tensor(name):
                     scale_name = mxfp4.scale_name_for_packed(name)
                     if scale_name in names_in_file:
                         consumed.update({name, scale_name})
+                        merge_heads.add(name)
 
             for name, shape, dtype, _start, _end in entries:
-                if name in consumed:
-                    if nvfp4.is_nvfp4_packed_tensor(name):
-                        pass  # handled below (emits the merged dense handle)
-                    elif mxfp4.is_packed_tensor(name):
-                        pass  # handled below
-                    else:
-                        continue  # a consumed scale sibling — merged upstream
+                if name in consumed and name not in merge_heads:
+                    continue  # a consumed scale sibling — merged upstream
 
                 # NVFP4 packed tensor: ``weight_scale`` (F8_E4M3 bytes, one
                 # per group of 16) + ``weight_global_scale`` (fp32) siblings.
@@ -262,6 +285,35 @@ class SafetensorsLoader:
                                 shape=(m, k2 * 2),
                                 dtype="FP4_NVFP4",
                                 expert_id=_kimi_expert_id(base),
+                                loader=partial(
+                                    _load_nvfp4_triple, f, header, name,
+                                    scale_name, gs_name, data_offset,
+                                ),
+                            )
+                        )
+                        consumed.add(name)
+                        consumed.add(scale_name)
+                        consumed.add(gs_name)
+                        continue
+                # HF-named NVFP4 (Unsloth plefp8): the packed weights ARE the
+                # ``<base>.weight`` tensor (U8, 2-D); group scales in
+                # ``<base>.weight_scale`` (F8_E4M3), global scale in
+                # ``<base>.weight_scale_2`` (F32 scalar). Decoded shape is
+                # (m, k*2) — two FP4 values per byte.
+                if (
+                    nvfp4.is_hf_nvfp4_weight(name)
+                    and dtype == "U8"
+                    and len(shape) == 2
+                ):
+                    scale_name, gs_name = nvfp4.hf_scale_names(name)
+                    if scale_name in names_in_file and gs_name in names_in_file:
+                        m, k2 = shape[0], shape[1]
+                        handles.append(
+                            TensorHandle(
+                                name=name,
+                                shape=(m, k2 * 2),
+                                dtype="FP4_NVFP4",
+                                expert_id=_kimi_expert_id(name),
                                 loader=partial(
                                     _load_nvfp4_triple, f, header, name,
                                     scale_name, gs_name, data_offset,
@@ -337,5 +389,14 @@ def _load_named(path: Path, header: dict, name: str, data_offset: int, dtype: st
 
 
 def _kimi_expert_id(name: str) -> int | None:
+    """Expert index from a tensor name, or None for non-expert tensors.
+
+    Matches the Kimi ``block_sparse_moe.experts.<N>`` convention and the
+    generic HF convention ``...experts.<N>...`` (Llama/Qwen-style MoE,
+    incl. Unsloth plefp8 exports).
+    """
     m = _KIMI_EXPERT_RE.search(name)
-    return int(m.group(1)) if m else None
+    if m is not None:
+        return int(m.group(1))
+    m = _HF_EXPERT_RE.search(name)
+    return int(m.group(1)) if m is not None else None

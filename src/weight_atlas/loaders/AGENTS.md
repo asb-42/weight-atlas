@@ -58,6 +58,20 @@ formats).
   order must never leak a stray handle. Merged handle dtype `FP4_NVFP4`.
   Pinned by `tests/test_nvfp4.py` (round-trip + loader E2E + scan E2E +
   MXFP4-still-works).
+- **NVFP4 HF naming (Unsloth plefp8)**: same decode, different names —
+  packed weights ARE ``<base>.weight`` (U8, 2-D), scales in
+  ``<base>.weight_scale`` (F8), global scale in ``<base>.weight_scale_2``
+  (F32 scalar). A U8 2-D `.weight` is unambiguous (no dense format uses
+  uint8). Per-expert `input_scale` scalars (F32, shape `()`) are
+  standalone records — they must NEVER resolve expert machinery
+  (`is_expert_tensor`/`get_moe_slot`/`extract_expert_id` are weight-only;
+  scale siblings would otherwise collide with weight cells in expert
+  panels, last-wins). Standalone F8_E4M3 tensors decode via the nvfp4
+  bitfield table in `_from_raw` (a scan must never crash on them).
+- **0-D scalar tensors scan**: `to_matrix` maps `()` → `(1, 1)`; 1-D/0-D
+  stable_rank = 1.0 with the zero-signal guard first (all-zero → 0.0).
+  Real models store scalars (global scales, temperatures); pinned by
+  scalar stats tests.
 - **Q4_0 synthesis for fixtures**: `GGUFWriter.add_tensor(raw_dtype=...)`
   only tags the type (writes raw float32 bytes, no quantization). Real
   quantized fixtures use `gguf.quants.quantize(data, qtype)` and pass the

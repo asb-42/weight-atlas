@@ -80,6 +80,20 @@ _HF_HYBRID_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"linear_attn\.A_log"), "ssm_a"),
     (re.compile(r"linear_attn\.norm"), "ssm_norm"),
     (re.compile(r"linear_attn\.out_proj"), "ssm_out"),
+    # Qwen3.8-Flash-Next HF export (Unsloth plefp8): per-layer PLE table
+    # projections, indexer norms, and hyper-connection mixers. PLE table
+    # MATERIAL (ple.ple_embedding.*) is non-layer by map_name guard above;
+    # these rules cover the per-layer PLE machinery only.
+    (re.compile(r"ple\.key_proj"), "ngram_key"),
+    (re.compile(r"ple\.value_proj"), "ngram_value"),
+    (re.compile(r"ple\.conv1d"), "ngram_conv"),
+    (re.compile(r"ple\.norm_"), "ngram_norm"),
+    (re.compile(r"indexer\.index_qk_proj"), "indexer"),
+    (re.compile(r"indexer\.[qk]_layernorm"), "indexer"),
+    (re.compile(r"attn_hyper_connection\."), "hc_attn"),
+    (re.compile(r"mlp_hyper_connection\."), "hc_ffn"),
+    (re.compile(r"hyper_connection_mixer\.input_mix_weight_(down|up)"), "output_hc_base"),
+    (re.compile(r"hyper_connection_mixer\.hc_norm"), "output_hc_scale"),
 ]
 
 # Kimi K3 (language_model.model.layers.N.*) rules — applied after base HF rules.
@@ -473,6 +487,23 @@ def map_name(name: str) -> tuple[int | None, str]:
     if vision is not None:
         return None, vision[1]
 
+    # MTP draft tower (mtp.layers.N.*, mtp.fc_*, mtp.pre_fc_*): a separate
+    # speculative head, never the language raster. mtp.layers.N would
+    # otherwise extract layer N and silently overwrite language row N
+    # (raster cells are last-wins). Slot comes from the generic groups so
+    # records keep meaningful labels; the layer is dropped like vision.
+    if re.search(r"(^|\.)mtp\.", name):
+        _, slot = _match_layer(name, rules.hf_groups, -1)
+        return None, slot
+
+    # PLE n-gram table material (per-layer embedding tables, row-sharded):
+    # shards, scales and head/vocab metadata are one logical table split
+    # across many records — no single field cell can hold them (last-wins
+    # would show one arbitrary shard). Non-layer, like the GGUF giant
+    # table (per_layer_token_embd → (None, ngram_embd)).
+    if ".ple.ple_embedding." in name:
+        return None, "ngram_embd"
+
     # Try HuggingFace layer pattern first
     m = rules.layer_hf.search(name)
     if m:
@@ -500,8 +531,11 @@ def _handle_moe_hf(name: str, layer: int) -> tuple[int, str]:
     # Kimi K3 shared experts (block_sparse_moe.shared_experts.*) → shared_expert
     if re.search(r"block_sparse_moe\.shared_experts", name):
         return layer, "shared_expert"
-    # Expert tensors → expert slot (both HF mlp.experts and Kimi block_sparse_moe)
-    if re.search(r"mlp\.experts\.\d+\.(gate|up|down)_proj", name):
+    # Expert tensors → expert slot (both HF mlp.experts and Kimi block_sparse_moe).
+    # Weight-only: scale siblings (input_scale, weight_scale) share the
+    # prefix but are per-expert scalars, not weights — they fall through
+    # to "other" so the main field's expert column is never polluted.
+    if re.search(r"mlp\.experts\.\d+\.(gate|up|down)_proj\.weight$", name):
         return layer, "expert"
     if re.search(r"block_sparse_moe\.experts\.\d+\.w[123]", name):
         return layer, "expert"
@@ -514,12 +548,13 @@ def extract_expert_id(name: str) -> int | None:
     Returns:
         Expert ID if the tensor is an expert tensor, None otherwise.
     """
-    # HF: mlp.experts.{e}.(gate|up|down)_proj
-    m = re.search(r"mlp\.experts\.(\d+)\.(gate|up|down)_proj", name)
+    # HF: mlp.experts.{e}.(gate|up|down)_proj.weight (weight-only; scale
+    # siblings like .input_scale must not resolve an expert id)
+    m = re.search(r"mlp\.experts\.(\d+)\.(gate|up|down)_proj\.weight$", name)
     if m:
         return int(m.group(1))
-    # Kimi K3: block_sparse_moe.experts.{e}.w[123]
-    m = re.search(r"block_sparse_moe\.experts\.(\d+)\.w[123]", name)
+    # Kimi K3: block_sparse_moe.experts.{e}.w[123] (optional .weight)
+    m = re.search(r"block_sparse_moe\.experts\.(\d+)\.w[123](\.weight)?$", name)
     if m:
         return int(m.group(1))
     # GGUF expert sub-handles: blk.N.ffn_gate_exps.weight[3] → 3
@@ -531,15 +566,23 @@ def extract_expert_id(name: str) -> int | None:
 
 
 def is_expert_tensor(name: str) -> bool:
-    """Check if a tensor is an MoE expert tensor."""
-    # HF: mlp.experts.{e}.(gate|up|down)_proj
-    if re.search(r"mlp\.experts\.\d+\.(gate|up|down)_proj", name):
+    """Check if a tensor is an MoE expert tensor.
+
+    Weight-only: scale siblings (``*.weight_scale``, NVFP4
+    ``*.input_scale``) share the expert name prefix but are NOT expert
+    weights — matching them would route scalar records into expert
+    panels, colliding with the real weight cells (last-wins).
+    """
+    # HF: mlp.experts.{e}.(gate|up|down)_proj.weight (merged dense handle name)
+    if re.search(r"mlp\.experts\.\d+\.(gate|up|down)_proj\.weight$", name):
         return True
-    # Kimi K3: block_sparse_moe.experts.{e}.w[123]
-    if re.search(r"block_sparse_moe\.experts\.\d+\.w[123]", name):
+    # Kimi K3: block_sparse_moe.experts.{e}.w[123], safetensors
+    # files append .weight — but never a scale sibling
+    if re.search(r"block_sparse_moe\.experts\.\d+\.w[123](\.weight)?$", name):
         return True
-    # GGUF: ffn_(gate|up|down)_exps
-    return bool(re.search(r"blk\.\d+\.ffn_(gate|up|down)_exps", name))
+    # GGUF: ffn_(gate|up|down)_exps, optionally with .weight and/or the
+    # [expert_id] sub-handle suffix from the 3D-split loader
+    return bool(re.search(r"blk\.\d+\.ffn_(gate|up|down)_exps(\.weight)?(\[\d+\])?$", name))
 
 
 def is_shared_expert(name: str) -> bool:
@@ -553,13 +596,17 @@ def is_shared_expert(name: str) -> bool:
 
 
 def get_moe_slot(name: str) -> str | None:
-    """Get the MoE slot (gate/up/down) from an expert tensor name."""
+    """Get the MoE slot (gate/up/down) from an expert tensor name.
+
+    Weight-only: scale siblings must resolve to None so they never land
+    in expert panels (see is_expert_tensor).
+    """
     # HF
-    m = re.search(r"mlp\.experts\.\d+\.(gate|up|down)_proj", name)
+    m = re.search(r"mlp\.experts\.\d+\.(gate|up|down)_proj\.weight$", name)
     if m:
         return m.group(1)
-    # Kimi K3: w1=gate, w2=up, w3=down
-    m = re.search(r"block_sparse_moe\.experts\.\d+\.w([123])", name)
+    # Kimi K3: w1=gate, w2=up, w3=down (optional .weight suffix)
+    m = re.search(r"block_sparse_moe\.experts\.\d+\.w([123])(\.weight)?$", name)
     if m:
         return {"1": "gate", "2": "up", "3": "down"}[m.group(1)]
     # GGUF

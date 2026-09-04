@@ -151,6 +151,41 @@ class TestLoaderE2E:
         # provenance anchored
         assert fp["model"]["sources"][0]["file"].endswith(".safetensors")
 
+    def test_hf_naming_merges_triple(self, tmp_path: Path) -> None:
+        """Unsloth/HF naming (verified against the real Flash-Next NVFP4
+        plefp8 export): ``<base>.weight`` U8 packed + ``<base>.weight_scale``
+        (F8_E4M3 full bytes) + ``<base>.weight_scale_2`` (F32 scalar)."""
+        import ml_dtypes
+
+        rng = np.random.default_rng(41)
+        m, k = 6, 64
+        grid = _E2M1[rng.integers(0, 8, size=(m, k))] * np.where(rng.random((m, k)) < 0.5, -1, 1)
+        group_scales = 2.0 ** rng.integers(-2, 2, size=(m, k // nvfp4.NVFP4_GROUP_SIZE)).astype(np.float32)
+        gs = 0.125
+        dense = (grid * np.repeat(group_scales, nvfp4.NVFP4_GROUP_SIZE, axis=1) * gs).astype(np.float32)
+
+        tensors = {
+            "blk.0.attn_q.weight": _pack_fp4(grid),
+            "blk.0.attn_q.weight_scale": _e4m3_bytes(group_scales).view(ml_dtypes.float8_e4m3fn),
+            "blk.0.attn_q.weight_scale_2": np.array([gs], dtype=np.float32),
+            "blk.0.norm.weight": np.ones(8, dtype=np.float32),
+        }
+        path = tmp_path / "nvfp4_hf.safetensors"
+        save_file(tensors, str(path))
+
+        loader = SafetensorsLoader()
+        handles = loader.open(path)
+        by_name = {h.name: h for h in handles}
+        assert "blk.0.attn_q.weight" in by_name
+        for gone in ("blk.0.attn_q.weight_scale", "blk.0.attn_q.weight_scale_2"):
+            assert gone not in by_name, gone
+        assert "blk.0.norm.weight" in by_name
+
+        h = by_name["blk.0.attn_q.weight"]
+        assert h.dtype == "FP4_NVFP4"
+        assert h.shape == (m, k)
+        np.testing.assert_array_equal(h.load(), dense)
+
     def test_mxfp4_still_works_alongside(self, tmp_path: Path) -> None:
         """The format discriminator must not break the MXFP4 pair path."""
         rng = np.random.default_rng(31)
