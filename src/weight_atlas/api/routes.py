@@ -451,6 +451,7 @@ def create_router(
         page: int = 1,
         x: str | None = None,
         y: str | None = None,
+        q: str | None = None,
     ) -> str:
         """Render a model sub-page body (the tab content below the tab bar)."""
         ctx = dict(ctx)
@@ -460,6 +461,12 @@ def create_router(
         if tab == "stats":
             tensors = ctx.get("fingerprint", {}).get("tensors", {})
             items = list(tensors.items())
+            # name substring filter (case-insensitive) — the only way to
+            # find e.g. n-gram records among 74k rows without paging
+            q = (q or "").strip()
+            if q:
+                ql = q.lower()
+                items = [(n, s) for n, s in items if ql in n.lower()]
             total = len(items)
             per = stats_per_page
             pages = max(1, -(-total // per))
@@ -471,6 +478,7 @@ def create_router(
                 "stats_pages": pages,
                 "stats_total": total,
                 "stats_per_page": per,
+                "stats_q": q,
             })
         elif tab == "scatter":
             ctx.update(_scatter_tab_context(job, request, x, y))
@@ -487,6 +495,7 @@ def create_router(
         page: int = 1,
         x: str | None = None,
         y: str | None = None,
+        q: str | None = None,
     ) -> HTMLResponse:
         """Model detail view: tabbed sub-pages (overview/sheets/terrain/stats/
         scatter/records/spec).
@@ -502,7 +511,7 @@ def create_router(
         if tab not in model_tabs:
             tab = "overview"
         ctx = _model_context(job)
-        ctx["tab_content"] = _render_model_tab(request, job, tab, ctx, page=page, x=x, y=y)
+        ctx["tab_content"] = _render_model_tab(request, job, tab, ctx, page=page, x=x, y=y, q=q)
         ctx["active_tab"] = tab
         # htmx tab switches (hx-get) swap into #model-tab-content: serve the
         # bare fragment, never a full page (a full page would duplicate

@@ -1,7 +1,13 @@
 <section class="detail-section">
     <h3>Statistics</h3>
+    <form class="stats-filter" hx-get="/models/{{ job.job_id }}" hx-target="#model-tab-content" hx-swap="innerHTML" hx-push-url="true">
+        <input type="hidden" name="tab" value="stats">
+        <input type="text" name="q" value="{{ stats_q }}" placeholder="filter by tensor name substring&hellip;">
+        <button type="submit">Filter</button>
+        {% if stats_q %}<a href="/models/{{ job.job_id }}?tab=stats" hx-get="/models/{{ job.job_id }}?tab=stats" hx-target="#model-tab-content" hx-swap="innerHTML" hx-push-url="true" class="btn-small">Clear</a>{% endif %}
+    </form>
     {% if stats_rows %}
-    <p class="hint">Showing {{ stats_rows | length }} of {{ stats_total }} tensors (page {{ stats_page }} of {{ stats_pages }}).</p>
+    <p class="hint">Showing {{ stats_rows | length }} of {{ stats_total }} tensors{% if stats_q %} matching "{{ stats_q }}"{% endif %} (page {{ stats_page }} of {{ stats_pages }}).</p>
     <div class="stats-table-wrapper">
         <table class="stats-table">
             <thead>
@@ -34,13 +40,13 @@
     {% if stats_pages > 1 %}
     <nav class="stats-pagination">
         {% if stats_page > 1 %}
-        <a hx-get="/models/{{ job.job_id }}?tab=stats&page={{ stats_page - 1 }}"
+        <a hx-get="/models/{{ job.job_id }}?tab=stats&page={{ stats_page - 1 }}{% if stats_q %}&q={{ stats_q }}{% endif %}"
            hx-target="#model-tab-content" hx-swap="innerHTML" hx-push-url="true"
            class="btn-small">&larr; Prev</a>
         {% endif %}
         <span class="stats-page-indicator">Page {{ stats_page }} / {{ stats_pages }}</span>
         {% if stats_page < stats_pages %}
-        <a hx-get="/models/{{ job.job_id }}?tab=stats&page={{ stats_page + 1 }}"
+        <a hx-get="/models/{{ job.job_id }}?tab=stats&page={{ stats_page + 1 }}{% if stats_q %}&q={{ stats_q }}{% endif %}"
            hx-target="#model-tab-content" hx-swap="innerHTML" hx-push-url="true"
            class="btn-small">Next &rarr;</a>
         {% endif %}

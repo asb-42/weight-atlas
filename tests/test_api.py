@@ -1212,3 +1212,33 @@ class TestPackageEndpoints:
         assert "Share a Scan" in page.text
         assert "/api/packages/prepare" in page.text
         assert "NOT YET IMPLEMENTED" in page.text
+
+
+class TestStatsNameFilter:
+    """Stats-tab name substring filter (find e.g. n-gram records)."""
+
+    def test_filter_narrows_rows(self, client: TestClient, tmp_path: Path, fake_model: Path) -> None:
+        job_id = TestModelDetail._import_scan(None, client, tmp_path, fake_model, n_tensors=5)
+        resp = client.get(f"/models/{job_id}?tab=stats&q=blk.1.")
+        assert resp.status_code == 200
+        assert "blk.1." in resp.text
+        assert "blk.0." not in resp.text
+        assert "matching" in resp.text
+
+    def test_filter_no_match(self, client: TestClient, tmp_path: Path, fake_model: Path) -> None:
+        job_id = TestModelDetail._import_scan(None, client, tmp_path, fake_model, n_tensors=5)
+        resp = client.get(f"/models/{job_id}?tab=stats&q=zzz_no_such_tensor")
+        assert resp.status_code == 200
+        assert "No statistics available." in resp.text
+
+    def test_filter_case_insensitive(self, client: TestClient, tmp_path: Path, fake_model: Path) -> None:
+        job_id = TestModelDetail._import_scan(None, client, tmp_path, fake_model, n_tensors=5)
+        resp = client.get(f"/models/{job_id}?tab=stats&q=BLK.2.")
+        assert resp.status_code == 200
+        assert "blk.2." in resp.text
+
+    def test_filter_persists_in_pagination(self, client: TestClient, tmp_path: Path, fake_model: Path) -> None:
+        job_id = TestModelDetail._import_scan(None, client, tmp_path, fake_model, n_tensors=450)
+        resp = client.get(f"/models/{job_id}?tab=stats&q=blk.&page=2")
+        assert resp.status_code == 200
+        assert "Page 2 / 3" in resp.text
