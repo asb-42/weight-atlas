@@ -9,7 +9,8 @@ formats).
 ## Ownership
 
 - `base.py` (loader base contract), `safetensors_loader.py`,
-  `gguf_loader.py`, `pytorch_loader.py`, `gguf_dequant.py`, `mxfp4.py`.
+  `gguf_loader.py`, `pytorch_loader.py`, `gguf_dequant.py`, `mxfp4.py`,
+  `nvfp4.py`.
 - Registered with `core.registry.register_loader`; loader ids appear in
   `fingerprint.json` (`loader` field) and drive compare compatibility checks.
 
@@ -22,8 +23,9 @@ formats).
 - **Name mapping**: tensor-name → slot mapping is centralised in
   `core/name_map.py` (owned by parent doc); loaders must not embed their own
   mapping tables.
-- **Dequant correctness**: GGUF/MXFP4 dequant is numerically pinned by tests
-  (`tests/test_gguf.py`, `tests/test_kimi_k3.py`); do not change
+- **Dequant correctness**: GGUF/MXFP4/NVFP4 dequant is numerically pinned by
+  tests (`tests/test_gguf.py`, `tests/test_kimi_k3.py`,
+  `tests/test_nvfp4.py`); do not change
   dequantisation without updating those fixtures. Q4_0 uses the canonical
   layout (first 16 values in the low nibbles, last 16 in the high nibbles of
   the 16 qs bytes) — pinned by `test_q4_0_canonical_layout`. Q8_K uses the
@@ -43,6 +45,19 @@ formats).
 - **Safetensors header validation**: header length capped at 512 MB and every
   tensor's `data_offsets` must satisfy `0 <= start <= end <= data_len`
   (`_validate_offsets`) before any payload read.
+- **NVFP4 (safetensors, compressed-tensors `nvfp4-pack-quantized`)**:
+  `nvfp4.py` decodes FP4 E2M1 weights (nibble-packed, low nibble = even
+  column) x per-group-16 **E4M3 scales stored as full bytes** (tensor
+  `weight_scale`, dtype F8_E4M3) x per-tensor fp32 `weight_global_scale`.
+  Verified against compressed-tensors v0.18 source (`compressors/nvfp4/
+  base.py`); E4M3 decode is a pure-numpy bitfield table, byte-exact vs
+  ml_dtypes over all 256 bytes (pinned). The loader discriminates NVFP4
+  from MXFP4 by the **global-scale sibling** (both formats share
+  `.weight_packed` + `.weight_scale` names; MXFP4 scale is E8M0 uint8,
+  group 32). Sibling tensors are consumed in a pre-scan — dict iteration
+  order must never leak a stray handle. Merged handle dtype `FP4_NVFP4`.
+  Pinned by `tests/test_nvfp4.py` (round-trip + loader E2E + scan E2E +
+  MXFP4-still-works).
 - **Q4_0 synthesis for fixtures**: `GGUFWriter.add_tensor(raw_dtype=...)`
   only tags the type (writes raw float32 bytes, no quantization). Real
   quantized fixtures use `gguf.quants.quantize(data, qtype)` and pass the

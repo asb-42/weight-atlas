@@ -3,8 +3,10 @@
 Reads tensor payloads at the byte level (rather than via ``safetensors``'
 ``get_tensor``) so that BF16 tensors load reliably without relying on the
 numpy backend's dtype registry, and so that MXFP4 ``weight_packed`` +
-``weight_scale`` pairs can be dequantized into a single float32 weight
-(see :mod:`weight_atlas.loaders.mxfp4`).
+``weight_scale`` pairs — and NVFP4 ``weight_packed`` +
+``weight_scale_packed`` + ``weight_global_scale`` triples — can be
+dequantized into a single float32 weight (see :mod:`weight_atlas.loaders.mxfp4`
+and :mod:`weight_atlas.loaders.nvfp4`).
 """
 
 from __future__ import annotations
@@ -21,12 +23,7 @@ import numpy as np
 
 from weight_atlas.core.registry import register_loader
 from weight_atlas.core.types import TensorHandle
-from weight_atlas.loaders.mxfp4 import (
-    dequantize_mxfp4,
-    is_packed_tensor,
-    scale_name_for_packed,
-    weight_name_for_packed,
-)
+from weight_atlas.loaders import mxfp4, nvfp4
 
 _HEADER_SIZE_FMT = "<Q"
 _HEADER_SIZE_SIZE = 8
@@ -152,7 +149,26 @@ def _load_mxfp4_pair(path: Path, header: dict, packed_name: str, scale_name: str
     """Dequantize an MXFP4 ``weight_packed`` + ``weight_scale`` pair to float32."""
     packed = _read_tensor_uint8(path, header, packed_name, data_offset)
     scale = _read_tensor_uint8(path, header, scale_name, data_offset)
-    return dequantize_mxfp4(packed, scale)
+    return mxfp4.dequantize_mxfp4(packed, scale)
+
+
+def _load_nvfp4_triple(
+    path: Path, header: dict, packed_name: str, scale_name: str,
+    global_scale_name: str, data_offset: int,
+) -> np.ndarray:
+    """Dequantize an NVFP4 ``weight_packed`` + ``weight_scale`` (F8_E4M3
+    bytes) + ``weight_global_scale`` (fp32) triple to float32."""
+    packed = _read_tensor_uint8(path, header, packed_name, data_offset)
+    scale = _read_tensor_uint8(path, header, scale_name, data_offset)
+    gs_raw = _read_tensor_raw(path, header, global_scale_name, data_offset)
+    gs_dtype = str(header[global_scale_name]["dtype"])
+    gs_np = {"F32": "<f4", "F16": "<f2", "BF16": "<u2"}.get(gs_dtype, "<f4")
+    gs_bytes = np.frombuffer(gs_raw, dtype=gs_np)
+    if gs_dtype == "BF16":
+        gs = ((gs_bytes.astype(np.uint32) << np.uint32(16)).view(np.float32))
+    else:
+        gs = gs_bytes.astype(np.float32)
+    return nvfp4.dequantize_nvfp4(packed, scale, gs)
 
 
 def _discover_files(path: Path) -> list[Path]:
@@ -199,17 +215,67 @@ class SafetensorsLoader:
                 if len(shape) == 2 and dtype in ("F32", "F16", "BF16"):
                     self._tensor_ranges[name] = (f, dtype, shape, data_offset + start, end - start, 0)
 
-            # Names in this file for MXFP4 pair resolution.
+            # Names in this file for FP4-pair/triple resolution.
             names_in_file = {e[0] for e in entries}
             consumed: set[str] = set()
 
+            # Pre-scan: mergeable FP4 families are resolved by their PACKED
+            # tensor name; the scale/global-scale siblings can iterate in any
+            # order, so mark every member of a resolved triple/pair consumed
+            # BEFORE the handle loop runs (dict order otherwise leaks a
+            # stray handle for a sibling seen first).
+            for name, _shape, _dtype, _s, _e in entries:
+                if nvfp4.is_nvfp4_packed_tensor(name):
+                    scale_name = nvfp4.scale_name_for_packed(name)
+                    gs_name = nvfp4.global_scale_name_for_packed(name)
+                    if scale_name in names_in_file and gs_name in names_in_file:
+                        consumed.update({name, scale_name, gs_name})
+                elif mxfp4.is_packed_tensor(name):
+                    scale_name = mxfp4.scale_name_for_packed(name)
+                    if scale_name in names_in_file:
+                        consumed.update({name, scale_name})
+
             for name, shape, dtype, _start, _end in entries:
                 if name in consumed:
-                    continue  # already merged into a dequantized MXFP4 handle
+                    if nvfp4.is_nvfp4_packed_tensor(name):
+                        pass  # handled below (emits the merged dense handle)
+                    elif mxfp4.is_packed_tensor(name):
+                        pass  # handled below
+                    else:
+                        continue  # a consumed scale sibling — merged upstream
+
+                # NVFP4 packed tensor: ``weight_scale`` (F8_E4M3 bytes, one
+                # per group of 16) + ``weight_global_scale`` (fp32) siblings.
+                # Verified against compressed-tensors v0.18: base.py
+                # compression_param_names = (weight_packed, weight_scale,
+                # weight_global_scale). The global-scale sibling is the
+                # discriminator vs MXFP4 (which has no global scale).
+                if nvfp4.is_nvfp4_packed_tensor(name):
+                    scale_name = nvfp4.scale_name_for_packed(name)
+                    gs_name = nvfp4.global_scale_name_for_packed(name)
+                    if scale_name in names_in_file and gs_name in names_in_file:
+                        base = nvfp4.weight_name_for_packed(name)
+                        m, k2 = shape[0], shape[1]
+                        handles.append(
+                            TensorHandle(
+                                name=base,
+                                shape=(m, k2 * 2),
+                                dtype="FP4_NVFP4",
+                                expert_id=_kimi_expert_id(base),
+                                loader=partial(
+                                    _load_nvfp4_triple, f, header, name,
+                                    scale_name, gs_name, data_offset,
+                                ),
+                            )
+                        )
+                        consumed.add(name)
+                        consumed.add(scale_name)
+                        consumed.add(gs_name)
+                        continue
                 # MXFP4 packed tensor with a scale sibling in the same shard.
-                if is_packed_tensor(name):
-                    base = weight_name_for_packed(name)
-                    scale_name = scale_name_for_packed(name)
+                if mxfp4.is_packed_tensor(name):
+                    base = mxfp4.weight_name_for_packed(name)
+                    scale_name = mxfp4.scale_name_for_packed(name)
                     if scale_name in names_in_file:
                         m, k2 = shape[0], shape[1]
                         handles.append(
