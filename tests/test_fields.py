@@ -247,3 +247,21 @@ def test_load_channel_field_expert_raw_scales_with_base_channel(tmp_path):
     assert field.data.shape == (4, n_experts)
     # height uses rank_scale → values normalized to [0, 1], not raw magnitudes.
     assert np.nanmax(field.data) <= 1.0 + 1e-9
+
+
+def test_rasterizer_skips_scalar_records(spec):
+    """0-d scalar records must not occupy field cells: 1536 per-expert
+    scales collapsing last-wins into one (layer, 'other') cell is
+    arbitrary noise. Scalars stay visible in records/scatter."""
+    stats = [
+        TensorStats(name="model.layers.0.self_attn.q_proj.weight", shape=(4, 4), spectral_norm=2.0),
+        TensorStats(name="model.layers.0.mlp.experts.0.gate_proj.input_scale", shape=(), spectral_norm=0.5),
+        TensorStats(name="model.layers.0.mlp.experts.1.gate_proj.input_scale", shape=(), spectral_norm=0.7),
+    ]
+    field = rasterize(stats, spec, "spectral_norm")
+    other_idx = spec.slots.index("other")
+    # the experts' scales must not have written the 'other' cell...
+    assert np.isnan(field.data[0, other_idx])
+    # ...while the real matrix record lands normally
+    q_idx = spec.slots.index("attn_q")
+    assert field.data[0, q_idx] == pytest.approx(2.0)

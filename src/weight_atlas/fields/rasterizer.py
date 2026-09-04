@@ -146,6 +146,12 @@ def rasterize(
         # Skip expert tensors and shared experts (they go into panels)
         if is_expert_tensor(ts.name) or is_shared_expert(ts.name):
             continue
+        # Skip 0-d scalars (per-expert activation scales, temperatures):
+        # a point value cannot fill a matrix cell, and 1536 scalars
+        # collapsing last-wins into one (layer, 'other') cell is arbitrary
+        # noise. They remain fully visible in records/scatter.
+        if len(ts.shape) == 0:
+            continue
         layer, slot = map_name(ts.name)
         if layer is None:
             continue  # skip non-layer tensors like embed/lm_head
