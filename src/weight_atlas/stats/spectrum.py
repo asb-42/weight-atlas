@@ -44,7 +44,15 @@ _spectrum_lock = threading.Lock()
 
 
 def to_matrix(x: np.ndarray) -> np.ndarray:
-    """Flatten a tensor to a 2D matrix (rows=first dim, cols=rest)."""
+    """Flatten a tensor to a 2D matrix (rows=first dim, cols=rest).
+
+    1-D vectors become ``(1, n)`` (a single row). 0-D scalars become
+    ``(1, 1)`` — a rank-1 single-element matrix, consistent with the
+    1-D convention (real models store scalar tensors: global scales,
+    logit soft-temperature, etc. — they must scan, not crash).
+    """
+    if x.ndim == 0:
+        return x.reshape(1, 1)
     if x.ndim == 1:
         return x.reshape(1, -1)
     return x.reshape(x.shape[0], -1)

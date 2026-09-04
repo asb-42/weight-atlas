@@ -87,3 +87,27 @@ def test_stable_rank_matrix_matches_formula():
     sigma = np.linalg.svd(arr, compute_uv=False)
     expect = float(np.log1p((np.linalg.norm(arr) / sigma[0]) ** 2))
     assert pytest.approx(StableRank().compute(h), rel=1e-5) == expect
+
+
+def test_scalar_tensor_stats_do_not_crash():
+    """0-D tensors (real models store scalars: global scales, temperature)
+    must scan — to_matrix used to raise IndexError on shape[0] of ()."""
+    import numpy as np
+
+    from weight_atlas.stats.norms import EffectiveRank, FrobeniusNorm, SpectralNorm
+    from weight_atlas.stats.stable_rank import StableRank
+
+    arr = np.array(3.0, dtype=np.float32)  # shape ()
+    h = _handle(arr)
+    assert SpectralNorm().compute(h) == pytest.approx(3.0)
+    assert FrobeniusNorm().compute(h) == pytest.approx(3.0)
+    assert StableRank().compute(h) == 1.0  # rank-1 object, same as 1-D
+    assert EffectiveRank().compute(h) == pytest.approx(1.0)
+
+
+def test_scalar_zero_tensor():
+    """The all-zero scalar degenerates to 0 spectral norm without crashing."""
+    arr = np.array(0.0, dtype=np.float32)
+    h = _handle(arr)
+    assert SpectralNorm().compute(h) == 0.0
+    assert StableRank().compute(h) == 0.0

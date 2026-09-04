@@ -44,11 +44,14 @@ class StableRank:
         self._seed = seed
 
     def compute(self, t: TensorHandle) -> float:
-        if len(t.shape) == 1:
-            return 1.0  # a vector is rank-1: raw stable rank == 1
-        frob = FrobeniusNorm().compute(t)
         spec = float(truncated_spectrum(t, seed=self._seed)[0])
         if spec == 0.0:
-            return 0.0
+            return 0.0  # zero signal: no rank at all (any shape)
+        if len(t.shape) <= 1:
+            # 1-D vectors AND 0-D scalars are rank-1 objects: raw stable
+            # rank == 1.0 (the log1p variant degenerates to the constant
+            # ln(2) whenever frobenius == spectral_norm).
+            return 1.0
+        frob = FrobeniusNorm().compute(t)
         ratio_sq = (frob / spec) ** 2
         return float(np.log1p(ratio_sq))
