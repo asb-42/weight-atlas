@@ -1242,3 +1242,71 @@ class TestStatsNameFilter:
         resp = client.get(f"/models/{job_id}?tab=stats&q=blk.&page=2")
         assert resp.status_code == 200
         assert "Page 2 / 3" in resp.text
+
+
+class TestHealthz:
+    """GET /healthz — liveness + DB reachability for proxies/monitors."""
+
+    def test_healthz_ok(self, client: TestClient) -> None:
+        resp = client.get("/healthz")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+        assert body["database"] == "ok"
+
+    def test_healthz_degraded_on_dead_database(
+        self, tmp_path: Path, spec_path: Path
+    ) -> None:
+        """Unreachable DB → 503 degraded (never 500, never a leak)."""
+        from fastapi import FastAPI
+        from fastapi.templating import Jinja2Templates
+        from fastapi.testclient import TestClient
+
+        from weight_atlas.api import jobs as jobmod
+        from weight_atlas.api.routes import create_router
+
+        class _DeadStore:
+            """Schema init succeeds (app booted fine); reads fail (DB died
+            after startup — exactly what /healthz must report as 503)."""
+
+            def init_schema(self) -> None:
+                return None
+
+            def save_row(self, row: object) -> None:
+                raise ConnectionError("db gone")
+
+            def load_row(self, job_id: str) -> None:
+                raise ConnectionError("db gone")
+
+            def list_rows(self, limit: int) -> list:
+                raise ConnectionError("db gone")
+
+            def recoverable_rows(self) -> list:
+                raise ConnectionError("db gone")
+
+            def running_rows(self) -> list:
+                raise ConnectionError("db gone")
+
+            def reset_row(self, *a: object) -> None:
+                raise ConnectionError("db gone")
+
+        templates_dir = (
+            Path(jobmod.__file__).resolve().parent.parent / "ui" / "templates"
+        )
+        app = FastAPI()
+        app.include_router(
+            create_router(
+                jobmod.JobQueue(
+                    None, on_job=lambda j: None, store=_DeadStore()  # type: ignore[arg-type]
+                ),
+                Jinja2Templates(directory=str(templates_dir)),
+                Path(spec_path),
+                tmp_path / "output",
+                None,
+            )
+        )
+        resp = TestClient(app).get("/healthz")
+        assert resp.status_code == 503
+        body = resp.json()
+        assert body["status"] == "degraded"
+        assert body["error"] == "ConnectionError"  # type name only, no internals

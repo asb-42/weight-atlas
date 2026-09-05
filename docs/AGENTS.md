@@ -9,6 +9,8 @@ families, dated proposals, and progress/code-review reports.
 
 - `ARCHITECTURE.md` (durable design contracts), `user_manual.md` (usage +
   spec reference), `ROADMAP.md`, `BACKLOG.md`, `MODEL_FAMILIES.md`,
+  `DEPLOYMENT.md` (living Phase 1 server runbook — update in place as the
+  deployment evolves, unlike dated proposals),
   `activity_protocol.v1.md`, dated `*.md` proposals (incl.
   `2026-08-16_weight-atlas-api-spec-v0.2.md` — LLM query API design),
   `reports/` (dated progress + review reports).

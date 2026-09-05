@@ -538,6 +538,24 @@ def create_router(
         with open(fp_path) as f:
             return JSONResponse(json.load(f))
 
+    @router.get("/healthz")
+    async def healthz() -> JSONResponse:
+        """Liveness + database reachability for reverse proxies/monitors.
+
+        200 ``{"status": "ok"}`` when the job store answers; 503 with
+        ``{"status": "degraded", ...}`` otherwise. No auth, no secrets,
+        safe to poll every few seconds.
+        """
+        try:
+            job_queue.list_jobs(limit=1)
+        except Exception as exc:  # noqa: BLE001 - report, don't leak
+            return JSONResponse(
+                {"status": "degraded", "database": "unreachable",
+                 "error": f"{type(exc).__name__}"},
+                status_code=503,
+            )
+        return JSONResponse({"status": "ok", "database": "ok"})
+
     @router.get("/api/jobs/{job_id}/status")
     async def job_status_fragment(request: Request, job_id: str) -> HTMLResponse:
         """HTMX partial: job status badge + progress bar."""

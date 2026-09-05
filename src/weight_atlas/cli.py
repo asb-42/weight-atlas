@@ -123,6 +123,11 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Interface to bind (default: 0.0.0.0 = all interfaces / LAN; use 127.0.0.1 for localhost-only)")
     serve.add_argument("--port", type=int, default=8000, help="Port (default: 8000)")
     serve.add_argument("--reload", action="store_true", help="Enable auto-reload (development)")
+    serve.add_argument("--proxy-headers", action="store_true",
+                       help="Trust X-Forwarded-* headers from a reverse proxy "
+                            "(required behind Apache/Nginx, with --forwarded-allow-ips)")
+    serve.add_argument("--forwarded-allow-ips", default="127.0.0.1",
+                       help="Trusted proxy IPs for --proxy-headers (default: 127.0.0.1)")
 
     export = sub.add_parser("export", help="Export a scan as a shareable .wasc package")
     export.add_argument("scan_dir", type=Path, help="Directory containing scan artefacts")
@@ -413,6 +418,8 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         port=args.port,
         reload=args.reload,
         factory=True,
+        proxy_headers=args.proxy_headers,
+        forwarded_allow_ips=args.forwarded_allow_ips,
     )
     return 0
 
