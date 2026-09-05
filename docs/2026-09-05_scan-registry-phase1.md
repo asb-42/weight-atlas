@@ -88,7 +88,9 @@ extract/verify/render with memory caps; security headers
 
 ## 5. Data & storage architecture
 
-- **Database**: migrate the job store from SQLite to Postgres. The
+- **Database**: migrate the job store from SQLite to a server database.
+  The host already operates MySQL/MariaDB (see §10.1) — use MariaDB, not
+  Postgres, to reuse existing backups/monitoring/ops knowledge. The
   `JobQueue` abstraction gets a backend swap; SQLite stays for local dev
   and tests. New tables: `accounts`, `api_keys` (hash only), `packages`
   (manifest + trust tier + uploader + license declarations),
@@ -146,8 +148,13 @@ inviting*. Concrete deliverables, not vibes:
   server logs (documented, short retention).
 - **Hosting**: separate host/container from dev machines (the dev box
   already OOMed once under scan load — the site must never share fate
-  with scans). HTTPS via Let's Encrypt on the registered domain from
-  day one. Daily artefact+DB backups, restore tested once before launch.
+  with scans). The production host is rented hardware with full root,
+  Debian, running an Apache2/MySQL/MariaDB/Varnish/PHP (LAMP) stack
+  (see §10.1): terminate TLS at Apache, reverse-proxy to uvicorn, and
+  put Varnish in front of gallery/static renders (sheet PNGs are
+  immutable content-addressed bytes — cache aggressively). HTTPS via
+  Let's Encrypt on the registered domain from day one. Daily artefact+DB
+  backups, restore tested once before launch.
 - **Monitoring**: health endpoint (exists: `/api` discovery), disk/error
   alerting, ingest-queue depth. On-call is whoever holds the deploy keys
   — name them before launch, not after the first incident.
@@ -156,7 +163,8 @@ inviting*. Concrete deliverables, not vibes:
 
 - Auth: per-account API keys (`Authorization: Bearer`), created/rotated/
   revoked in settings; scopes from day one (`upload`, `read`) even if
-  only two scopes exist.
+  only two scopes exist. Browser accounts via GitHub OAuth for v1
+  (see §10.2); email-based accounts are a later, separate project.
 - Endpoints: `POST /api/v1/packages` (upload, returns verification
   report + trust tier), `GET /api/v1/packages/{id}/status` (async
   ingest pipeline), plus the existing read API (spec v0.2 + scatter/
@@ -168,7 +176,7 @@ inviting*. Concrete deliverables, not vibes:
 
 ## 9. Milestones (small, shippable, in order)
 
-- **M1 — private beta on real infra**: Postgres swap, auth (GitHub
+- **M1 — private beta on real infra**: MariaDB swap, auth (GitHub
   OAuth + API keys), HTTPS on the domain, upload pipeline with all §4
   guards, seed content = our own scans (Flash-Next, ladder series, BDH).
   Invite-only keys. Exit: three humans + one agent complete upload→
@@ -186,19 +194,26 @@ inviting*. Concrete deliverables, not vibes:
 Beauty is M2's exit criterion, not a later phase — an ugly public
 launch teaches visitors the data is not worth looking at.
 
-## 10. Open questions (need operator decisions)
+## 10. Open questions — RESOLVED 2026-09-05 (operator decisions)
 
-1. **Hosting**: which box/account runs this? (Determines Postgres vs.
-   managed DB, backup story, and how much of §4/§7 is our code vs. the
-   platform's.)
-2. **Identity**: is GitHub OAuth acceptable as the account system, or
-   must it be email/passwordless?
-3. **Seed content license check**: our scans' `model_license` fields —
-   confirm each source model's terms permit publishing derived stats
-   before M2.
-4. **Domain**: wire the registered domain to staging early (OAuth
-   callbacks and cookie domains depend on it).
-5. **Moderation staffing**: who triages the first 90 days of reports?
+1. **Hosting**: rented hardware, full root, Debian GNU/Linux, with an
+   operating Apache2/MySQL/MariaDB/Varnish/PHP (LAMP) stack already on
+   the box. Consequences recorded above: MariaDB instead of Postgres
+   (§5), TLS termination + reverse proxy at Apache, Varnish in front of
+   gallery/statics (§7). The app runs as its own uvicorn service behind
+   this stack; the PHP side is untouched.
+2. **Identity**: email preferred long-term, but **GitHub OAuth suffices
+   for v1**. No email system in v1 scope; record it as a named later
+   project, not scope creep.
+3. **Seed content license check**: **confirmed done by operator** — seed
+   scans may be published.
+4. **Domain**: registered domain is **saga-ai.org**; weight-atlas lives
+   at **`atlas.saga-ai.org`** (subdomain, per operator leaning —
+   isolates cookies/security policy from the apex and future services).
+   OAuth callbacks, cookie domain, and staging URLs all derive from it;
+   wire staging to the subdomain early.
+5. **Moderation staffing**: **confirmed staffed** — queue + runbook
+   (M3/M4) still required, but triage ownership is settled.
 
 ## 11. Verification plan
 
@@ -208,7 +223,7 @@ launch teaches visitors the data is not worth looking at.
   milestone exit criteria (scripted, not click-tested).
 - Full existing suite stays green throughout (794 tests + Phase 0
   package tests); new suites: auth, quotas, trust-tier transitions,
-  Postgres backend parity with SQLite.
+  MariaDB backend parity with SQLite.
 - Load test the ingest path with the largest real package (Flash-Next
   full profile) before M3; quota behaviour verified by actually
   hitting quotas.
