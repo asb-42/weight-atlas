@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from weight_atlas.api.store import JobStore, MariaDBJobStore, SQLiteJobStore
 from weight_atlas.core.registry import get_renderer, list_loaders
 from weight_atlas.core.types import AtlasSpec, load_default_spec
 from weight_atlas.render import (
@@ -141,6 +142,12 @@ def build_parser() -> argparse.ArgumentParser:
     importp.add_argument("package", type=Path, help="Path to the .wasc package")
     importp.add_argument("--out", type=Path, required=True,
                           help="Directory to extract the scan into")
+
+    dbcopy = sub.add_parser("db-copy", help="Copy job history between databases (e.g. SQLite file to MariaDB URL)")
+    dbcopy.add_argument("--from", dest="src", required=True,
+                        help="Source: SQLite file path or mysql:// URL")
+    dbcopy.add_argument("--to", dest="dst", required=True,
+                        help="Destination: SQLite file path or mysql:// URL")
 
     return parser
 
@@ -440,6 +447,27 @@ def _cmd_import(args: argparse.Namespace) -> int:
     return 0
 
 
+def _open_store(spec: str) -> JobStore:
+    """Open a JobStore from a SQLite path or mysql:// URL."""
+    if spec.startswith("mysql://") or spec.startswith("mariadb://"):
+        return MariaDBJobStore.from_url(spec)
+    return SQLiteJobStore(Path(spec))
+
+
+def _cmd_db_copy(args: argparse.Namespace) -> int:
+    from weight_atlas.api.store import transfer_jobs
+
+    try:
+        src = _open_store(args.src)
+        dst = _open_store(args.dst)
+    except (ValueError, ImportError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    moved = transfer_jobs(src, dst)
+    print(f"copied {moved} job(s): {args.src} -> {args.dst}")
+    return 0
+
+
 def _cmd_diagnose(args: argparse.Namespace) -> int:
     """Diagnose tensor name mapping coverage for a model."""
     from weight_atlas.core.registry import get_loader
@@ -515,6 +543,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_export(args)
     if args.command == "import":
         return _cmd_import(args)
+    if args.command == "db-copy":
+        return _cmd_db_copy(args)
     parser.print_help()
     return 0
 

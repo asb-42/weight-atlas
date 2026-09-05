@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 import threading
 import time
 import traceback
 import uuid
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from queue import Empty, Queue
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from weight_atlas.api.store import JobStore
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,29 @@ class JobQueue:
     writes to the DB.
     """
 
-    def __init__(self, db_path: Path, on_job: Callable[[Job], None]) -> None:
+    def __init__(
+        self,
+        db_path: Path | None,
+        on_job: Callable[[Job], None],
+        *,
+        store: JobStore | None = None,
+    ) -> None:
+        """Create a queue backed by ``store`` or a SQLite file.
+
+        ``store`` (a ``store.JobStore``) wins when given — production
+        passes a ``MariaDBJobStore`` while ``db_path`` stays None. Without
+        ``store`` a ``SQLiteJobStore`` is built from ``db_path`` (local
+        dev, tests); ``db_path`` is then required. ``_db_path`` is kept
+        for tooling that derives sibling paths from it (may be None for
+        server backends).
+        """
+        from weight_atlas.api.store import SQLiteJobStore
+
+        if store is None:
+            if db_path is None:
+                raise ValueError("JobQueue needs db_path or store=")
+            store = SQLiteJobStore(db_path)
+        self._store: JobStore = store
         self._db_path = db_path
         self._on_job = on_job
         self._queue: Queue[str] = Queue()
@@ -112,102 +135,65 @@ class JobQueue:
         self._current_job_id: str | None = None
         self._init_db()
 
-    def _connect(self) -> sqlite3.Connection:
-        """Open a SQLite connection with WAL + a busy timeout.
-
-        Concurrent worker writes and request reads otherwise hit
-        ``database is locked`` under load.
-        """
-        conn = sqlite3.connect(self._db_path, timeout=10.0)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout=10000")
-        return conn
-
-    @contextmanager
-    def _connection(self) -> Iterator[sqlite3.Connection]:
-        """Open a WAL connection that is guaranteed to be closed afterwards.
-
-        ``with sqlite3.Connection`` commits/rolls back but does NOT close the
-        connection, so ``with self._connect() as conn:`` leaked one or two file
-        descriptors per call (db + WAL) until the cyclic GC happened to run.
-        The UI polls the DB every 2 s and the worker saves progress frequently,
-        so over a long scan the leaks exhausted the process's fd limit
-        (EMFILE → ``unable to open database file``). Always close explicitly.
-        """
-        conn = self._connect()
-        try:
-            with conn:
-                yield conn
-        finally:
-            conn.close()
-
     def _init_db(self) -> None:
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connection() as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS jobs (
-                    job_id TEXT PRIMARY KEY,
-                    model_path TEXT NOT NULL,
-                    out_dir TEXT NOT NULL,
-                    spec_path TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    progress REAL NOT NULL DEFAULT 0.0,
-                    message TEXT NOT NULL DEFAULT '',
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    error TEXT NOT NULL DEFAULT '',
-                    artefacts TEXT NOT NULL DEFAULT '[]'
-                )
-            """)
-            self._migrate(conn)
+        self._store.init_schema()
 
-    def _migrate(self, conn: sqlite3.Connection) -> None:
-        """Add the job_type columns on pre-existing databases and backfill.
+    def _job_to_row(self, job: Job) -> dict[str, Any]:
+        import json
 
-        Older schema encoded the job type in ``message`` (``scan``,
-        ``compare[:mode[:interp]]``, ``render:<renderer>``) and recovery
-        overwrote it with ``re-queued after restart``, turning render/compare
-        jobs into scans on restart. New columns persist the type explicitly;
-        legacy rows are backfilled from their still-intact message where
-        possible (running/complete rows no longer carry the marker and fall
-        back to ``scan``).
-        """
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(jobs)")}
-        for name, ddl in (
-            ("job_type", "TEXT NOT NULL DEFAULT 'scan'"),
-            ("renderer", "TEXT NOT NULL DEFAULT ''"),
-            ("compare_mode", "TEXT NOT NULL DEFAULT 'strict'"),
-            ("compare_interp", "TEXT NOT NULL DEFAULT 'linear'"),
-            ("sheet_knobs", "TEXT NOT NULL DEFAULT '{}'"),
-            ("quant_probe", "INTEGER NOT NULL DEFAULT 0"),
-        ):
-            if name not in cols:
-                conn.execute(f"ALTER TABLE jobs ADD COLUMN {name} {ddl}")
-        rows = conn.execute(
-            "SELECT job_id, message, out_dir FROM jobs WHERE job_type = 'scan'"
-        ).fetchall()
-        for job_id, message, out_dir in rows:
-            if message == "compare" or message.startswith("compare:"):
-                parts = message.split(":", 2)
-                conn.execute(
-                    "UPDATE jobs SET job_type='compare', compare_mode=?, "
-                    "compare_interp=? WHERE job_id=?",
-                    (parts[1] if len(parts) > 1 else "strict",
-                     parts[2] if len(parts) > 2 else "linear", job_id),
-                )
-            elif message.startswith("render:"):
-                conn.execute(
-                    "UPDATE jobs SET job_type='render', renderer=? WHERE job_id=?",
-                    (message.split(":", 1)[1], job_id),
-                )
-            elif Path(out_dir).name.startswith("compare_"):
-                # Completed legacy compare jobs have message="Complete" (the
-                # marker was overwritten by progress text), so recover the type
-                # from the compare_* out_dir naming instead.
-                conn.execute(
-                    "UPDATE jobs SET job_type='compare' WHERE job_id=?",
-                    (job_id,),
-                )
+        return {
+            "job_id": job.job_id,
+            "model_path": job.model_path,
+            "out_dir": job.out_dir,
+            "spec_path": job.spec_path,
+            "status": job.status.value,
+            "progress": job.progress,
+            "message": job.message,
+            "created_at": job.created_at,
+            "updated_at": job.updated_at,
+            "error": job.error,
+            "artefacts": json.dumps(job.artefacts),
+            "job_type": job.job_type,
+            "renderer": job.renderer,
+            "compare_mode": job.compare_mode,
+            "compare_interp": job.compare_interp,
+            "sheet_knobs": json.dumps(job.sheet_knobs),
+            "quant_probe": 1 if job.quant_probe else 0,
+        }
+
+    @staticmethod
+    def _job_from_row(row: dict[str, Any]) -> Job:
+        import json
+
+        def _loads(value: Any, default: Any) -> Any:
+            if value is None:
+                return default
+            if isinstance(value, (dict, list)):
+                return value
+            try:
+                return json.loads(value)
+            except (TypeError, ValueError):
+                return default
+
+        return Job(
+            job_id=row["job_id"],
+            model_path=row.get("model_path", ""),
+            out_dir=row.get("out_dir", ""),
+            spec_path=row.get("spec_path", ""),
+            status=JobStatus(row.get("status", "queued")),
+            progress=row.get("progress", 0.0),
+            message=row.get("message", ""),
+            created_at=row.get("created_at", ""),
+            updated_at=row.get("updated_at", ""),
+            error=row.get("error", ""),
+            artefacts=_loads(row.get("artefacts"), []),
+            job_type=row.get("job_type", "scan"),
+            renderer=row.get("renderer", ""),
+            compare_mode=row.get("compare_mode", "strict"),
+            compare_interp=row.get("compare_interp", "linear"),
+            sheet_knobs=_loads(row.get("sheet_knobs"), {}),
+            quant_probe=bool(row.get("quant_probe", 0)),
+        )
 
     def _now(self) -> str:
         return datetime.now(UTC).isoformat(timespec="seconds")
@@ -234,65 +220,13 @@ class JobQueue:
         return new_spec
 
     def _save(self, job: Job) -> None:
-        import json
-        with self._connection() as conn:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO jobs
-                (job_id, model_path, out_dir, spec_path, status, progress,
-                 message, created_at, updated_at, error, artefacts,
-                 job_type, renderer, compare_mode, compare_interp, sheet_knobs,
-                 quant_probe)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    job.job_id,
-                    job.model_path,
-                    job.out_dir,
-                    job.spec_path,
-                    job.status.value,
-                    job.progress,
-                    job.message,
-                    job.created_at,
-                    job.updated_at,
-                    job.error,
-                    json.dumps(job.artefacts),
-                    job.job_type,
-                    job.renderer,
-                    job.compare_mode,
-                    job.compare_interp,
-                    json.dumps(job.sheet_knobs),
-                    1 if job.quant_probe else 0,
-                ),
-            )
+        self._store.save_row(self._job_to_row(job))
 
     def _load(self, job_id: str) -> Job | None:
-        import json
-        with self._connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
-            ).fetchone()
+        row = self._store.load_row(job_id)
         if row is None:
             return None
-        return Job(
-            job_id=row[0],
-            model_path=row[1],
-            out_dir=row[2],
-            spec_path=row[3],
-            status=JobStatus(row[4]),
-            progress=row[5],
-            message=row[6],
-            created_at=row[7],
-            updated_at=row[8],
-            error=row[9],
-            artefacts=json.loads(row[10]),
-            job_type=row[11],
-            renderer=row[12],
-            compare_mode=row[13],
-            compare_interp=row[14],
-            sheet_knobs=json.loads(row[15]) if len(row) > 15 else {},
-            quant_probe=bool(row[16]) if len(row) > 16 else False,
-        )
+        return self._job_from_row(row)
 
     def start(self) -> None:
         """Start the background worker thread, recovering interrupted jobs.
@@ -301,22 +235,16 @@ class JobQueue:
         jobs left as ``running`` by a crash/restart are reset to ``queued`` so
         they re-run idempotently (scan/compare overwrite their own outputs).
         """
-        with self._connection() as conn:
-            rows = conn.execute(
-                "SELECT job_id, status FROM jobs WHERE status IN (?, ?)",
-                (JobStatus.QUEUED.value, JobStatus.RUNNING.value),
-            ).fetchall()
+        for job_id, status in self._store.recoverable_rows():
+            if job_id in self._enqueued:
+                continue  # already on this instance's queue — don't double-enqueue
             now = self._now()
-            for job_id, status in rows:
-                if job_id in self._enqueued:
-                    continue  # already on this instance's queue — don't double-enqueue
-                if status == JobStatus.RUNNING.value:
-                    conn.execute(
-                        "UPDATE jobs SET status = ?, message = ?, updated_at = ? WHERE job_id = ?",
-                        (JobStatus.QUEUED.value, "re-queued after restart", now, job_id),
-                    )
-                self._queue.put(job_id)
-                self._enqueued.add(job_id)
+            if status == JobStatus.RUNNING.value:
+                self._store.reset_row(
+                    job_id, JobStatus.QUEUED.value, "re-queued after restart", now
+                )
+            self._queue.put(job_id)
+            self._enqueued.add(job_id)
 
         self._worker = threading.Thread(target=self._run, daemon=True)
         self._worker.start()
@@ -368,12 +296,7 @@ class JobQueue:
         and re-enqueue so it re-runs idempotently.
         """
         cutoff = datetime.now(UTC).timestamp() - _STALE_RUNNING_SECONDS
-        with self._connection() as conn:
-            rows = conn.execute(
-                "SELECT job_id, updated_at FROM jobs "
-                "WHERE status = ?",
-                (JobStatus.RUNNING.value,),
-            ).fetchall()
+        rows = self._store.running_rows()
         now = self._now()
         for job_id, updated_at in rows:
             try:
@@ -383,12 +306,9 @@ class JobQueue:
                 continue  # unparseable timestamp — treat as not stale
             if job_id == self._current_job_id:
                 continue  # the job this worker is executing right now
-            with self._connection() as conn:
-                conn.execute(
-                    "UPDATE jobs SET status = ?, message = ?, updated_at = ? "
-                    "WHERE job_id = ?",
-                    (JobStatus.QUEUED.value, "re-queued after stale running", now, job_id),
-                )
+            self._store.reset_row(
+                job_id, JobStatus.QUEUED.value, "re-queued after stale running", now
+            )
             self._queue.put(job_id)
             self._enqueued.add(job_id)
 
@@ -800,32 +720,7 @@ class JobQueue:
         return self._load(job_id)
 
     def list_jobs(self, limit: int = 50) -> list[Job]:
-        import json
-        with self._connection() as conn:
-            rows = conn.execute(
-                "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
-        return [
-            Job(
-                job_id=r[0],
-                model_path=r[1],
-                out_dir=r[2],
-                spec_path=r[3],
-                status=JobStatus(r[4]),
-                progress=r[5],
-                message=r[6],
-                created_at=r[7],
-                updated_at=r[8],
-                error=r[9],
-                artefacts=json.loads(r[10]),
-                job_type=r[11],
-                renderer=r[12],
-                compare_mode=r[13],
-                compare_interp=r[14],
-            )
-            for r in rows
-        ]
+        return [self._job_from_row(row) for row in self._store.list_rows(limit)]
 
 
     def _auto_render_sheets(

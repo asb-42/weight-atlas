@@ -18,7 +18,21 @@ scan/render/compare, and provides file-browsing and result endpoints. The UI
 
 ## Local Contracts
 
-- **Job queue**: `JobQueue` in `jobs.py` persists jobs in `data/jobs.db`.
+- **Job queue**: `JobQueue` in `jobs.py` persists jobs via a `JobStore`
+  (`store.py`) — `SQLiteJobStore` for local dev/tests (default
+  `data/jobs.db`), `MariaDBJobStore` for server deployments (Phase 1
+  M1). Both backends share one ordered column list (`COLUMNS`), so
+  `SELECT *` positional mapping can never drift; row dicts cross the
+  boundary, never SQL. `WEIGHT_ATLAS_DB_URL=mysql://...` selects
+  MariaDB (takes precedence over `WEIGHT_ATLAS_DB_PATH`). History
+  migration is `weight-atlas db-copy --from <sqlite> --to <mysql-url>`
+  (verbatim row transfer). MariaDB DDL avoids TEXT defaults
+  (unsupported): sized VARCHAR/MEDIUMTEXT. `pymysql` is a `mysql`
+  extra, imported lazily — the base install never requires it.
+  Backend parity is pinned by `tests/test_store_backends.py` (shared
+  battery vs SQLite always, vs live MariaDB when
+  `WEIGHT_ATLAS_TEST_MYSQL_URL` is set, plus a serverless dialect
+  unit test).
   Job type lives in its own column (`job.job_type` = `scan`/`render`/
   `compare`), with per-type params in `renderer`, `compare_mode`,
   `compare_interp`. `job.message` is progress text only and is overwritten

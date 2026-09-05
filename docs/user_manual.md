@@ -113,6 +113,27 @@ uvicorn weight_atlas.api.main:app --reload
 > `0.0.0.0` and exposes the job/import/artefact API to the LAN. Run only on a
 > trusted network or behind a firewall/VPN.
 
+### Job database backends
+
+Local runs use a SQLite file (`./data/jobs.db`, overridable via
+`WEIGHT_ATLAS_DB_PATH`). Server deployments use MariaDB instead:
+
+```bash
+export WEIGHT_ATLAS_DB_URL="mysql://user:pass@host:3306/atlas"
+weight-atlas serve
+```
+
+This needs the `mysql` extra (`pip install weight-atlas[mysql]`). Copy
+existing history over with:
+
+```bash
+weight-atlas db-copy --from ./data/jobs.db --to "mysql://user:pass@host:3306/atlas"
+```
+
+`db-copy` transfers every job row verbatim (upsert by id, safe to
+re-run); fingerprint/field artefacts stay on disk and are referenced by
+path, so point the server at the same output directories afterwards.
+
 ---
 
 ## Core Concepts

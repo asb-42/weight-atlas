@@ -6,6 +6,7 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -26,6 +27,7 @@ from weight_atlas.render import (  # noqa: F401 — registers renderers
 
 def create_app(
     db_path: Path | None = None,
+    db_url: str | None = None,
     spec_path: Path | None = None,
     output_root: Path | None = None,
     model_roots: list[Path] | None = None,
@@ -35,6 +37,10 @@ def create_app(
     Args:
         db_path: Path to SQLite job database. Defaults to ./data/jobs.db,
         overridable via ``WEIGHT_ATLAS_DB_PATH``.
+        db_url: MariaDB URL (``mysql://user:pass@host:port/dbname``),
+        overridable via ``WEIGHT_ATLAS_DB_URL``. Takes precedence over
+        ``db_path`` when set — this is the server-deployment backend
+        (Phase 1 M1); local dev keeps SQLite.
         spec_path: Path to atlas spec JSON. Defaults to the canonical
             ``get_default_spec_path()`` (atlas_spec.v2.4.json).
         output_root: Root directory for scan outputs. Defaults to ./output,
@@ -62,7 +68,14 @@ def create_app(
     _db_path.parent.mkdir(parents=True, exist_ok=True)
     _output_root.mkdir(parents=True, exist_ok=True)
 
-    job_queue = jobmod.JobQueue(_db_path, on_job=lambda j: None)
+    _db_url = db_url or os.environ.get("WEIGHT_ATLAS_DB_URL")
+    if _db_url:
+        from weight_atlas.api.store import MariaDBJobStore
+
+        store: Any = MariaDBJobStore.from_url(_db_url)
+        job_queue = jobmod.JobQueue(None, on_job=lambda j: None, store=store)
+    else:
+        job_queue = jobmod.JobQueue(_db_path, on_job=lambda j: None)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:

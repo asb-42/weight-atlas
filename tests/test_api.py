@@ -472,7 +472,7 @@ class TestJobQueueDB:
         # then died *after* start()'s startup recovery had already run.
         old = (datetime.now(UTC) - timedelta(seconds=3600)).isoformat(timespec="seconds")
         q1._save(job)  # noqa: SLF001
-        with q1._connection() as conn:  # noqa: SLF001
+        with q1._store._connection() as conn:  # noqa: SLF001
             conn.execute(
                 "UPDATE jobs SET status=?, updated_at=?, message=? WHERE job_id=?",
                 (JobStatus.RUNNING.value, old, "Rendering height...", job.job_id),
@@ -494,7 +494,7 @@ class TestJobQueueDB:
         stale = q.submit(fake_model, tmp_path / "out", spec_path)
         now = datetime.now(UTC).isoformat(timespec="seconds")
         old = (datetime.now(UTC) - timedelta(seconds=3600)).isoformat(timespec="seconds")
-        with q._connection() as conn:  # noqa: SLF001
+        with q._store._connection() as conn:  # noqa: SLF001
             conn.execute(
                 "UPDATE jobs SET status=?, updated_at=? WHERE job_id=?",
                 (JobStatus.RUNNING.value, now, fresh.job_id),
