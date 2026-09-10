@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
+import numpy as np
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
@@ -340,6 +341,48 @@ def create_router(
             })
         return {"record_boards": boards}
 
+    def _records_viz_context(job: Any) -> dict[str, Any]:
+        """Outlier-impact visual context for the records tab.
+
+        Renders three deterministic server-side SVGs (no JS, no client deps):
+        a channel-scale-dominance ranking (OCGQuant framing), a per-layer
+        depth profile, and percentile strips that place each board record in
+        its model-wide distribution.
+        """
+        from weight_atlas.api.query import (
+            distribution_strip,
+            extreme_records,
+            layer_profile,
+            outlier_impact,
+        )
+
+        records = _model_records(job)
+        impact = outlier_impact(records, limit=10)
+        profile = layer_profile(records, "row_amax_ratio")
+
+        # Percentile strip per amax board leader (the two cards where
+        # "what does this number mean" needs distribution context most).
+        strips: dict[str, dict[str, Any]] = {}
+        for metric in ("row_amax_ratio", "col_amax_ratio"):
+            tops = extreme_records(records, metric, "max", limit=1)
+            if tops:
+                strip = distribution_strip(
+                    records, metric, float(tops[0][metric])
+                )
+                if strip is not None:
+                    strips[metric] = strip
+
+        return {
+            "impact": impact,
+            "impact_svg": _impact_svg(impact),
+            "profile_svg": _profile_svg(profile),
+            "strips": strips,
+            "strip_svgs": {
+                m: _strip_svg(s) for m, s in strips.items()
+            },
+        }
+
+
     def _scatter_tab_context(job: Any, request: Request, x: str | None, y: str | None) -> dict[str, Any]:
         from weight_atlas.api.query import METRICS, scatter_points
 
@@ -490,6 +533,7 @@ def create_router(
             ctx.update(_scatter_tab_context(job, request, x, y))
         elif tab == "records":
             ctx.update(_records_tab_context(job))
+            ctx["viz"] = _records_viz_context(job)
         template = templates.env.get_template(f"_model_{tab}.html")
         return template.render(**ctx)
 
@@ -1037,3 +1081,209 @@ def create_router(
         return FileResponse(artifact_path)
 
     return router
+
+
+# ───────────────────────────────────────────────────────────────────────────────────
+# Records-tab SVG renderers (deterministic, server-side, no JS).
+#
+# Framing follows the outlier-channel literature: a channel whose magnitude
+# dominates its row/column sets the per-channel quantization scale, so every
+# companion channel in the same block inherits that scale as collateral
+# quantization error (cf. OCGQuant, arXiv:2609.00066). row_amax_ratio /
+# col_amax_ratio in the fingerprint measure exactly this dominance.
+# ───────────────────────────────────────────────────────────────────────────────────
+
+_IMPACT_BAR_H = 20
+_IMPACT_ROW_H = 26
+
+
+def _fmt_metric(v: float) -> str:
+    """Compact deterministic metric formatting for SVG labels."""
+    if v == int(v) and abs(v) < 1e6:
+        return str(int(v))
+    if abs(v) >= 1e5 or (0 < abs(v) < 1e-3):
+        return f"{v:.2e}"
+    return f"{v:.4g}"
+
+
+def _impact_svg(impact: list[dict[str, Any]]) -> str:
+    """Horizontal bar chart: channel-scale dominance per tensor.
+
+    One bar per tensor, length = dominance ratio (log scale from 1.0),
+    color = slot group, label = ratio; hover title carries row/col split.
+    """
+    if not impact:
+        return ""
+    slot_colors = {
+        "attn": "#4e79a7", "mlp": "#f28e2b", "norm": "#9c755f",
+        "embed": "#59a14f", "lm_head": "#76b7b2", "router": "#e15759",
+        "expert": "#b07aa1", "ssm": "#edc948", "bdh": "#b07aa1",
+        "vision": "#79706e", "other": "#bab0ac",
+    }
+
+    def slot_color(slot: str) -> str:
+        for prefix, color in slot_colors.items():
+            if slot.startswith(prefix):
+                return color
+        return slot_colors["other"]
+
+    name_w = 300
+    bar_x = name_w + 12
+    val_w = 74
+    w = bar_x + val_w + 24
+    h = len(impact) * _IMPACT_ROW_H + 30
+    lo = min(t["dominance"] for t in impact)
+    hi = max(t["dominance"] for t in impact)
+    lo = min(lo, 1.0)  # ratio scale starts at 1 (max == median)
+    log_span = (np.log10(max(hi, lo * 10)) - np.log10(lo)) or 1.0
+
+    parts = [
+        f'<svg viewBox="0 0 {w} {h}" role="img" class="impact-svg" '
+        f'xmlns="http://www.w3.org/2000/svg">',
+        f'<text x="{bar_x}" y="12" font-size="10" fill="#888">'
+        f'max-channel / median-channel ratio (log)</text>',
+    ]
+    for i, t in enumerate(impact):
+        y = 24 + i * _IMPACT_ROW_H
+        frac = (np.log10(max(t["dominance"], lo)) - np.log10(lo)) / log_span
+        bw = max(4.0, frac * val_w) if hi > lo else val_w * 0.92
+        color = slot_color(t["slot"])
+        layer_lbl = f"L{t['layer']} · " if t["layer"] >= 0 else ""
+        title = (
+            f"{t['tensor_name']} · {t['slot']}"
+            f" · row {t['row']:.4g} / col {t['col']:.4g}"
+            if t["row"] is not None and t["col"] is not None
+            else t["tensor_name"]
+        )
+        parts.extend(
+            [
+                f'<text x="0" y="{y + 13}" font-size="10" fill="#aaa" '
+                f'font-family="monospace">{layer_lbl}{t["tensor_name"][:44]}</text>',
+                f'<rect x="{bar_x}" y="{y}" width="{val_w}" height="{_IMPACT_BAR_H}" '
+                f'fill="#1d1d1d" stroke="#333" stroke-width="0.5">'
+                f'<title>{title}</title></rect>',
+                f'<rect x="{bar_x}" y="{y}" width="{bw:.1f}" height="{_IMPACT_BAR_H}" '
+                f'fill="{color}" fill-opacity="0.85"><title>{title}</title></rect>',
+                f'<text x="{bar_x + val_w + 6}" y="{y + 13}" font-size="10" '
+                f'fill="#ddd" font-family="monospace">{_fmt_metric(t["dominance"])}</text>',
+            ]
+        )
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def _profile_svg(profile: dict[str, Any]) -> str:
+    """Line chart: per-layer max row_amax_ratio (outlier depth structure)."""
+    layers = profile.get("layers") or []
+    if len(layers) < 2:
+        return ""
+    w, h = 900, 200
+    ml, mt, mr, mb = 56, 12, 16, 34
+    pw, ph = w - ml - mr, h - mt - mb
+    ys = [entry["max"] for entry in layers]
+    lo, hi = min(ys), max(ys)
+    if hi <= lo * 1.0001:
+        hi = lo * 1.5 + 1e-9
+    log = lo > 0 and hi / lo >= 100.0
+
+    def tf(v: float) -> float:
+        t = float(np.log10(v)) if log else v
+        tlo = float(np.log10(lo)) if log else lo
+        thi = float(np.log10(hi)) if log else hi
+        return mt + (1.0 - (t - tlo) / (thi - tlo)) * ph
+
+    n = len(layers)
+    pts = [
+        (ml + (i / (n - 1)) * pw, tf(entry["max"]))
+        for i, entry in enumerate(layers)
+    ]
+    line = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+    area = (
+        f"M {ml},{mt + ph} "
+        + " ".join(f"L {x:.1f},{y:.1f}" for x, y in pts)
+        + f" L {ml + pw},{mt + ph} Z"
+    )
+    worst_i = max(range(n), key=lambda i: layers[i]["max"])
+    parts = [
+        f'<svg viewBox="0 0 {w} {h}" role="img" class="profile-svg" '
+        f'xmlns="http://www.w3.org/2000/svg">',
+        f'<rect x="{ml}" y="{mt}" width="{pw}" height="{ph}" fill="#141414" stroke="#444"/>',
+        f'<path d="{area}" fill="#4e79a7" fill-opacity="0.12"/>',
+        f'<polyline points="{line}" fill="none" stroke="#4e79a7" stroke-width="1.6"/>',
+    ]
+    for i in range(5):
+        f = i / 4
+        gy = mt + f * ph
+        parts.append(f'<line x1="{ml}" y1="{gy:.1f}" x2="{ml + pw}" y2="{gy:.1f}" stroke="#2a2a2a"/>')
+    for i, entry in enumerate(layers):
+        x, y = pts[i]
+        title = f"layer {entry['layer']} · max {entry['max']:.4g} · {entry['worst_tensor']}"
+        parts.append(
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="2.6" fill="#4e79a7" '
+            f'fill-opacity="0.85"><title>{title}</title></circle>'
+        )
+    # annotate the worst layer
+    wx, wy = pts[worst_i]
+    parts.append(
+        f'<circle cx="{wx:.1f}" cy="{wy:.1f}" r="4.6" fill="none" stroke="#e15759" stroke-width="1.4">'
+        f'<title>peak: layer {layers[worst_i]["layer"]} · {layers[worst_i]["max"]:.4g}</title></circle>'
+    )
+    for i in (0, n // 2, n - 1):
+        parts.append(
+            f'<text x="{pts[i][0]:.1f}" y="{h - 16}" text-anchor="middle" font-size="10" '
+            f'fill="#888">layer {layers[i]["layer"]}</text>'
+        )
+    parts.append(
+        f'<text x="{ml - 6}" y="{mt + 10}" text-anchor="end" font-size="10" fill="#888">'
+        f'{_fmt_metric(hi)}</text>'
+    )
+    parts.append(
+        f'<text x="{ml + pw / 2:.0f}" y="{h - 4}" text-anchor="middle" font-size="11" fill="#aaa">'
+        f'max row_amax_ratio per layer{" (log)" if log else ""}</text>'
+    )
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def _strip_svg(strip: dict[str, Any]) -> str:
+    """Percentile strip: where the board leader sits in the metric's model-wide
+    distribution (p5–p95 box, min–max whiskers, leader marker).
+    """
+    w, h = 320, 58
+    ml, mr = 10, 10
+    pw = w - ml - mr
+    y = 26
+    lo, hi = strip["min"], strip["max"]
+    log = strip["log"]
+
+    def tf(v: float) -> float:
+        t = float(np.log10(v)) if log else v
+        tlo = float(np.log10(lo)) if log else lo
+        thi = float(np.log10(hi)) if log else hi
+        if thi - tlo < 1e-12:
+            thi = tlo + 1.0
+        return ml + (t - tlo) / (thi - tlo) * pw
+
+    def tick(v: float) -> str:
+        return _fmt_metric(v)
+
+    q = {k: tf(strip[k]) for k in ("p5", "p25", "p50", "p75", "p95")}
+    parts = [
+        f'<svg viewBox="0 0 {w} {h}" role="img" class="strip-svg" '
+        f'xmlns="http://www.w3.org/2000/svg">',
+        f'<line x1="{tf(lo):.1f}" y1="{y}" x2="{q["p5"]:.1f}" y2="{y}" stroke="#555"/>',
+        f'<line x1="{q["p95"]:.1f}" y1="{y}" x2="{tf(hi):.1f}" y2="{y}" stroke="#555"/>',
+        f'<rect x="{q["p25"]:.1f}" y="{y - 8}" width="{q["p75"] - q["p25"]:.1f}" height="16" '
+        f'fill="#4e79a7" fill-opacity="0.35" stroke="#4e79a7"/>',
+        f'<line x1="{q["p50"]:.1f}" y1="{y - 8}" x2="{q["p50"]:.1f}" y2="{y + 8}" stroke="#9c755f" stroke-width="1.6"/>',
+        # leader marker
+        f'<line x1="{tf(strip["value"]):.1f}" y1="{y - 15}" x2="{tf(strip["value"]):.1f}" y2="{y + 15}" '
+        f'stroke="#e15759" stroke-width="2"/><title>leader: {_fmt_metric(strip["value"])} '
+        f'({strip["percentile"]:.1f}% of {strip["n"]} tensors)</title>',
+        f'<text x="{ml}" y="{h - 6}" font-size="9" fill="#888">{tick(lo)}</text>',
+        f'<text x="{w - mr}" y="{h - 6}" text-anchor="end" font-size="9" fill="#888">{tick(hi)}</text>',
+        f'<text x="{w / 2:.0f}" y="{h - 6}" text-anchor="middle" font-size="9" fill="#bbb">'
+        f'p99 {_fmt_metric(strip["p99"])} · leader at p{strip["percentile"]:.1f}</text>',
+    ]
+    parts.append("</svg>")
+    return "".join(parts)

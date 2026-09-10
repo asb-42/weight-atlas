@@ -4,7 +4,58 @@
         Extreme tensors of this model, derived from the fingerprint metrics
         (deterministic; ties break by tensor name). Click a tensor name to open
         its position in the statistics table.
-    </p>    {% if record_boards %}
+    </p>
+
+    {% if viz and viz.impact %}
+    <div class="viz-block">
+        <h4>Outlier impact — channel-scale dominance</h4>
+        <p class="hint">
+            A channel whose magnitude dominates its row/column sets the
+            per-channel quantization scale: every companion channel sharing
+            that scale inherits the outlier's magnitude as collateral
+            quantization error (cf. OCGQuant, arXiv:2609.00066).
+            <code>row_amax_ratio</code> / <code>col_amax_ratio</code> measure
+            exactly this: largest per-channel max divided by the median
+            channel. Bars are log-scaled; color = subsystem.
+        </p>
+        {{ viz.impact_svg | safe }}
+    </div>
+
+    {% if viz.profile_svg %}
+    <div class="viz-block">
+        <h4>Depth profile — worst outlier channel per layer</h4>
+        <p class="hint">
+            Where in depth the outlier channels live: max
+            <code>row_amax_ratio</code> per layer. The circled point marks the
+            peak layer; hover points for the worst tensor of each layer.
+        </p>
+        {{ viz.profile_svg | safe }}
+    </div>
+    {% endif %}
+
+    {% if viz.strip_svgs %}
+    <div class="viz-block">
+        <h4>Board leaders in context</h4>
+        <p class="hint">
+            Where each outlier-board leader sits in the model-wide metric
+            distribution (min–max whiskers, p25–p75 box, median tick).
+        </p>
+        <div class="strips-grid">
+            {% for metric, svg in viz.strip_svgs.items() %}
+            <div class="strip-card">
+                <div class="strip-label">
+                    worst
+                    {% if metric == "row_amax_ratio" %}outlier channel{% else %}outlier column{% endif %}
+                </div>
+                {{ svg | safe }}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+    {% endif %}
+
+    {% if record_boards %}
     <div class="records-grid">
         {% for board in record_boards %}
         <div class="record-card">

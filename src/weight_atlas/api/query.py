@@ -425,6 +425,100 @@ def extreme_records(
     return [r for r, _ in finite[:limit]]
 
 
+def distribution_strip(
+    records: list[dict[str, Any]], metric: str, value: float
+) -> dict[str, Any] | None:
+    """Percentile context for one record value (records-tab strip).
+
+    Quantiles of ``metric`` over finite values in the model plus where
+    ``value`` lands (percentile of all finite values). None when the metric
+    has no finite values in this fingerprint. Deterministic.
+    """
+    vals = [float(r[metric]) for r in records if r.get(metric) is not None]
+    if not vals:
+        return None
+    arr = np.asarray(vals, dtype=np.float64)
+    pct = float((arr < value).mean() * 100.0)
+    return {
+        "n": int(arr.size),
+        "min": float(arr.min()),
+        "max": float(arr.max()),
+        "p5": float(np.quantile(arr, 0.05)),
+        "p25": float(np.quantile(arr, 0.25)),
+        "p50": float(np.quantile(arr, 0.50)),
+        "p75": float(np.quantile(arr, 0.75)),
+        "p95": float(np.quantile(arr, 0.95)),
+        "p99": float(np.quantile(arr, 0.99)),
+        "value": float(value),
+        "percentile": pct,
+        "log": bool(
+            (arr > 0).all() and float(arr.max() / arr.min()) >= 100.0 and value > 0
+        ),
+    }
+
+
+def outlier_impact(
+    records: list[dict[str, Any]], limit: int = 10
+) -> list[dict[str, Any]]:
+    """Top tensors by channel-scale dominance (row/col amax ratio).
+
+    The outlier-channel problem as a ranking (OCGQuant framing,
+    arXiv:2609.00066): a channel that dominates its row/column sets the
+    quantization scale for every companion channel sharing that block, so
+    its magnitude becomes their collateral error. Ranked by
+    max(row_amax_ratio, col_amax_ratio); ties break by tensor_name.
+    """
+    rows: list[dict[str, Any]] = []
+    for r in records:
+        row_v, col_v = r.get("row_amax_ratio"), r.get("col_amax_ratio")
+        vals = [
+            float(v)
+            for v in (row_v, col_v)
+            if v is not None and np.isfinite(float(v))
+        ]
+        if not vals:
+            continue
+        rows.append(
+            {
+                "tensor_name": r["tensor_name"],
+                "slot": r["slot"],
+                "layer": r["layer"],
+                "shape": list(r.get("shape") or []),
+                "row": float(row_v) if row_v is not None else None,
+                "col": float(col_v) if col_v is not None else None,
+                "dominance": max(vals),
+            }
+        )
+    rows.sort(key=lambda t: (-t["dominance"], t["tensor_name"]))
+    return rows[:limit]
+
+
+def layer_profile(
+    records: list[dict[str, Any]], metric: str
+) -> dict[str, Any]:
+    """Per-layer max of ``metric`` (depth structure of the outlier boards).
+
+    Layer-less tensors (embeddings, norms, lm_head) are excluded. Returns
+    ``{"metric": …, "layers": [{"layer", "max", "worst_tensor"}, …]}``
+    ordered by layer index; deterministic.
+    """
+    best: dict[int, tuple[float, str]] = {}
+    for r in records:
+        layer, v = r.get("layer"), r.get(metric)
+        if layer is None or layer < 0 or v is None:
+            continue
+        f = float(v)
+        if not np.isfinite(f):
+            continue
+        if layer not in best or f > best[layer][0]:
+            best[layer] = (f, r["tensor_name"])
+    layers = [
+        {"layer": layer, "max": best[layer][0], "worst_tensor": best[layer][1]}
+        for layer in sorted(best)
+    ]
+    return {"metric": metric, "layers": layers}
+
+
 def scatter_points(
     records: list[dict[str, Any]], x_metric: str, y_metric: str, cap: int = SCATTER_CAP
 ) -> dict[str, Any]:
