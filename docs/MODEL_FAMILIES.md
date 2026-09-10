@@ -1,6 +1,30 @@
 # Model Families
 
-This document describes known model families and their tensor naming conventions as verified by the name audit system.
+This document describes known model families and their tensor naming conventions as checked by the name audit system.
+
+## MiniCPM5-1B (EXL3)
+
+**Architecture**: Llama-style Transformer, EXL3 trellis quantization
+**Convention**: HuggingFace (safetensors) with EXL3 groups
+**Layers**: 24
+**Hidden Size**: 1536
+**Heads**: 16 (kv 2, head_dim 128)
+**Vocab**: 130560
+**Intermediate Size**: 4608
+**Quantization**: EXL3 8.0 bpw (K=8, mcg codebook, head_bits 8), exllamav3 0.0.37
+
+EXL3 quantized linears store per-group component tensors instead of plain weights:
+
+| Component | Shape | Meaning |
+|-----------|-------|---------|
+| `<prefix>.trellis` | [in/16, out/16, 16·K] | packed K-bit trellis indices, 16×16 tiles |
+| `<prefix>.suh` | [in] | input scales/signs (f16) |
+| `<prefix>.svh` | [out] | output scales/signs (f16) |
+| `<prefix>.mcg` or `.mul1` | scalar | procedural codebook marker |
+
+The `exl3` loader reconstructs `<prefix>.weight` (out, in) lazily; plain
+passthrough tensors (BF16 embeddings, norms) decode through the shared
+safetensors helpers.
 
 ## Bonsai-8B
 

@@ -13,6 +13,7 @@ import pytest
 from weight_atlas.core.registry import get_renderer
 from weight_atlas.core.registry import reset as registry_reset
 from weight_atlas.loaders import (
+    exl3_loader,  # noqa: F401 — ensure loader registered
     gguf_loader,  # noqa: F401 — ensure loader registered
     safetensors_loader,  # noqa: F401 — ensure loader registered
 )
@@ -42,6 +43,7 @@ def _isolated_registry():
     importlib.reload(safetensors_loader)
     importlib.reload(matplotlib_sheet)
     importlib.reload(gguf_loader)
+    importlib.reload(exl3_loader)
     import weight_atlas.render.fractal.wrapper as fractal_wrapper
     importlib.reload(fractal_wrapper)
 

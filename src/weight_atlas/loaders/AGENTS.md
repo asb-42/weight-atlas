@@ -14,6 +14,31 @@ formats).
 - Registered with `core.registry.register_loader`; loader ids appear in
   `fingerprint.json` (`loader` field) and drive compare compatibility checks.
 
+### EXL3 (exllamav3 trellis quantization)
+
+- Ownership: `exl3_dequant.py` (pure-NumPy dequantization), `exl3_loader.py`
+  (registry id `exl3`); pinned by `tests/test_exl3.py`.
+- Quant groups `<prefix>.{trellis,suh,svh,[mcg|mul1]}` resolve to a single
+  `<prefix>.weight` handle in the HF (out, in) convention; component tensors
+  are never exposed. Handle dtype `exl3_K<k>_<codebook>` (fingerprint
+  `quantization` summary counts them).
+- Dequant correctness is bit-exact against a naive scalar transcription of
+  the exllamav3 reference CUDA kernels (`pack.cu`, `exl3_dq.cuh`,
+  `codebook.cuh`, `reconstruct.cu`, `exl3.py get_weight_tensor`): tail-biting
+  trellis bitstream (MSB-first, SWAP16 word-pair reversal), 16-bit decode
+  windows ending at ring bit (t+1)*K for K in 1..8, procedural codebooks
+  plain/mcg/mul1, tensor-core tile scatter, Hadamard-128 epilogue with
+  suh/svh per-channel scales.
+- Packed payloads (trellis words) are read as native integer bits — never
+  through the float32 decode path (bit patterns would be corrupted).
+- Legacy packed sign tensors (`su`/`sv`) are rejected with a clear error.
+- Detection: a directory whose `config.json` has
+  `quantization_config.quant_method == "exl3"` is EXL3 (checked before the
+  safetensors glob — EXL3 checkpoints ship `*.safetensors` shards).
+- Real-sample integration tests run when
+  `/media/data/AI/models/turboderp_MiniCPM5-1B-exl3` is present (skipif
+  otherwise).
+
 ## Local Contracts
 
 - **Registry**: every loader registers a string id; duplicate ids raise

@@ -224,16 +224,40 @@ def load_default_spec() -> AtlasSpec:
 # GGUF magic bytes
 _GGUF_MAGIC = b"GGUF"
 
+# EXL3 marker in config.json (quantization_config.quant_method)
+_EXL3_QUANT_METHOD = "exl3"
+
+
+def _is_exl3_directory(path: Path) -> bool:
+    """True when a directory is an EXL3 checkpoint (``config.json`` marker).
+
+    Checked before the safetensors glob: EXL3 checkpoints ship
+    ``*.safetensors`` shards, so contents alone cannot distinguish them
+    from a plain HF export.
+    """
+    cfg = path / "config.json"
+    if not cfg.is_file():
+        return False
+    try:
+        with open(cfg) as f:
+            raw = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+    qcfg = raw.get("quantization_config") or {}
+    return str(qcfg.get("quant_method", "")).lower() == _EXL3_QUANT_METHOD
+
 
 def detect_loader(path: Path) -> str:
     """Detect loader type from file magic bytes or directory contents.
 
     Returns:
         "gguf" for GGUF files / directories containing ``*.gguf``,
+        "exl3" for EXL3 checkpoint directories (``config.json`` with
+            ``quantization_config.quant_method == "exl3"``),
         "pytorch" for PyTorch ``.pt`` files (ZIP archives) / directories
-        containing ``*.pt``,
+            containing ``*.pt``,
         "safetensors" for safetensors files / directories containing
-        ``*.safetensors``.
+            ``*.safetensors``.
 
     Raises:
         FileNotFoundError: for directories with no recognizable shards, or an
@@ -244,6 +268,8 @@ def detect_loader(path: Path) -> str:
         if path.is_dir():
             if any(path.glob("*.gguf")):
                 return "gguf"
+            if _is_exl3_directory(path):
+                return "exl3"
             if any(path.glob("*.pt")):
                 return "pytorch"
             if any(path.glob("*.safetensors")):

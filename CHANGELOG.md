@@ -1,5 +1,41 @@
 ## [Unreleased]
 
+### EXL3 loader (M4.5): trellis dequantization and scan integration
+
+New loader `exl3` for EXL3 checkpoints (exllamav3 trellis quantization,
+QTIP-derived); verification covers bit-exact tile reconstruction against
+the exllamav3 reference CUDA kernels — 15/15 sampled tiles on the real
+model, 43 tests in `tests/test_exl3.py` (details below).
+
+- New modules: `loaders/exl3_dequant.py` (pure-NumPy dequantization) and
+  `loaders/exl3_loader.py` (registry id `exl3`)
+- Auto-detection: a directory whose `config.json` has
+  `quantization_config.quant_method == "exl3"` — checked before the
+  safetensors glob, because EXL3 checkpoints ship `*.safetensors` shards
+  (fixes UI scans of EXL3 directories that silently fell through to the
+  plain safetensors loader and produced raw-component fingerprints with
+  degenerate-channel warnings)
+- Quant groups (`<prefix>.{trellis,suh,svh,[mcg|mul1]}`) resolve to a single
+  `<prefix>.weight` handle in the HF (out, in) convention; component tensors
+  are never exposed; handle dtype `exl3_K<k>_<codebook>` feeds the
+  fingerprint `quantization` summary
+- Packed payloads are read as native integer bits — never through the
+  float32 decode path; legacy packed sign tensors (`su`/`sv`) are rejected
+  with a clear error
+- `tests/test_exl3.py` (43 tests): bit-exact tile comparison against an
+  independent scalar transcription of the CUDA kernels, loader edge cases,
+  scan pipeline, determinism, and real-sample integration (skipped when the
+  sample model is absent)
+- Verification evidence: 15/15 sampled tiles bit-exact against the scalar
+  reference on the real model; scale semantics corr(colRMS,|svh|)=1.0000,
+  corr(rowRMS,|suh|)>0.98 on 4 real groups; full-model scan of
+  `turboderp_MiniCPM5-1B-exl3` (169 groups, 219 tensors): 100% mapping
+  coverage, degeneration-clean under the v2.1 spec. Under the broader v2.4
+  default spec the same scan emits a low-valid-fraction warning
+  (216/2088 grid cells filled — 87 spec slots vs 9 used by this dense
+  24-layer model): a grid-coverage artifact, not a data defect. Suite: 900
+  passed, 4 skipped on this branch.
+
 ### Records tab: outlier-impact visualizations (OCGQuant framing)
 
 The records boards rendered bare numbers; the outlier story is now told

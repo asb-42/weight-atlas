@@ -30,6 +30,7 @@ from weight_atlas.fields.rasterizer import (
 from weight_atlas.fields.scaling import apply_scale, log1p
 from weight_atlas.fields.tif_io import write_tif
 from weight_atlas.loaders import (
+    exl3_loader,  # noqa: F401 — triggers registration
     gguf_loader,  # noqa: F401 — triggers registration
     pytorch_loader,  # noqa: F401 — triggers registration
     safetensors_loader,  # noqa: F401 — triggers registration
@@ -1136,6 +1137,15 @@ def _build_fingerprint(
         for ggml_type in ggml_types.values():
             quant_summary[ggml_type] = quant_summary.get(ggml_type, 0) + 1
         out["quantization"] = quant_summary
+
+    # Add quantization summary for EXL3 (per-K/codebook handle dtypes)
+    if loader_id == "exl3":
+        exl3_summary: dict[str, int] = {}
+        for h in handles or []:
+            if h.dtype.startswith("exl3_"):
+                exl3_summary[h.dtype] = exl3_summary.get(h.dtype, 0) + 1
+        if exl3_summary:
+            out["quantization"] = exl3_summary
 
     # Add MoE info
     moe_info = detect_moe(stats)

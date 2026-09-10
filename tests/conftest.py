@@ -2,6 +2,7 @@
 
 from weight_atlas.compare.render import DeltaSheet  # noqa: F401 — registers renderer
 from weight_atlas.loaders import (
+    exl3_loader,  # noqa: F401 — registers loader
     gguf_loader,  # noqa: F401 — registers loader
     safetensors_loader,  # noqa: F401 — registers loader
 )
