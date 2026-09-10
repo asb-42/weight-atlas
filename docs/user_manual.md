@@ -204,7 +204,7 @@ weight-atlas scan <path> --out <dir> [options]
 | `path` | Path | Yes | Path to model file or directory |
 | `--out` | Path | Yes | Output directory |
 | `--spec` | Path | No | Path to atlas spec JSON (default: `specs/atlas_spec.v2.4.json`) |
-| `--loader` | choice | No | `safetensors` or `gguf` (default: auto-detect) |
+| `--loader` | choice | No | `exl3`, `gguf`, `pytorch` or `safetensors` (default: auto-detect) |
 
 **Output**: `fingerprint.json`, `field_<channel>_raw.tif`, `field_<channel>_smooth.tif`, `embedding_pca.npy`, `embedding_meta.json`, `manifest.json`
 
@@ -422,10 +422,12 @@ interface for agents.
 |----|-------|-------------|
 | `safetensors` | `SafetensorsLoader` | Memory-mapped safetensors loader with sharding support |
 | `gguf` | `GGUFLoader` | GGUF format loader with F32/F16/BF16/Q8_0/Q4_0 dequantization |
+| `pytorch` | `PyTorchLoader` | Pure-python unpickler for `.pt` ZIP checkpoints (BDH-layout expansion) |
+| `exl3` | `EXL3Loader` | EXL3 trellis quantization (exllamav3, QTIP-derived); groups dequantize to plain `weight` tensors |
 
 **Registration**: `@register_loader("id")`
 
-**Auto-detection**: Magic bytes (`GGUF` vs safetensors header)
+**Auto-detection**: Magic bytes (`GGUF`), ZIP signature (`.pt`), `config.json` `quantization_config.quant_method == "exl3"` for EXL3 directories, safetensors header otherwise
 
 ### Statistic Plugins
 

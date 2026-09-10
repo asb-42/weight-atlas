@@ -114,7 +114,12 @@ scan/render/compare, and provides file-browsing and result endpoints. The UI
   log10 when a metric spans ≥2 orders of magnitude, stride-culled to
   `SCATTER_CAP`); the records tab renders extremes boards
   (`query.RECORD_BOARDS` → `extreme_records`), linking into the stats table
-  page the tensor sits on. Both are pure `query.py` data + presentation in
+  page the tensor sits on, plus outlier-impact visualizations
+  (`query.outlier_impact`/`layer_profile`/`distribution_strip` →
+  `_impact_svg`/`_profile_svg`/`_strip_svg` in `routes.py`; OCGQuant
+  framing, see `docs/2026-09-09_records-outlier-visualization.md`) —
+  all metrics-gated so old fingerprints without the amax ratios render
+  exactly as before. Both are pure `query.py` data + presentation in
   `routes.py` — no client JS.
 - **Query-API twins of the UI tabs**: `GET /api/model/{id}/scatter`
   (x/y metric params, cap-clamped points, axis configs) and
