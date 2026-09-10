@@ -72,6 +72,14 @@ disallow_any_generics = false
 module = ["torch", "torch.*"]
 ignore_missing_imports = true
 
+# squarify (treemap, umap extra) has no stubs and is absent from the lint
+# env — an inline `# type: ignore[import-untyped]` only covers the
+# installed-untyped case and fails with unused-ignore when the module is
+# missing entirely. Same treatment as torch.
+[[tool.mypy.overrides]]
+module = ["squarify"]
+ignore_missing_imports = true
+
 [dependency-groups]
 dev = [
     "ruff>=0.16.1",

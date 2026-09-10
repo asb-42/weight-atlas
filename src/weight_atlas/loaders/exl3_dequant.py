@@ -141,7 +141,11 @@ def indices_from_packed(packed: np.ndarray, k: int) -> np.ndarray:
     bits = np.unpackbits(nat, axis=-1)  # (..., 256*k) MSB-first
     groups = bits.reshape(bits.shape[:-1] + (256, k))
     weights = (1 << np.arange(k - 1, -1, -1)).astype(np.uint32)
-    return (groups.astype(np.uint32) * weights).sum(axis=-1).astype(np.uint16)
+    # np.asarray pins the ndarray type: under older numpy stub stacks the
+    # uint32-multiply/sum/astype chain resolves to Any.
+    return np.asarray(
+        (groups.astype(np.uint32) * weights).sum(axis=-1).astype(np.uint16)
+    )
 
 
 def windows_from_indices(v: np.ndarray, k: int) -> np.ndarray:

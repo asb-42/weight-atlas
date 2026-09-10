@@ -327,7 +327,7 @@ def render_treemap(out_dir: Path, tensors: dict[str, Any]) -> Path:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    import squarify  # type: ignore[import-untyped]
+    import squarify  # mypy: ignore_missing_imports override in pyproject (umap extra, untyped)
 
     fam_params: dict[str, int] = {}
     for name, v in tensors.items():
