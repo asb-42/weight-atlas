@@ -1062,7 +1062,6 @@ class TestQuantProbeFlag:
         """A probe job's fingerprint contains the SQNR fields (worker wiring)."""
         import json as _json
 
-        import numpy as np
 
         response = client.post(
             "/api/jobs",
@@ -1087,7 +1086,7 @@ class TestQuantProbeFlag:
         fp = _json.loads((Path(job.out_dir) / "fingerprint.json").read_text())
         some = next(iter(fp["tensors"].values()))
         # hidden=32 fake model: 32 % 128 != 0 → INT4 N/A, INT8/FP8 finite
-        assert np.isnan(some["sqnr_int4_g128"])
+        assert some["sqnr_int4_g128"] is None  # NaN serializes as JSON null
 
 
 class TestPackageEndpoints:

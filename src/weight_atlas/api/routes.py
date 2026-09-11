@@ -15,7 +15,7 @@ from weight_atlas.api.jobs import JobQueue, JobStatus
 from weight_atlas.core.types import AtlasSpec, load_default_spec
 
 # Model-file picker: safe suffixes shown in the browse dialog.
-_BROWSE_MODEL_SUFFIXES = {".gguf", ".safetensors"}
+_BROWSE_MODEL_SUFFIXES = {".gguf", ".safetensors", ".pt"}
 
 
 def create_router(

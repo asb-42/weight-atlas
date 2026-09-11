@@ -110,7 +110,7 @@ def test_scan_pipeline_quant_probe_off_and_on(tmp_path) -> None:
     scan(model_path, out_off, spec)
     fp_off = json.loads((out_off / "fingerprint.json").read_text())
     some = next(iter(fp_off["tensors"].values()))
-    assert np.isnan(some["sqnr_int8_ch"])
+    assert some["sqnr_int8_ch"] is None  # NaN serializes as JSON null
 
     out_on = tmp_path / "on"
     scan(model_path, out_on, spec, quant_probe=True)

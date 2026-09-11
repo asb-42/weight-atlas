@@ -415,9 +415,8 @@ def _journal_open(path: Path, identity: str, has_entries: bool) -> Any:
 def _journal_append(fh: Any, ts: TensorStats) -> None:
     from dataclasses import asdict
 
-    # asdict carries name + shape; NaN floats are Python-JSON (consistent
-    # with fingerprint.json).
-    fh.write(json.dumps(asdict(ts)) + "\n")
+    # NaN floats serialize as null (JSON-safe, consistent with fingerprint).
+    fh.write(json.dumps(_json_safe(asdict(ts))) + "\n")
     fh.flush()
 
 
@@ -440,6 +439,25 @@ def _stats_for_handle(
     single time before the pool starts, not re-entered for every tensor.
     """
     return _make_handles(h, svd_seed, quant_probe=quant_probe)
+
+
+def _json_safe(obj: object) -> object:
+    """Recursively replace NaN/Inf floats with None (JSON null).
+
+    Python's json.dump emits bare ``NaN``/``Infinity`` tokens by default,
+    which strict parsers (FastAPI, jq, browsers) reject. The query API
+    already serializes these as null; the fingerprint file must match.
+    """
+    import math
+    import numbers
+
+    if isinstance(obj, numbers.Real) and not isinstance(obj, bool):
+        return None if not math.isfinite(float(obj)) else obj
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    return obj
 
 
 def scan(
@@ -741,7 +759,9 @@ def scan(
 
     fp_path = out / "fingerprint.json"
     with open(fp_path, "w") as f:
-        json.dump(fingerprint, f, indent=2, sort_keys=True)
+        # JSON-safe: NaN/Inf serialize as null (strict JSON parsers reject
+        # the bare NaN/Infinity tokens Python emits by default)
+        json.dump(_json_safe(fingerprint), f, indent=2, sort_keys=True, allow_nan=False)
         f.write("\n")
 
     artefacts: list[Path] = [fp_path]
@@ -1023,7 +1043,7 @@ def scan(
             # or the warnings are computed and silently dropped. The manifest
             # below hashes this final content.
             with open(fp_path, "w") as f:
-                json.dump(fingerprint, f, indent=2, sort_keys=True)
+                json.dump(_json_safe(fingerprint), f, indent=2, sort_keys=True, allow_nan=False)
                 f.write("\n")
 
     _report(0.97, "Writing manifest...")
